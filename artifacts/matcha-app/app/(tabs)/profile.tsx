@@ -126,7 +126,7 @@ const sf = StyleSheet.create({
     borderBottomColor: "rgba(255,255,255,0.04)",
   },
   optionActive: {
-    backgroundColor: "rgba(201,168,76,0.08)",
+    backgroundColor: "rgba(76,175,114,0.08)",
   },
   optionText: {
     fontFamily: "Inter_400Regular",
@@ -191,19 +191,19 @@ const phs = StyleSheet.create({
   },
   photoFilled: {
     flex: 1,
-    backgroundColor: "rgba(201,168,76,0.1)",
+    backgroundColor: "rgba(76,175,114,0.1)",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.2)",
+    borderColor: "rgba(76,175,114,0.2)",
     alignItems: "center",
     justifyContent: "center",
   },
   addSlot: {
     flex: 1,
-    backgroundColor: "rgba(201,168,76,0.06)",
+    backgroundColor: "rgba(76,175,114,0.06)",
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: "rgba(201,168,76,0.3)",
+    borderColor: "rgba(76,175,114,0.3)",
     borderStyle: "dashed",
     alignItems: "center",
     justifyContent: "center",
@@ -501,8 +501,8 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
   },
   interestChipActive: {
-    backgroundColor: "rgba(201,168,76,0.15)",
-    borderColor: "rgba(201,168,76,0.4)",
+    backgroundColor: "rgba(76,175,114,0.15)",
+    borderColor: "rgba(76,175,114,0.4)",
   },
   interestChipText: {
     fontFamily: "Inter_400Regular",

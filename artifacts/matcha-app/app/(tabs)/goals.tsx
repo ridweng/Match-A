@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: colors.cardBg,
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.25)",
+    borderColor: "rgba(76,175,114,0.25)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -461,8 +461,8 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
   },
   filterBtnActive: {
-    backgroundColor: "rgba(201,168,76,0.15)",
-    borderColor: "rgba(201,168,76,0.4)",
+    backgroundColor: "rgba(76,175,114,0.15)",
+    borderColor: "rgba(76,175,114,0.4)",
   },
   filterText: {
     fontFamily: "Inter_500Medium",

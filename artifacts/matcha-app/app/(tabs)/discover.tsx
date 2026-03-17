@@ -177,7 +177,7 @@ function CardStack({
             resizeMode="cover"
           />
           <LinearGradient
-            colors={["transparent", "rgba(10,18,28,0.95)"]}
+            colors={["transparent", "rgba(8,20,12,0.95)"]}
             style={styles.cardGradient}
           />
         </View>
@@ -196,7 +196,7 @@ function CardStack({
             resizeMode="cover"
           />
           <LinearGradient
-            colors={["transparent", "rgba(10,18,28,0.95)"]}
+            colors={["transparent", "rgba(8,20,12,0.95)"]}
             style={styles.cardGradient}
           />
         </View>
@@ -223,7 +223,7 @@ function CardStack({
           resizeMode="cover"
         />
         <LinearGradient
-          colors={["transparent", "rgba(10,18,28,0.97)"]}
+          colors={["transparent", "rgba(8,20,12,0.97)"]}
           style={styles.cardGradient}
         />
 
@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
   stampBadge: {
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(13,27,42,0.7)",
+    backgroundColor: "rgba(13,34,24,0.7)",
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 16,
@@ -523,13 +523,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "rgba(13,27,42,0.8)",
+    backgroundColor: "rgba(13,34,24,0.8)",
     alignSelf: "flex-end",
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.3)",
+    borderColor: "rgba(76,175,114,0.3)",
     position: "absolute",
     top: -CARD_HEIGHT + 60,
     right: 20,
@@ -572,12 +572,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   attributeChip: {
-    backgroundColor: "rgba(201,168,76,0.12)",
+    backgroundColor: "rgba(76,175,114,0.12)",
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.2)",
+    borderColor: "rgba(76,175,114,0.2)",
   },
   attributeText: {
     fontFamily: "Inter_500Medium",
@@ -640,7 +640,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: colors.cardBg,
     borderWidth: 1.5,
-    borderColor: "rgba(201,168,76,0.25)",
+    borderColor: "rgba(76,175,114,0.25)",
   },
   swipeHint: {
     fontFamily: "Inter_400Regular",
@@ -661,7 +661,7 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     backgroundColor: colors.cardBg,
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.2)",
+    borderColor: "rgba(76,175,114,0.2)",
     alignItems: "center",
     justifyContent: "center",
   },

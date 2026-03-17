@@ -65,14 +65,14 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={[colors.navy, "#0A1520", "#0D1B2A"]}
+        colors={[colors.navy, "#091A10", "#0D2218"]}
         style={StyleSheet.absoluteFill}
       />
       <View style={[styles.geometricDecor, styles.circle1]} />
       <View style={[styles.geometricDecor, styles.circle2]} />
       <View style={[styles.geometricDecor, styles.circle3]} />
       <LinearGradient
-        colors={["transparent", "rgba(13,27,42,0.7)", colors.navy]}
+        colors={["transparent", "rgba(13,34,24,0.7)", colors.navy]}
         style={styles.bottomGradient}
       />
 
@@ -189,21 +189,21 @@ const styles = StyleSheet.create({
     position: "absolute",
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: `rgba(201,168,76,0.08)`,
+    borderColor: `rgba(76,175,114,0.08)`,
   },
   circle1: {
     width: 500,
     height: 500,
     top: -200,
     right: -200,
-    backgroundColor: "rgba(201,168,76,0.04)",
+    backgroundColor: "rgba(76,175,114,0.05)",
   },
   circle2: {
     width: 300,
     height: 300,
     top: 100,
     left: -150,
-    borderColor: `rgba(201,168,76,0.05)`,
+    borderColor: `rgba(76,175,114,0.06)`,
     backgroundColor: "transparent",
   },
   circle3: {
@@ -211,8 +211,8 @@ const styles = StyleSheet.create({
     height: 200,
     bottom: 200,
     right: -80,
-    borderColor: "rgba(201,168,76,0.06)",
-    backgroundColor: "rgba(201,168,76,0.02)",
+    borderColor: "rgba(76,175,114,0.07)",
+    backgroundColor: "rgba(76,175,114,0.03)",
   },
   bottomGradient: {
     position: "absolute",
@@ -239,9 +239,9 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 20,
-    backgroundColor: "rgba(201,168,76,0.12)",
+    backgroundColor: "rgba(76,175,114,0.14)",
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.3)",
+    borderColor: "rgba(76,175,114,0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -310,10 +310,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(201,168,76,0.25)",
+    borderColor: "rgba(76,175,114,0.3)",
   },
   secondaryButtonPressed: {
-    backgroundColor: "rgba(201,168,76,0.05)",
+    backgroundColor: "rgba(76,175,114,0.07)",
   },
   secondaryButtonText: {
     fontFamily: "Inter_500Medium",
