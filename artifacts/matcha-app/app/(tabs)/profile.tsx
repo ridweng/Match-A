@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   Alert,
@@ -260,7 +261,7 @@ export default function ProfileScreen() {
             styles.settingsBtn,
             pressed && { opacity: 0.7 },
           ]}
-          onPress={() => Alert.alert("Ajustes / Settings", "Próximamente")}
+          onPress={() => router.push("/settings")}
         >
           <Feather name="settings" size={20} color={colors.slateLight} />
         </Pressable>

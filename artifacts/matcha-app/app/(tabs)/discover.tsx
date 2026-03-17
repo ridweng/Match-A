@@ -30,46 +30,68 @@ type SwipeState = "neutral" | "like" | "dislike";
 const DISCOVER_PROFILES = [
   {
     id: "1",
-    name: "Alejandro",
-    age: 31,
+    name: "Sofía",
+    age: 27,
     location: "Madrid, España",
-    bodyType: "Atlético",
-    height: "1.82m",
-    interests: ["Fitness", "Viajes", "Fotografía"],
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&q=80",
-    score: 87,
+    occupation: "Diseñadora UX",
+    interests: ["Yoga", "Viajes", "Arte"],
+    lookingFor: ["Deportivo", "Seguro de sí mismo", "Cuida su apariencia"],
+    image: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80",
+    score: 91,
   },
   {
     id: "2",
-    name: "Mateo",
-    age: 28,
+    name: "Valentina",
+    age: 29,
     location: "Buenos Aires, AR",
-    bodyType: "Musculoso",
-    height: "1.79m",
-    interests: ["Running", "Emprendimiento", "Surf"],
-    image: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=600&q=80",
-    score: 82,
+    occupation: "Arquitecta",
+    interests: ["Lectura", "Cocinar", "Fotografía"],
+    lookingFor: ["Inteligencia emocional", "Buen comunicador", "Disciplinado"],
+    image: "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=600&q=80",
+    score: 86,
   },
   {
     id: "3",
-    name: "Carlos",
-    age: 34,
+    name: "Isabella",
+    age: 31,
     location: "Ciudad de México",
-    bodyType: "Atlético",
-    height: "1.76m",
-    interests: ["Arte", "Cocinar", "Música"],
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
-    score: 79,
+    occupation: "Médica",
+    interests: ["Running", "Naturaleza", "Música"],
+    lookingFor: ["Buena postura", "Hábitos saludables", "Presencia"],
+    image: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=600&q=80",
+    score: 83,
   },
   {
     id: "4",
-    name: "Sebastián",
-    age: 29,
+    name: "Camila",
+    age: 28,
     location: "Bogotá, Colombia",
-    bodyType: "Delgado",
-    height: "1.80m",
-    interests: ["Yoga", "Lectura", "Naturaleza"],
-    image: "https://images.unsplash.com/photo-1519345182560-3f2917c472ef?w=600&q=80",
+    occupation: "Emprendedora",
+    interests: ["Fitness", "Podcast", "Emprendimiento"],
+    lookingFor: ["Ambicioso", "Deportivo", "Bien vestido"],
+    image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&q=80",
+    score: 79,
+  },
+  {
+    id: "5",
+    name: "Gabriela",
+    age: 33,
+    location: "Lima, Perú",
+    occupation: "Psicóloga",
+    interests: ["Meditación", "Senderismo", "Cine"],
+    lookingFor: ["Inteligencia emocional", "Seguro de sí mismo", "Honesto"],
+    image: "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
+    score: 88,
+  },
+  {
+    id: "6",
+    name: "Natalia",
+    age: 26,
+    location: "Santiago, Chile",
+    occupation: "Periodista",
+    interests: ["Surf", "Escritura", "Gastronomía"],
+    lookingFor: ["Buen comunicador", "Arreglado", "Con iniciativa"],
+    image: "https://images.unsplash.com/photo-1488716820095-cbe80883c496?w=600&q=80",
     score: 75,
   },
 ];
@@ -263,14 +285,7 @@ function CardStack({
             <View style={styles.locationRow}>
               <Feather name="map-pin" size={12} color={colors.muted} />
               <Text style={styles.cardLocation}>{topProfile.location}</Text>
-            </View>
-            <View style={styles.attributeRow}>
-              <View style={styles.attributeChip}>
-                <Text style={styles.attributeText}>{topProfile.bodyType}</Text>
-              </View>
-              <View style={styles.attributeChip}>
-                <Text style={styles.attributeText}>{topProfile.height}</Text>
-              </View>
+              <Text style={styles.cardOccupation}> · {topProfile.occupation}</Text>
             </View>
             <View style={styles.interestRow}>
               {topProfile.interests.map((interest) => (
@@ -278,6 +293,19 @@ function CardStack({
                   <Text style={styles.interestText}>{interest}</Text>
                 </View>
               ))}
+            </View>
+            <View style={styles.lookingForSection}>
+              <View style={styles.lookingForHeader}>
+                <Ionicons name="sparkles" size={11} color={colors.gold} />
+                <Text style={styles.lookingForLabel}>Busca en un hombre</Text>
+              </View>
+              <View style={styles.lookingForRow}>
+                {topProfile.lookingFor.map((trait) => (
+                  <View key={trait} style={styles.lookingForChip}>
+                    <Text style={styles.lookingForText}>{trait}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
           </View>
         </View>
@@ -566,6 +594,50 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 13,
     color: colors.muted,
+  },
+  cardOccupation: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: colors.slateLight,
+  },
+  lookingForSection: {
+    marginTop: 4,
+    gap: 6,
+    backgroundColor: "rgba(8,20,12,0.6)",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "rgba(76,175,114,0.2)",
+  },
+  lookingForHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  lookingForLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 10,
+    color: colors.gold,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  lookingForRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  lookingForChip: {
+    backgroundColor: "rgba(76,175,114,0.18)",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: "rgba(76,175,114,0.35)",
+  },
+  lookingForText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 11,
+    color: colors.goldLight,
   },
   attributeRow: {
     flexDirection: "row",
