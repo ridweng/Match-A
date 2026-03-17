@@ -1,0 +1,128 @@
+export type Language = "es" | "en";
+
+export const translations = {
+  es: {
+    login: {
+      tagline: "Tu mejor versión\nte está esperando.",
+      sub: "Descubre qué mejorar para tener más y mejores citas.",
+      cta: "Crear cuenta",
+      signin: "Ya tengo cuenta",
+      legal: "Al continuar, aceptas nuestros Términos de uso y Política de privacidad.",
+    },
+    tabs: {
+      discover: "Descubrir",
+      profile: "Perfil",
+      goals: "Mis Metas",
+    },
+    discover: {
+      header: "Explorar",
+      noMore: "Has visto todos los perfiles",
+      noMoreSub: "Vuelve más tarde para descubrir más.",
+    },
+    profile: {
+      header: "Mi Perfil",
+      photos: "Mis Fotos",
+      addPhoto: "Agregar foto",
+      fullName: "Nombre completo",
+      age: "Edad",
+      physical: "Atributos físicos",
+      bodyType: "Tipo de cuerpo",
+      hairColor: "Color de cabello",
+      height: "Estatura",
+      weight: "Peso",
+      ethnicity: "Origen étnico",
+      interests: "Intereses",
+      bio: "Sobre mí",
+      bioPlaceholder: "Cuéntanos algo sobre ti...",
+      save: "Guardar cambios",
+      settings: "Ajustes",
+      saved: "Perfil guardado",
+    },
+    goals: {
+      header: "Mis Metas",
+      overallProgress: "Progreso general",
+      activeGoals: "metas activas",
+      all: "Todas",
+      physical: "Físicas",
+      personality: "Personalidad",
+      style: "Estilo",
+      habits: "Hábitos",
+      nextAction: "Próximo paso",
+      impact: "Impacto esperado",
+    },
+    bodyTypes: ["Delgado", "Atlético", "Musculoso", "Normal", "Corpulento"],
+    hairColors: ["Negro", "Castaño oscuro", "Castaño claro", "Rubio", "Pelirrojo", "Canoso", "Rapado"],
+    heights: ["Menos de 1.65m", "1.65m", "1.68m", "1.70m", "1.73m", "1.75m", "1.78m", "1.80m", "1.83m", "1.85m", "Más de 1.85m"],
+    weights: ["Menos de 60kg", "60-70kg", "70-80kg", "80-90kg", "90-100kg", "Más de 100kg"],
+    ethnicities: ["Latino", "Caucásico", "Afrodescendiente", "Asiático", "Medio Oriente", "Indígena", "Mixto", "Otro"],
+    interestsList: [
+      "Gym", "Running", "Cocinar", "Viajes", "Fotografía", "Música", "Lectura",
+      "Meditación", "Arte", "Cine", "Tecnología", "Surf", "Fútbol", "Yoga",
+      "Emprendimiento", "Moda", "Senderismo", "Videojuegos", "Naturaleza", "Baile"
+    ],
+  },
+  en: {
+    login: {
+      tagline: "Your best self\nis waiting.",
+      sub: "Discover what to improve to get more and better dates.",
+      cta: "Create account",
+      signin: "I already have an account",
+      legal: "By continuing, you agree to our Terms of Use and Privacy Policy.",
+    },
+    tabs: {
+      discover: "Discover",
+      profile: "Profile",
+      goals: "My Goals",
+    },
+    discover: {
+      header: "Explore",
+      noMore: "You've seen all profiles",
+      noMoreSub: "Come back later to discover more.",
+    },
+    profile: {
+      header: "My Profile",
+      photos: "My Photos",
+      addPhoto: "Add photo",
+      fullName: "Full name",
+      age: "Age",
+      physical: "Physical attributes",
+      bodyType: "Body type",
+      hairColor: "Hair color",
+      height: "Height",
+      weight: "Weight",
+      ethnicity: "Ethnic background",
+      interests: "Interests",
+      bio: "About me",
+      bioPlaceholder: "Tell us something about you...",
+      save: "Save changes",
+      settings: "Settings",
+      saved: "Profile saved",
+    },
+    goals: {
+      header: "My Goals",
+      overallProgress: "Overall progress",
+      activeGoals: "active goals",
+      all: "All",
+      physical: "Physical",
+      personality: "Personality",
+      style: "Style",
+      habits: "Habits",
+      nextAction: "Next step",
+      impact: "Expected impact",
+    },
+    bodyTypes: ["Slim", "Athletic", "Muscular", "Average", "Stocky"],
+    hairColors: ["Black", "Dark Brown", "Light Brown", "Blonde", "Red", "Gray", "Shaved"],
+    heights: ["Under 5'5\"", "5'5\"", "5'6\"", "5'7\"", "5'8\"", "5'9\"", "5'10\"", "5'11\"", "6'0\"", "6'1\"", "Over 6'1\""],
+    weights: ["Under 130lbs", "130-155lbs", "155-175lbs", "175-200lbs", "200-220lbs", "Over 220lbs"],
+    ethnicities: ["Latino", "Caucasian", "African American", "Asian", "Middle Eastern", "Indigenous", "Mixed", "Other"],
+    interestsList: [
+      "Gym", "Running", "Cooking", "Travel", "Photography", "Music", "Reading",
+      "Meditation", "Art", "Film", "Technology", "Surfing", "Soccer", "Yoga",
+      "Entrepreneurship", "Fashion", "Hiking", "Gaming", "Nature", "Dancing"
+    ],
+  },
+};
+
+export function getTranslations(lang: Language) {
+  return translations[lang];
+}
