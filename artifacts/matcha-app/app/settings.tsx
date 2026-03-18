@@ -73,7 +73,7 @@ function Divider() {
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { language, setLanguage, setIsLoggedIn } = useApp();
+  const { language, setLanguage, logout } = useApp();
 
   const [notifMatches, setNotifMatches] = useState(true);
   const [notifMessages, setNotifMessages] = useState(true);
@@ -99,8 +99,8 @@ export default function SettingsScreen() {
         {
           text: language === "es" ? "Salir" : "Log out",
           style: "destructive",
-          onPress: () => {
-            setIsLoggedIn(false);
+          onPress: async () => {
+            await logout();
             router.replace("/login");
           },
         },

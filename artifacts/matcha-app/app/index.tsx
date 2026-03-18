@@ -6,18 +6,21 @@ import { useApp } from "@/context/AppContext";
 import colors from "@/constants/colors";
 
 export default function Entry() {
-  const { isLoggedIn } = useApp();
+  const { authStatus, needsProfileCompletion } = useApp();
 
   useEffect(() => {
+    if (authStatus === "loading") return;
     const timeout = setTimeout(() => {
-      if (isLoggedIn) {
-        router.replace("/(tabs)/discover");
-      } else {
+      if (authStatus !== "authenticated") {
         router.replace("/login");
+      } else if (needsProfileCompletion) {
+        router.replace("/complete-profile");
+      } else {
+        router.replace("/(tabs)/discover");
       }
     }, 100);
     return () => clearTimeout(timeout);
-  }, [isLoggedIn]);
+  }, [authStatus, needsProfileCompletion]);
 
-  return <View style={{ flex: 1, backgroundColor: colors.navy }} />;
+  return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 }

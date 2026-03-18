@@ -9,6 +9,8 @@ const Colors = {
   backgroundSecondary: "#162018",
   backgroundCard: "#1C2B1F",
   backgroundElevated: "#243328",
+  navy: "#0F1A14",
+  cardBg: "#1C2B1F",
 
   surface: "#1E2E22",
   surfaceHover: "#263A2A",
@@ -17,14 +19,18 @@ const Colors = {
   textSecondary: "#9BB8A4",
   textMuted: "#5C7A64",
   textInverted: "#0F1A14",
+  ivory: "#F0F5F1",
+  slateLight: "#9BB8A4",
 
   border: "#2A3F2E",
   borderLight: "#354B39",
+  cardBorder: "#2A3F2E",
 
   like: "#52B788",
   likeOverlay: "rgba(82, 183, 136, 0.85)",
   dislike: "#E63946",
   dislikeOverlay: "rgba(230, 57, 70, 0.85)",
+  dislikeRed: "#E63946",
 
   tabBar: "#111A14",
   tabBarBorder: "#1E2E22",
@@ -37,6 +43,7 @@ const Colors = {
   success: "#52B788",
   error: "#E63946",
   warning: "#F4A261",
+  gold: "#B7986E",
 
   overlay: "rgba(15, 26, 20, 0.7)",
   overlayHeavy: "rgba(15, 26, 20, 0.92)",

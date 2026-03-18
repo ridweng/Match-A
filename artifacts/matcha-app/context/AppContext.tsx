@@ -1,11 +1,30 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Linking from "expo-linking";
 import React, {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
 } from "react";
+
+import {
+  ApiError,
+  extractAuthCallback,
+  fetchProviderAvailability,
+  getMe,
+  refreshSession,
+  signIn,
+  signInWithProvider,
+  signOut,
+  signUp,
+  toReadableAuthError,
+  updateMe,
+  type AuthProvider,
+  type AuthUser,
+  type ProviderAvailability,
+} from "@/services/auth";
 
 export type Goal = {
   id: string;
@@ -29,6 +48,64 @@ export type UserProfile = {
   ethnicity: string;
   interests: string[];
 };
+
+export type AuthStatus =
+  | "loading"
+  | "anonymous"
+  | "authenticated"
+  | "verification_pending";
+
+type SessionState = {
+  accessToken: string;
+  refreshToken: string;
+};
+
+type AppContextType = {
+  authStatus: AuthStatus;
+  authBusy: boolean;
+  authError: string | null;
+  authNotice: string | null;
+  isLoggedIn: boolean;
+  user: AuthUser | null;
+  needsProfileCompletion: boolean;
+  pendingVerificationEmail: string | null;
+  verificationPreviewUrl: string | null;
+  providerAvailability: ProviderAvailability;
+  signIn: (input: { email: string; password: string }) => Promise<boolean>;
+  signUp: (input: {
+    name: string;
+    email: string;
+    password: string;
+    dateOfBirth: string;
+  }) => Promise<boolean>;
+  signInWithProvider: (
+    provider: AuthProvider,
+    mode: "signin" | "signup"
+  ) => Promise<boolean>;
+  completeProfile: (input: {
+    name?: string;
+    dateOfBirth?: string;
+  }) => Promise<boolean>;
+  logout: () => Promise<void>;
+  clearAuthFeedback: () => void;
+  refreshProviderSupport: () => Promise<void>;
+  language: "es" | "en";
+  setLanguage: (lang: "es" | "en") => Promise<void>;
+  t: (es: string, en: string) => string;
+  goals: Goal[];
+  updateGoalProgress: (id: string, progress: number) => void;
+  likedProfiles: string[];
+  likeProfile: (profileId: string) => void;
+  profile: UserProfile;
+  setProfile: (profile: UserProfile) => void;
+  updateProfile: (updates: Partial<UserProfile>) => void;
+};
+
+const LANGUAGE_KEY = "language";
+const GOALS_KEY = "goals";
+const PROFILE_KEY = "profile";
+const LIKED_PROFILES_KEY = "likedProfiles";
+const SESSION_KEY = "auth.session.v1";
 
 const DEFAULT_GOALS: Goal[] = [
   {
@@ -100,8 +177,8 @@ const DEFAULT_GOALS: Goal[] = [
 ];
 
 const DEFAULT_PROFILE: UserProfile = {
-  name: "Alejandro",
-  age: "29",
+  name: "",
+  age: "",
   bio: "",
   bodyType: "",
   height: "",
@@ -110,46 +187,208 @@ const DEFAULT_PROFILE: UserProfile = {
   interests: [],
 };
 
-type AppContextType = {
-  isLoggedIn: boolean;
-  login: () => void;
-  logout: () => void;
-  language: "es" | "en";
-  setLanguage: (lang: "es" | "en") => void;
-  t: (es: string, en: string) => string;
-  goals: Goal[];
-  updateGoalProgress: (id: string, progress: number) => void;
-  likedProfiles: string[];
-  likeProfile: (profileId: string) => void;
-  profile: UserProfile;
-  updateProfile: (updates: Partial<UserProfile>) => void;
+const DEFAULT_PROVIDER_AVAILABILITY: ProviderAvailability = {
+  google: false,
+  facebook: false,
+  apple: false,
 };
 
 const AppContext = createContext<AppContextType | null>(null);
 
+function calculateAge(dateOfBirth: string | null) {
+  if (!dateOfBirth) return "";
+  const birth = new Date(`${dateOfBirth}T00:00:00.000Z`);
+  if (Number.isNaN(birth.getTime())) return "";
+  const now = new Date();
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  const month = now.getUTCMonth() - birth.getUTCMonth();
+  const day = now.getUTCDate() - birth.getUTCDate();
+  if (month < 0 || (month === 0 && day < 0)) {
+    age -= 1;
+  }
+  return String(age);
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [verificationPreviewUrl, setVerificationPreviewUrl] = useState<string | null>(
+    null
+  );
+  const [providerAvailability, setProviderAvailability] = useState<ProviderAvailability>(
+    DEFAULT_PROVIDER_AVAILABILITY
+  );
+
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
   const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
-  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [profile, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
+
+  const clearAuthFeedback = useCallback(() => {
+    setAuthError(null);
+    setAuthNotice(null);
+  }, []);
+
+  const persistSession = useCallback(async (nextSession: SessionState | null) => {
+    if (!nextSession) {
+      await AsyncStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+  }, []);
+
+  const syncProfileFromUser = useCallback((nextUser: AuthUser | null) => {
+    if (!nextUser) return;
+    setProfileState((prev) => {
+      const merged = {
+        ...prev,
+        name: nextUser.name || prev.name,
+        age: prev.age || calculateAge(nextUser.dateOfBirth),
+      };
+      AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(merged));
+      return merged;
+    });
+  }, []);
+
+  const applyAuthenticatedSession = useCallback(
+    async (payload: {
+      accessToken: string;
+      refreshToken: string;
+      user: AuthUser;
+      needsProfileCompletion: boolean;
+    }) => {
+      const nextSession = {
+        accessToken: payload.accessToken,
+        refreshToken: payload.refreshToken,
+      };
+      setSession(nextSession);
+      setUser(payload.user);
+      setNeedsProfileCompletion(payload.needsProfileCompletion);
+      setAuthStatus("authenticated");
+      setAuthError(null);
+      setPendingVerificationEmail(null);
+      setVerificationPreviewUrl(null);
+      await persistSession(nextSession);
+      syncProfileFromUser(payload.user);
+    },
+    [persistSession, syncProfileFromUser]
+  );
+
+  const clearSession = useCallback(async () => {
+    setSession(null);
+    setUser(null);
+    setNeedsProfileCompletion(false);
+    setAuthStatus("anonymous");
+    await persistSession(null);
+  }, [persistSession]);
+
+  const refreshProviderSupport = useCallback(async () => {
+    const availability = await fetchProviderAvailability();
+    setProviderAvailability(availability);
+  }, []);
 
   useEffect(() => {
-    (async () => {
+    let active = true;
+
+    const restore = async () => {
       try {
-        const [lang, logged, savedGoals, savedProfile] = await Promise.all([
-          AsyncStorage.getItem("language"),
-          AsyncStorage.getItem("isLoggedIn"),
-          AsyncStorage.getItem("goals"),
-          AsyncStorage.getItem("profile"),
-        ]);
-        if (lang === "es" || lang === "en") setLanguageState(lang);
-        if (logged === "true") setIsLoggedIn(true);
-        if (savedGoals) setGoals(JSON.parse(savedGoals));
-        if (savedProfile) setProfile(JSON.parse(savedProfile));
-      } catch {}
-    })();
-  }, []);
+        const [storedLanguage, storedGoals, storedProfile, storedLikes, storedSession] =
+          await Promise.all([
+            AsyncStorage.getItem(LANGUAGE_KEY),
+            AsyncStorage.getItem(GOALS_KEY),
+            AsyncStorage.getItem(PROFILE_KEY),
+            AsyncStorage.getItem(LIKED_PROFILES_KEY),
+            AsyncStorage.getItem(SESSION_KEY),
+          ]);
+
+        if (!active) return;
+
+        if (storedLanguage === "es" || storedLanguage === "en") {
+          setLanguageState(storedLanguage);
+        }
+        if (storedGoals) {
+          setGoals(JSON.parse(storedGoals));
+        }
+        if (storedProfile) {
+          setProfileState(JSON.parse(storedProfile));
+        }
+        if (storedLikes) {
+          setLikedProfiles(JSON.parse(storedLikes));
+        }
+
+        await refreshProviderSupport();
+
+        if (!storedSession) {
+          setAuthStatus("anonymous");
+          return;
+        }
+
+        const parsedSession = JSON.parse(storedSession) as SessionState;
+        try {
+          const me = await getMe(parsedSession.accessToken);
+          if (!active) return;
+          setSession(parsedSession);
+          setUser(me.user);
+          setNeedsProfileCompletion(me.needsProfileCompletion);
+          setAuthStatus("authenticated");
+          syncProfileFromUser(me.user);
+          return;
+        } catch (error) {
+          if (!(error instanceof ApiError)) {
+            throw error;
+          }
+        }
+
+        try {
+          const refreshed = await refreshSession(parsedSession.refreshToken);
+          if (!active) return;
+          await applyAuthenticatedSession(refreshed);
+        } catch {
+          await clearSession();
+        }
+      } catch {
+        if (active) {
+          setAuthStatus("anonymous");
+        }
+      }
+    };
+
+    restore();
+
+    return () => {
+      active = false;
+    };
+  }, [applyAuthenticatedSession, clearSession, refreshProviderSupport, syncProfileFromUser]);
+
+  useEffect(() => {
+    const handleAuthLink = async (url: string | null) => {
+      if (!url) return;
+      const callback = extractAuthCallback(url);
+      if (callback.status === "verified") {
+        setAuthNotice(
+          language === "es"
+            ? "Correo verificado. Ahora puedes iniciar sesión."
+            : "Email verified. You can sign in now."
+        );
+        setAuthStatus((current) => (current === "loading" ? "anonymous" : current));
+      }
+    };
+
+    Linking.getInitialURL().then(handleAuthLink).catch(() => {});
+    const subscription = Linking.addEventListener("url", (event) => {
+      handleAuthLink(event.url).catch(() => {});
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [language]);
 
   const t = useCallback(
     (es: string, en: string) => (language === "es" ? es : en),
@@ -158,70 +397,222 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setLanguage = useCallback(async (lang: "es" | "en") => {
     setLanguageState(lang);
-    await AsyncStorage.setItem("language", lang);
+    await AsyncStorage.setItem(LANGUAGE_KEY, lang);
   }, []);
 
-  const login = useCallback(async () => {
-    setIsLoggedIn(true);
-    await AsyncStorage.setItem("isLoggedIn", "true");
-  }, []);
+  const handleSignUp = useCallback(
+    async (input: {
+      name: string;
+      email: string;
+      password: string;
+      dateOfBirth: string;
+    }) => {
+      setAuthBusy(true);
+      clearAuthFeedback();
+      try {
+        const response = await signUp(input);
+        setAuthStatus("verification_pending");
+        setPendingVerificationEmail(response.email);
+        setVerificationPreviewUrl(response.verificationPreviewUrl || null);
+        setAuthNotice(
+          language === "es"
+            ? "Revisa tu correo para verificar la cuenta."
+            : "Check your email to verify your account."
+        );
+        return true;
+      } catch (error) {
+        setAuthError(
+          toReadableAuthError(error instanceof ApiError ? error.code : "SIGN_UP_FAILED")
+        );
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [clearAuthFeedback, language]
+  );
+
+  const handleSignIn = useCallback(
+    async (input: { email: string; password: string }) => {
+      setAuthBusy(true);
+      clearAuthFeedback();
+      try {
+        const response = await signIn(input);
+        await applyAuthenticatedSession(response);
+        return true;
+      } catch (error) {
+        setAuthError(
+          toReadableAuthError(error instanceof ApiError ? error.code : "SIGN_IN_FAILED")
+        );
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [applyAuthenticatedSession, clearAuthFeedback]
+  );
+
+  const handleProviderSignIn = useCallback(
+    async (provider: AuthProvider, mode: "signin" | "signup") => {
+      setAuthBusy(true);
+      clearAuthFeedback();
+      try {
+        if (!providerAvailability[provider]) {
+          throw new ApiError("PROVIDER_UNAVAILABLE");
+        }
+        const response = await signInWithProvider(provider, mode);
+        await applyAuthenticatedSession(response);
+        return true;
+      } catch (error) {
+        setAuthError(
+          toReadableAuthError(
+            error instanceof ApiError ? error.code : "SOCIAL_AUTH_FAILED"
+          )
+        );
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [applyAuthenticatedSession, clearAuthFeedback, providerAvailability]
+  );
+
+  const completeProfile = useCallback(
+    async (input: { name?: string; dateOfBirth?: string }) => {
+      if (!session) return false;
+      setAuthBusy(true);
+      clearAuthFeedback();
+      try {
+        const response = await updateMe(session.accessToken, input);
+        setUser(response.user);
+        setNeedsProfileCompletion(response.needsProfileCompletion);
+        syncProfileFromUser(response.user);
+        return true;
+      } catch (error) {
+        setAuthError(
+          toReadableAuthError(
+            error instanceof ApiError ? error.code : "PROFILE_UPDATE_FAILED"
+          )
+        );
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [clearAuthFeedback, session, syncProfileFromUser]
+  );
 
   const logout = useCallback(async () => {
-    setIsLoggedIn(false);
-    await AsyncStorage.setItem("isLoggedIn", "false");
-  }, []);
+    if (session?.accessToken) {
+      try {
+        await signOut(session.accessToken);
+      } catch {}
+    }
+    clearAuthFeedback();
+    setPendingVerificationEmail(null);
+    setVerificationPreviewUrl(null);
+    await clearSession();
+  }, [clearAuthFeedback, clearSession, session?.accessToken]);
 
-  const updateGoalProgress = useCallback(
-    async (id: string, progress: number) => {
-      setGoals((prev) => {
-        const updated = prev.map((g) => (g.id === id ? { ...g, progress } : g));
-        AsyncStorage.setItem("goals", JSON.stringify(updated));
-        return updated;
-      });
-    },
-    []
-  );
+  const updateGoalProgress = useCallback(async (id: string, progress: number) => {
+    setGoals((prev) => {
+      const updated = prev.map((goal) =>
+        goal.id === id ? { ...goal, progress } : goal
+      );
+      AsyncStorage.setItem(GOALS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const likeProfile = useCallback(async (profileId: string) => {
     setLikedProfiles((prev) => {
       if (prev.includes(profileId)) return prev;
       const updated = [...prev, profileId];
+      AsyncStorage.setItem(LIKED_PROFILES_KEY, JSON.stringify(updated));
       return updated;
     });
   }, []);
 
-  const updateProfile = useCallback(async (updates: Partial<UserProfile>) => {
-    setProfile((prev) => {
+  const setProfile = useCallback((nextProfile: UserProfile) => {
+    setProfileState(nextProfile);
+    AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(nextProfile));
+  }, []);
+
+  const updateProfile = useCallback((updates: Partial<UserProfile>) => {
+    setProfileState((prev) => {
       const updated = { ...prev, ...updates };
-      AsyncStorage.setItem("profile", JSON.stringify(updated));
+      AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
       return updated;
     });
   }, []);
 
-  return (
-    <AppContext.Provider
-      value={{
-        isLoggedIn,
-        login,
-        logout,
-        language,
-        setLanguage,
-        t,
-        goals,
-        updateGoalProgress,
-        likedProfiles,
-        likeProfile,
-        profile,
-        updateProfile,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
+  const value = useMemo<AppContextType>(
+    () => ({
+      authStatus,
+      authBusy,
+      authError,
+      authNotice,
+      isLoggedIn: authStatus === "authenticated",
+      user,
+      needsProfileCompletion,
+      pendingVerificationEmail,
+      verificationPreviewUrl,
+      providerAvailability,
+      signIn: handleSignIn,
+      signUp: handleSignUp,
+      signInWithProvider: handleProviderSignIn,
+      completeProfile,
+      logout,
+      clearAuthFeedback,
+      refreshProviderSupport,
+      language,
+      setLanguage,
+      t,
+      goals,
+      updateGoalProgress,
+      likedProfiles,
+      likeProfile,
+      profile,
+      setProfile,
+      updateProfile,
+    }),
+    [
+      authStatus,
+      authBusy,
+      authError,
+      authNotice,
+      user,
+      needsProfileCompletion,
+      pendingVerificationEmail,
+      verificationPreviewUrl,
+      providerAvailability,
+      handleSignIn,
+      handleSignUp,
+      handleProviderSignIn,
+      completeProfile,
+      logout,
+      clearAuthFeedback,
+      refreshProviderSupport,
+      language,
+      setLanguage,
+      t,
+      goals,
+      updateGoalProgress,
+      likedProfiles,
+      likeProfile,
+      profile,
+      setProfile,
+      updateProfile,
+    ]
   );
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error("useApp must be used within AppProvider");
-  return ctx;
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error("useApp must be used within AppProvider");
+  }
+  return context;
 }

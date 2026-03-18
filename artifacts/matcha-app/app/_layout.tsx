@@ -9,10 +9,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import Colors from "@/constants/colors";
 import { AppProvider, useApp } from "@/context/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -20,19 +22,40 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  const { isLoggedIn } = useApp();
+  const { authStatus, needsProfileCompletion } = useApp();
 
   useEffect(() => {
-    if (!isLoggedIn) {
+    if (authStatus === "loading") {
+      return;
+    }
+    if (authStatus !== "authenticated") {
       router.replace("/login" as any);
+    } else if (needsProfileCompletion) {
+      router.replace("/complete-profile" as any);
     } else {
       router.replace("/(tabs)/discover" as any);
     }
-  }, [isLoggedIn]);
+  }, [authStatus, needsProfileCompletion]);
+
+  if (authStatus === "loading") {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: Colors.background,
+        }}
+      >
+        <ActivityIndicator color={Colors.primaryLight} />
+      </View>
+    );
+  }
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
+      <Stack.Screen name="complete-profile" />
       <Stack.Screen name="(tabs)" />
     </Stack>
   );
