@@ -3,115 +3,70 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
 import { Icon, Label, NativeTabs } from "expo-router/unstable-native-tabs";
 import { SymbolView } from "expo-symbols";
-import { Feather, Ionicons } from "@expo/vector-icons";
+import { Feather } from "@expo/vector-icons";
 import React from "react";
-import { Platform, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 
-import colors from "@/constants/colors";
-import { getTranslations } from "@/constants/i18n";
-import { useApp } from "@/context/AppContext";
+import Colors from "@/constants/colors";
 
+//IMPORTANT: iOS 26 Exists, feel free to use NativeTabs for native tabs with liquid glass support.
 function NativeTabLayout() {
-  const { language } = useApp();
-  const t = getTranslations(language).tabs;
   return (
     <NativeTabs>
-      <NativeTabs.Trigger name="discover">
-        <Icon sf={{ default: "sparkles", selected: "sparkles" }} />
-        <Label>{t.discover}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <Icon sf={{ default: "person", selected: "person.fill" }} />
-        <Label>{t.profile}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="goals">
-        <Icon sf={{ default: "chart.bar", selected: "chart.bar.fill" }} />
-        <Label>{t.goals}</Label>
+      <NativeTabs.Trigger name="index">
+        <Icon sf={{ default: "house", selected: "house.fill" }} />
+        <Label>Home</Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
 
 function ClassicTabLayout() {
-  const { language } = useApp();
-  const t = getTranslations(language).tabs;
-  const safeAreaInsets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
 
   return (
     <Tabs
       screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.gold,
-        tabBarInactiveTintColor: colors.slateLight,
+        tabBarActiveTintColor: Colors.light.tint,
+        tabBarInactiveTintColor: Colors.light.tabIconDefault,
+        headerShown: true,
         tabBarStyle: {
           position: "absolute",
-          backgroundColor: isIOS ? "transparent" : colors.navy,
-          borderTopWidth: 0,
-          borderTopColor: colors.cardBorder,
+          backgroundColor: isIOS ? "transparent" : isDark ? "#000" : "#fff",
+          borderTopWidth: isWeb ? 1 : 0,
+          borderTopColor: isDark ? "#333" : "#ccc",
           elevation: 0,
           ...(isWeb ? { height: 84 } : {}),
         },
         tabBarBackground: () =>
           isIOS ? (
             <BlurView
-              intensity={90}
-              tint="dark"
+              intensity={100}
+              tint={isDark ? "dark" : "light"}
               style={StyleSheet.absoluteFill}
             />
           ) : isWeb ? (
             <View
               style={[
                 StyleSheet.absoluteFill,
-                {
-                  backgroundColor: colors.navy,
-                  borderTopWidth: 1,
-                  borderTopColor: colors.cardBorder,
-                },
+                { backgroundColor: isDark ? "#000" : "#fff" },
               ]}
             />
-          ) : (
-            <View
-              style={[StyleSheet.absoluteFill, { backgroundColor: colors.navy }]}
-            />
-          ),
+          ) : null,
       }}
     >
       <Tabs.Screen
-        name="discover"
+        name="index"
         options={{
-          title: t.discover,
+          title: "Home",
           tabBarIcon: ({ color }) =>
             isIOS ? (
-              <SymbolView name="sparkles" tintColor={color} size={22} />
+              <SymbolView name="house" tintColor={color} size={24} />
             ) : (
-              <Ionicons name="sparkles-outline" size={22} color={color} />
-            ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: t.profile,
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="person" tintColor={color} size={22} />
-            ) : (
-              <Feather name="user" size={22} color={color} />
-            ),
-        }}
-      />
-      <Tabs.Screen
-        name="goals"
-        options={{
-          title: t.goals,
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="chart.bar" tintColor={color} size={22} />
-            ) : (
-              <Feather name="bar-chart-2" size={22} color={color} />
+              <Feather name="home" size={22} color={color} />
             ),
         }}
       />
