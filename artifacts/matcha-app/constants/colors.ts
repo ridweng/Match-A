@@ -26,7 +26,7 @@ const Colors = {
   dislike: "#E63946",
   dislikeOverlay: "rgba(230, 57, 70, 0.85)",
 
-  tabBar: "#121D15",
+  tabBar: "#111A14",
   tabBarBorder: "#1E2E22",
   tabActive: "#52B788",
   tabInactive: "#4A6450",
@@ -37,7 +37,6 @@ const Colors = {
   success: "#52B788",
   error: "#E63946",
   warning: "#F4A261",
-  info: "#74C0FC",
 
   overlay: "rgba(15, 26, 20, 0.7)",
   overlayHeavy: "rgba(15, 26, 20, 0.92)",

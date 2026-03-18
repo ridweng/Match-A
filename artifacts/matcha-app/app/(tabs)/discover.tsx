@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+=======
+import { Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import * as Haptics from "expo-haptics";
+>>>>>>> f81a9b8 (second try)
 import React, { useRef, useState } from "react";
 import {
   Animated,
@@ -10,12 +16,17 @@ import {
   Platform,
   Pressable,
   ScrollView,
+<<<<<<< HEAD
+=======
+  StatusBar,
+>>>>>>> f81a9b8 (second try)
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+<<<<<<< HEAD
 import colors from "@/constants/colors";
 import { getTranslations } from "@/constants/i18n";
 import { useApp } from "@/context/AppContext";
@@ -128,6 +139,40 @@ function CardStack({
   });
   const dislikeOpacity = pan.x.interpolate({
     inputRange: [-SWIPE_THRESHOLD, 0],
+=======
+import Colors from "@/constants/colors";
+import { useApp } from "@/context/AppContext";
+import { discoverProfiles } from "@/data/profiles";
+
+const { width, height } = Dimensions.get("window");
+const CARD_WIDTH = width - 32;
+const CARD_HEIGHT = height * 0.62;
+const SWIPE_THRESHOLD = 80;
+
+type SwipeState = "idle" | "like" | "dislike";
+
+export default function DiscoverScreen() {
+  const insets = useSafeAreaInsets();
+  const { t, likeProfile, goals } = useApp();
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [swipeState, setSwipeState] = useState<SwipeState>("idle");
+  const [showInsight, setShowInsight] = useState(false);
+  const [lastLikedProfile, setLastLikedProfile] = useState<string | null>(null);
+
+  const position = useRef(new Animated.ValueXY()).current;
+  const rotate = position.x.interpolate({
+    inputRange: [-width / 2, 0, width / 2],
+    outputRange: ["-12deg", "0deg", "12deg"],
+    extrapolate: "clamp",
+  });
+  const likeOpacity = position.x.interpolate({
+    inputRange: [0, 60],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
+  const dislikeOpacity = position.x.interpolate({
+    inputRange: [-60, 0],
+>>>>>>> f81a9b8 (second try)
     outputRange: [1, 0],
     extrapolate: "clamp",
   });
@@ -135,6 +180,7 @@ function CardStack({
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+<<<<<<< HEAD
       onPanResponderMove: (_, gestureState) => {
         pan.setValue({ x: gestureState.dx, y: gestureState.dy * 0.3 });
         if (gestureState.dx > SWIPE_THRESHOLD * 0.5) {
@@ -173,11 +219,28 @@ function CardStack({
             useNativeDriver: true,
           }).start();
           setSwipeState("neutral");
+=======
+      onPanResponderMove: (_, gesture) => {
+        position.setValue({ x: gesture.dx, y: gesture.dy });
+        if (gesture.dx > 40) setSwipeState("like");
+        else if (gesture.dx < -40) setSwipeState("dislike");
+        else setSwipeState("idle");
+      },
+      onPanResponderRelease: (_, gesture) => {
+        if (gesture.dx > SWIPE_THRESHOLD) {
+          swipeRight();
+        } else if (gesture.dx < -SWIPE_THRESHOLD) {
+          swipeLeft();
+        } else {
+          resetPosition();
+          setSwipeState("idle");
+>>>>>>> f81a9b8 (second try)
         }
       },
     })
   ).current;
 
+<<<<<<< HEAD
   if (profiles.length === 0) return null;
   const topProfile = profiles[0];
   const nextProfile = profiles[1];
@@ -356,10 +419,89 @@ export default function DiscoverScreen() {
         <View style={styles.headerRight}>
           <View style={styles.profileCountBadge}>
             <Text style={styles.profileCountText}>{profiles.length}</Text>
+=======
+  const resetPosition = () => {
+    Animated.spring(position, {
+      toValue: { x: 0, y: 0 },
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const swipeRight = () => {
+    const profile = discoverProfiles[currentIndex];
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Animated.timing(position, {
+      toValue: { x: width + 100, y: 0 },
+      duration: 300,
+      useNativeDriver: false,
+    }).start(() => {
+      likeProfile(profile.id);
+      setLastLikedProfile(profile.id);
+      setShowInsight(true);
+      setSwipeState("idle");
+      position.setValue({ x: 0, y: 0 });
+      setCurrentIndex((prev) =>
+        prev < discoverProfiles.length - 1 ? prev + 1 : 0
+      );
+    });
+  };
+
+  const swipeLeft = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.timing(position, {
+      toValue: { x: -width - 100, y: 0 },
+      duration: 300,
+      useNativeDriver: false,
+    }).start(() => {
+      setSwipeState("idle");
+      position.setValue({ x: 0, y: 0 });
+      setCurrentIndex((prev) =>
+        prev < discoverProfiles.length - 1 ? prev + 1 : 0
+      );
+    });
+  };
+
+  const current = discoverProfiles[currentIndex];
+  const next =
+    discoverProfiles[(currentIndex + 1) % discoverProfiles.length];
+  const nextNext =
+    discoverProfiles[(currentIndex + 2) % discoverProfiles.length];
+
+  const likedProfile = lastLikedProfile
+    ? discoverProfiles.find((p) => p.id === lastLikedProfile)
+    : null;
+
+  const relatedGoals = likedProfile
+    ? likedProfile.goalFeedback.map((gf) => {
+        const goal = goals.find((g) => g.id === gf.goalId);
+        return { goal, reason: gf.reason };
+      })
+    : [];
+
+  const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
+  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+
+  return (
+    <View style={[styles.container, { paddingTop: topPad }]}>
+      <StatusBar barStyle="light-content" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>{t("Descubrir", "Discover")}</Text>
+          <Text style={styles.headerSub}>
+            {t("Aprende de cada perfil", "Learn from every profile")}
+          </Text>
+        </View>
+        <View style={styles.headerRight}>
+          <View style={styles.filterBtn}>
+            <Feather name="sliders" size={18} color={Colors.textSecondary} />
+>>>>>>> f81a9b8 (second try)
           </View>
         </View>
       </View>
 
+<<<<<<< HEAD
       <ScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: bottomPadding + 100 }]}
         showsVerticalScrollIndicator={false}
@@ -430,6 +572,219 @@ export default function DiscoverScreen() {
           </View>
         )}
       </ScrollView>
+=======
+      {/* Card Stack */}
+      <View style={styles.cardStack}>
+        {/* Third card (background) */}
+        <View style={[styles.cardBase, styles.cardThird]}>
+          <Image
+            source={{ uri: nextNext.imageUrl }}
+            style={styles.cardImage}
+            resizeMode="cover"
+          />
+        </View>
+
+        {/* Second card */}
+        <View style={[styles.cardBase, styles.cardSecond]}>
+          <Image
+            source={{ uri: next.imageUrl }}
+            style={styles.cardImage}
+            resizeMode="cover"
+          />
+        </View>
+
+        {/* Front card (interactive) */}
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={[
+            styles.cardBase,
+            styles.cardFront,
+            {
+              transform: [
+                { translateX: position.x },
+                { translateY: position.y },
+                { rotate },
+              ],
+            },
+          ]}
+        >
+          <Image
+            source={{ uri: current.imageUrl }}
+            style={styles.cardImage}
+            resizeMode="cover"
+          />
+
+          {/* Like overlay */}
+          <Animated.View
+            style={[styles.likeOverlay, { opacity: likeOpacity }]}
+          >
+            <LinearGradient
+              colors={["transparent", Colors.likeOverlay]}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.stampContainer}>
+              <View style={styles.likeStamp}>
+                <Feather name="heart" size={28} color="#fff" />
+                <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
+              </View>
+            </View>
+          </Animated.View>
+
+          {/* Dislike overlay */}
+          <Animated.View
+            style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}
+          >
+            <LinearGradient
+              colors={["transparent", Colors.dislikeOverlay]}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.stampContainer}>
+              <View style={styles.dislikeStamp}>
+                <Feather name="x" size={28} color="#fff" />
+                <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
+              </View>
+            </View>
+          </Animated.View>
+
+          {/* Card info gradient */}
+          <LinearGradient
+            colors={["transparent", "rgba(15,26,20,0.98)"]}
+            style={styles.cardGradient}
+          >
+            {/* Insight tags */}
+            <View style={styles.insightTags}>
+              {current.insightTags.map((tag) => (
+                <View key={tag} style={styles.insightTag}>
+                  <Text style={styles.insightTagText}>{tag}</Text>
+                </View>
+              ))}
+            </View>
+
+            <Text style={styles.cardName}>
+              {current.name}, {current.age}
+            </Text>
+            <View style={styles.cardRow}>
+              <Feather name="map-pin" size={13} color={Colors.primaryLight} />
+              <Text style={styles.cardLocation}>{current.location}</Text>
+              <Text style={styles.cardDot}>·</Text>
+              <Text style={styles.cardOccupation}>{current.occupation}</Text>
+            </View>
+
+            {/* Interests */}
+            <View style={styles.interestsRow}>
+              {current.attributes.interests.slice(0, 3).map((i) => (
+                <View key={i} style={styles.interestChip}>
+                  <Text style={styles.interestChipText}>{i}</Text>
+                </View>
+              ))}
+            </View>
+          </LinearGradient>
+        </Animated.View>
+      </View>
+
+      {/* Action buttons */}
+      <View style={styles.actions}>
+        <Pressable
+          onPress={swipeLeft}
+          style={({ pressed }) => [
+            styles.actionBtn,
+            styles.dislikeBtn,
+            { opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.93 : 1 }] },
+          ]}
+        >
+          <Feather name="x" size={26} color={Colors.dislike} />
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.actionBtnSm,
+            { opacity: pressed ? 0.7 : 1 },
+          ]}
+        >
+          <Feather name="star" size={20} color={Colors.accent} />
+        </Pressable>
+
+        <Pressable
+          onPress={swipeRight}
+          style={({ pressed }) => [
+            styles.actionBtn,
+            styles.likeBtn,
+            { opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.93 : 1 }] },
+          ]}
+        >
+          <Feather name="heart" size={26} color={Colors.like} />
+        </Pressable>
+      </View>
+
+      {/* Insight modal */}
+      {showInsight && likedProfile && (
+        <Pressable
+          style={styles.insightOverlay}
+          onPress={() => setShowInsight(false)}
+        >
+          <View style={styles.insightModal}>
+            <View style={styles.insightHeader}>
+              <View style={styles.insightIconWrap}>
+                <Feather name="zap" size={20} color={Colors.primaryLight} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.insightTitle}>
+                  {t("Insight de mejora", "Improvement Insight")}
+                </Text>
+                <Text style={styles.insightSubtitle}>
+                  {t(
+                    `Aprendiste de ${likedProfile.name}`,
+                    `You learned from ${likedProfile.name}`
+                  )}
+                </Text>
+              </View>
+              <Pressable onPress={() => setShowInsight(false)}>
+                <Feather name="x" size={20} color={Colors.textMuted} />
+              </Pressable>
+            </View>
+
+            {relatedGoals.map(
+              ({ goal, reason }) =>
+                goal && (
+                  <View key={goal.id} style={styles.insightItem}>
+                    <View style={styles.insightItemHeader}>
+                      <Feather
+                        name="target"
+                        size={14}
+                        color={Colors.primaryLight}
+                      />
+                      <Text style={styles.insightGoalTitle}>
+                        {t(goal.titleEs, goal.titleEn)}
+                      </Text>
+                    </View>
+                    <Text style={styles.insightReason}>{reason}</Text>
+                    <View style={styles.insightImpact}>
+                      <Feather
+                        name="trending-up"
+                        size={12}
+                        color={Colors.accent}
+                      />
+                      <Text style={styles.insightImpactText}>
+                        {t(goal.impactEs, goal.impactEn)}
+                      </Text>
+                    </View>
+                  </View>
+                )
+            )}
+
+            <Pressable
+              style={styles.insightCta}
+              onPress={() => setShowInsight(false)}
+            >
+              <Text style={styles.insightCtaText}>
+                {t("Ver mis metas", "View my goals")}
+              </Text>
+              <Feather name="arrow-right" size={16} color={Colors.textInverted} />
+            </Pressable>
+          </View>
+        </Pressable>
+      )}
+>>>>>>> f81a9b8 (second try)
     </View>
   );
 }
@@ -437,13 +792,18 @@ export default function DiscoverScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+<<<<<<< HEAD
     backgroundColor: colors.navy,
+=======
+    backgroundColor: Colors.background,
+>>>>>>> f81a9b8 (second try)
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
+<<<<<<< HEAD
     paddingVertical: 16,
     paddingBottom: 8,
   },
@@ -500,11 +860,119 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.9 }, { translateY: 20 }],
     opacity: 0.5,
   },
+=======
+    paddingBottom: 16,
+  },
+  headerTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 26,
+    color: Colors.text,
+    letterSpacing: -0.8,
+  },
+  headerSub: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  headerRight: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  filterBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardStack: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  cardBase: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    borderRadius: 24,
+    overflow: "hidden",
+    position: "absolute",
+    backgroundColor: Colors.backgroundCard,
+  },
+  cardFront: {
+    zIndex: 3,
+    elevation: 5,
+  },
+  cardSecond: {
+    zIndex: 2,
+    transform: [{ scale: 0.95 }, { translateY: 14 }],
+    opacity: 0.75,
+  },
+  cardThird: {
+    zIndex: 1,
+    transform: [{ scale: 0.9 }, { translateY: 28 }],
+    opacity: 0.5,
+  },
+  cardImage: {
+    width: "100%",
+    height: "100%",
+  },
+  likeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 5,
+  },
+  dislikeOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 5,
+  },
+  stampContainer: {
+    flex: 1,
+    alignItems: "flex-start",
+    justifyContent: "flex-start",
+    padding: 24,
+  },
+  likeStamp: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: Colors.like,
+    backgroundColor: "rgba(82,183,136,0.2)",
+    transform: [{ rotate: "-12deg" }],
+  },
+  dislikeStamp: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: Colors.dislike,
+    backgroundColor: "rgba(230,57,70,0.2)",
+    transform: [{ rotate: "12deg" }],
+    alignSelf: "flex-end",
+  },
+  stampText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 18,
+    color: "#fff",
+    letterSpacing: 2,
+  },
+>>>>>>> f81a9b8 (second try)
   cardGradient: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
+<<<<<<< HEAD
     height: "60%",
   },
   swipeOverlay: {
@@ -574,10 +1042,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "baseline",
     gap: 8,
+=======
+    paddingHorizontal: 20,
+    paddingTop: 80,
+    paddingBottom: 24,
+    gap: 6,
+  },
+  insightTags: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 6,
+  },
+  insightTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: "rgba(82,183,136,0.2)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.3)",
+  },
+  insightTagText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 11,
+    color: Colors.primaryLight,
+>>>>>>> f81a9b8 (second try)
   },
   cardName: {
     fontFamily: "Inter_700Bold",
     fontSize: 26,
+<<<<<<< HEAD
     color: colors.ivory,
   },
   cardAge: {
@@ -610,10 +1103,17 @@ const styles = StyleSheet.create({
     borderColor: "rgba(76,175,114,0.2)",
   },
   lookingForHeader: {
+=======
+    color: Colors.text,
+    letterSpacing: -0.5,
+  },
+  cardRow: {
+>>>>>>> f81a9b8 (second try)
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
   },
+<<<<<<< HEAD
   lookingForLabel: {
     fontFamily: "Inter_500Medium",
     fontSize: 10,
@@ -760,5 +1260,161 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     fontSize: 14,
     color: colors.navy,
+=======
+  cardLocation: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  cardDot: {
+    color: Colors.textMuted,
+    fontSize: 13,
+  },
+  cardOccupation: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  interestsRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 4,
+  },
+  interestChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  interestChipText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 16,
+    paddingVertical: 20,
+    paddingHorizontal: 32,
+  },
+  actionBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+  },
+  actionBtnSm: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  dislikeBtn: {
+    backgroundColor: "rgba(230,57,70,0.08)",
+    borderColor: "rgba(230,57,70,0.3)",
+  },
+  likeBtn: {
+    backgroundColor: "rgba(82,183,136,0.08)",
+    borderColor: "rgba(82,183,136,0.3)",
+  },
+  insightOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(15,26,20,0.85)",
+    justifyContent: "flex-end",
+    zIndex: 100,
+  },
+  insightModal: {
+    backgroundColor: Colors.backgroundCard,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    gap: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  insightHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  insightIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "rgba(82,183,136,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  insightTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 17,
+    color: Colors.text,
+  },
+  insightSubtitle: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  insightItem: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  insightItemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  insightGoalTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.text,
+  },
+  insightReason: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
+  insightImpact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  insightImpactText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.accent,
+  },
+  insightCta: {
+    backgroundColor: Colors.primaryLight,
+    borderRadius: 14,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  insightCtaText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 15,
+    color: Colors.textInverted,
+>>>>>>> f81a9b8 (second try)
   },
 });
