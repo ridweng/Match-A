@@ -14,7 +14,8 @@
       "backgroundColor": "#0D1B2A"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.anonymous.matcha-app"
     },
     "android": {
       "adaptiveIcon": {
