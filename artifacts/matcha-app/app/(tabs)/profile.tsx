@@ -39,7 +39,11 @@ import {
   SPOKEN_LANGUAGES,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
-import { getAgeFromIsoDate } from "@/utils/dateOfBirth";
+import {
+  getAgeFromIsoDate,
+  getZodiacSignFromIsoDate,
+  getZodiacSignLabel,
+} from "@/utils/dateOfBirth";
 
 const MAX_SPOKEN_LANGUAGES = 7;
 
@@ -193,6 +197,10 @@ export default function ProfileScreen() {
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 100);
   const calculatedAge = getAgeFromIsoDate(accountProfile.dateOfBirth);
+  const zodiacLabel = getZodiacSignLabel(
+    getZodiacSignFromIsoDate(accountProfile.dateOfBirth),
+    t
+  );
   const ageLabel = calculatedAge
     ? t(`${calculatedAge} años`, `${calculatedAge} years`)
     : placeholder;
@@ -414,7 +422,9 @@ export default function ProfileScreen() {
           <View style={styles.quickStats}>
             <View style={styles.quickChip}>
               <Feather name="calendar" size={14} color={Colors.primaryLight} />
-              <Text style={styles.quickChipText}>{ageLabel}</Text>
+              <Text style={styles.quickChipText}>
+                {[ageLabel, zodiacLabel].filter(Boolean).join(" · ") || placeholder}
+              </Text>
             </View>
             <View style={styles.quickChip}>
               <Feather name="user" size={14} color={Colors.accent} />
