@@ -17,13 +17,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
 import colors from "@/constants/colors";
-import {
-  BODY_TYPES,
-  ETHNICITIES,
-  HAIR_COLORS,
-  HEIGHTS,
-  INTERESTS_LIST,
-} from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
 
 function Field({
@@ -54,65 +47,6 @@ function Field({
         selectionColor={colors.primaryLight}
         textAlignVertical={multiline ? "top" : "center"}
       />
-    </View>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <View style={s.field}>
-      <Text style={s.fieldLabel}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen((current) => !current)}
-        style={s.selectField}
-      >
-        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
-          {value || "—"}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={s.dropdown}>
-          {options.map((option) => (
-            <Pressable
-              key={option}
-              onPress={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  s.dropdownOptionText,
-                  value === option && s.dropdownOptionTextActive,
-                ]}
-              >
-                {option}
-              </Text>
-              {value === option ? (
-                <Feather name="check" size={14} color={colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -259,15 +193,6 @@ export default function SettingsScreen() {
     setLocal((prev) => ({
       ...prev,
       [key]: value,
-    }));
-  };
-
-  const toggleInterest = (interest: string) => {
-    setLocal((prev) => ({
-      ...prev,
-      interests: prev.interests.includes(interest)
-        ? prev.interests.filter((item) => item !== interest)
-        : [...prev.interests, interest],
     }));
   };
 
@@ -449,67 +374,6 @@ export default function SettingsScreen() {
             cancelLabel={t("Cancelar", "Cancel")}
             confirmLabel={t("Guardar", "Save")}
           />
-          <Field
-            label={t("Sobre mí", "About me")}
-            value={local.bio}
-            onChangeText={(value) => update("bio", value)}
-            placeholder={t("Cuéntanos algo sobre ti...", "Tell us something about you...")}
-            multiline
-          />
-        </Section>
-
-        <Section title={t("Atributos físicos", "Physical attributes")}>
-          <SelectField
-            label={t("Tipo de cuerpo", "Body type")}
-            value={local.bodyType}
-            options={BODY_TYPES}
-            onChange={(value) => update("bodyType", value)}
-          />
-          <SelectField
-            label={t("Altura", "Height")}
-            value={local.height}
-            options={HEIGHTS}
-            onChange={(value) => update("height", value)}
-          />
-          <SelectField
-            label={t("Color de cabello", "Hair color")}
-            value={local.hairColor}
-            options={HAIR_COLORS}
-            onChange={(value) => update("hairColor", value)}
-          />
-          <SelectField
-            label={t("Etnia", "Ethnicity")}
-            value={local.ethnicity}
-            options={ETHNICITIES}
-            onChange={(value) => update("ethnicity", value)}
-          />
-        </Section>
-
-        <Section title={t("Intereses", "Interests")}>
-          <View style={s.interestsWrap}>
-            {INTERESTS_LIST.map((interest) => {
-              const selected = local.interests.includes(interest);
-              return (
-                <Pressable
-                  key={interest}
-                  onPress={() => toggleInterest(interest)}
-                  style={[
-                    s.interestChip,
-                    selected && s.interestChipSelected,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      s.interestChipText,
-                      selected && s.interestChipTextSelected,
-                    ]}
-                  >
-                    {interest}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
         </Section>
 
         <Pressable

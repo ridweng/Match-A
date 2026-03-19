@@ -11,13 +11,21 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { MAX_PROFILE_PHOTOS } from "@/constants/profile-options";
-import { useApp } from "@/context/AppContext";
+import {
+  BODY_TYPES,
+  ETHNICITIES,
+  HAIR_COLORS,
+  HEIGHTS,
+  INTERESTS_LIST,
+  MAX_PROFILE_PHOTOS,
+} from "@/constants/profile-options";
+import { useApp, type UserProfile } from "@/context/AppContext";
 import { formatDateForDisplay } from "@/utils/dateOfBirth";
 
 function SummaryField({
@@ -35,6 +43,62 @@ function SummaryField({
   );
 }
 
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+
+  return (
+    <View style={styles.editField}>
+      <Text style={styles.editLabel}>{label}</Text>
+      <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
+        <Text style={[styles.selectValue, !value && styles.selectPlaceholder]}>
+          {value || "—"}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={Colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={styles.dropdown}>
+          {options.map((option) => (
+            <Pressable
+              key={option}
+              onPress={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              style={[styles.dropdownOption, value === option && styles.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  styles.dropdownOptionText,
+                  value === option && styles.dropdownOptionTextActive,
+                ]}
+              >
+                {option}
+              </Text>
+              {value === option ? (
+                <Feather name="check" size={14} color={Colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
@@ -42,6 +106,7 @@ export default function ProfileScreen() {
     accountProfile,
     removeProfilePhoto,
     setProfilePhoto,
+    updateProfile,
   } = useApp();
 
   const placeholder = t("Ninguno", "None");
@@ -116,6 +181,19 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const update = (key: keyof UserProfile, value: string | string[]) => {
+    updateProfile({
+      [key]: value,
+    } as Partial<UserProfile>);
+  };
+
+  const toggleInterest = (interest: string) => {
+    const next = accountProfile.interests.includes(interest)
+      ? accountProfile.interests.filter((item) => item !== interest)
+      : [...accountProfile.interests, interest];
+    update("interests", next);
   };
 
   const mainPhoto = accountProfile.photos[0];
@@ -261,9 +339,19 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t("Sobre mí", "About me")}</Text>
           <View style={styles.card}>
-            <Text style={styles.bioText}>
-              {showValue(accountProfile.bio)}
-            </Text>
+            <View style={styles.editField}>
+              <Text style={styles.editLabel}>{t("Sobre mí", "About me")}</Text>
+              <TextInput
+                style={[styles.editInput, styles.editInputMultiline]}
+                value={accountProfile.bio}
+                onChangeText={(value) => update("bio", value)}
+                placeholder={t("Cuéntanos algo sobre ti...", "Tell us something about you...")}
+                placeholderTextColor={Colors.textMuted}
+                multiline
+                numberOfLines={5}
+                textAlignVertical="top"
+              />
+            </View>
           </View>
         </View>
 
@@ -271,48 +359,61 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>
             {t("Atributos físicos", "Physical attributes")}
           </Text>
-          <View style={styles.attributeGrid}>
-            <View style={styles.card}>
-              <SummaryField
-                label={t("Tipo de cuerpo", "Body type")}
-                value={showValue(accountProfile.bodyType)}
-              />
-            </View>
-            <View style={styles.card}>
-              <SummaryField
-                label={t("Altura", "Height")}
-                value={showValue(accountProfile.height)}
-              />
-            </View>
-            <View style={styles.card}>
-              <SummaryField
-                label={t("Color de cabello", "Hair color")}
-                value={showValue(accountProfile.hairColor)}
-              />
-            </View>
-            <View style={styles.card}>
-              <SummaryField
-                label={t("Etnia", "Ethnicity")}
-                value={showValue(accountProfile.ethnicity)}
-              />
-            </View>
+          <View style={styles.card}>
+            <SelectField
+              label={t("Tipo de cuerpo", "Body type")}
+              value={accountProfile.bodyType}
+              options={BODY_TYPES}
+              onChange={(value) => update("bodyType", value)}
+            />
+            <SelectField
+              label={t("Altura", "Height")}
+              value={accountProfile.height}
+              options={HEIGHTS}
+              onChange={(value) => update("height", value)}
+            />
+            <SelectField
+              label={t("Color de cabello", "Hair color")}
+              value={accountProfile.hairColor}
+              options={HAIR_COLORS}
+              onChange={(value) => update("hairColor", value)}
+            />
+            <SelectField
+              label={t("Etnia", "Ethnicity")}
+              value={accountProfile.ethnicity}
+              options={ETHNICITIES}
+              onChange={(value) => update("ethnicity", value)}
+            />
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t("Intereses", "Interests")}</Text>
           <View style={styles.card}>
-            {accountProfile.interests.length ? (
-              <View style={styles.interestsWrap}>
-                {accountProfile.interests.map((interest) => (
-                  <View key={interest} style={styles.interestChip}>
-                    <Text style={styles.interestChipText}>{interest}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <Text style={styles.placeholderText}>{placeholder}</Text>
-            )}
+            <View style={styles.interestsWrap}>
+              {INTERESTS_LIST.map((interest) => {
+                const selected = accountProfile.interests.includes(interest);
+                return (
+                  <Pressable
+                    key={interest}
+                    onPress={() => toggleInterest(interest)}
+                    style={[
+                      styles.interestChip,
+                      selected && styles.interestChipSelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.interestChipText,
+                        selected && styles.interestChipTextSelected,
+                      ]}
+                    >
+                      {interest}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
         </View>
 
@@ -458,6 +559,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
     borderColor: Colors.border,
+    gap: 14,
   },
   photoGrid: {
     flexDirection: "row",
@@ -521,14 +623,78 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 22,
   },
-  bioText: {
+  editField: {
+    gap: 10,
+  },
+  editLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  editInput: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     fontFamily: "Inter_400Regular",
     fontSize: 15,
-    lineHeight: 23,
     color: Colors.text,
   },
-  attributeGrid: {
-    gap: 10,
+  editInputMultiline: {
+    minHeight: 118,
+  },
+  selectField: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  selectValue: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 15,
+    color: Colors.text,
+  },
+  selectPlaceholder: {
+    color: Colors.textMuted,
+  },
+  dropdown: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.backgroundElevated,
+    overflow: "hidden",
+  },
+  dropdownOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  dropdownOptionActive: {
+    backgroundColor: "rgba(82,183,136,0.08)",
+  },
+  dropdownOptionText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.textSecondary,
+  },
+  dropdownOptionTextActive: {
+    color: Colors.primaryLight,
+    fontFamily: "Inter_500Medium",
   },
   interestsWrap: {
     flexDirection: "row",
@@ -548,9 +714,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.text,
   },
-  placeholderText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 15,
-    color: Colors.textMuted,
+  interestChipSelected: {
+    backgroundColor: "rgba(82,183,136,0.15)",
+    borderColor: Colors.primaryLight,
+  },
+  interestChipTextSelected: {
+    color: Colors.primaryLight,
   },
 });
