@@ -12,8 +12,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { DateOfBirthField } from "@/components/DateOfBirthField";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
+import { isAdultBirthDate } from "@/utils/dateOfBirth";
 
 export default function CompleteProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -54,11 +56,11 @@ export default function CompleteProfileScreen() {
       );
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+    if (!isAdultBirthDate(dateOfBirth)) {
       setLocalError(
         t(
-          "Usa el formato YYYY-MM-DD.",
-          "Use the YYYY-MM-DD format."
+          "Debes tener al menos 18 años.",
+          "You must be at least 18 years old."
         )
       );
       return;
@@ -104,13 +106,12 @@ export default function CompleteProfileScreen() {
           placeholderTextColor="rgba(240,245,241,0.28)"
         />
 
-        <Text style={styles.label}>{t("Fecha de nacimiento", "Date of birth")}</Text>
-        <TextInput
-          style={styles.input}
+        <DateOfBirthField
+          label={t("Fecha de nacimiento", "Date of birth")}
           value={dateOfBirth}
-          onChangeText={setDateOfBirth}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor="rgba(240,245,241,0.28)"
+          onChange={setDateOfBirth}
+          cancelLabel={t("Cancelar", "Cancel")}
+          confirmLabel={t("Guardar", "Save")}
         />
 
         {localError ? <Text style={styles.error}>{localError}</Text> : null}

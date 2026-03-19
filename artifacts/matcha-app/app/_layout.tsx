@@ -22,7 +22,7 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  const { authStatus, needsProfileCompletion } = useApp();
+  const { authStatus, biometricLockRequired, needsProfileCompletion } = useApp();
 
   useEffect(() => {
     if (authStatus === "loading") {
@@ -30,12 +30,14 @@ function RootLayoutNav() {
     }
     if (authStatus !== "authenticated") {
       router.replace("/login" as any);
+    } else if (biometricLockRequired) {
+      router.replace("/biometric-lock" as any);
     } else if (needsProfileCompletion) {
       router.replace("/complete-profile" as any);
     } else {
       router.replace("/(tabs)/discover" as any);
     }
-  }, [authStatus, needsProfileCompletion]);
+  }, [authStatus, biometricLockRequired, needsProfileCompletion]);
 
   if (authStatus === "loading") {
     return (
@@ -55,6 +57,7 @@ function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
+      <Stack.Screen name="biometric-lock" />
       <Stack.Screen name="complete-profile" />
       <Stack.Screen name="(tabs)" />
     </Stack>

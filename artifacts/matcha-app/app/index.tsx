@@ -6,13 +6,15 @@ import { useApp } from "@/context/AppContext";
 import colors from "@/constants/colors";
 
 export default function Entry() {
-  const { authStatus, needsProfileCompletion } = useApp();
+  const { authStatus, biometricLockRequired, needsProfileCompletion } = useApp();
 
   useEffect(() => {
     if (authStatus === "loading") return;
     const timeout = setTimeout(() => {
       if (authStatus !== "authenticated") {
         router.replace("/login");
+      } else if (biometricLockRequired) {
+        router.replace("/biometric-lock");
       } else if (needsProfileCompletion) {
         router.replace("/complete-profile");
       } else {
@@ -20,7 +22,7 @@ export default function Entry() {
       }
     }, 100);
     return () => clearTimeout(timeout);
-  }, [authStatus, needsProfileCompletion]);
+  }, [authStatus, biometricLockRequired, needsProfileCompletion]);
 
   return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 }

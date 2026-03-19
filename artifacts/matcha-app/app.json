@@ -33,6 +33,12 @@
       "expo-router",
       "expo-font",
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Use Face ID to unlock your MatchA account."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",

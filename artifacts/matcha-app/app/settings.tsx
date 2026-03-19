@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Platform,
@@ -10,94 +10,318 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { DateOfBirthField } from "@/components/DateOfBirthField";
 import colors from "@/constants/colors";
-import { useApp } from "@/context/AppContext";
+import {
+  BODY_TYPES,
+  ETHNICITIES,
+  HAIR_COLORS,
+  HEIGHTS,
+  INTERESTS_LIST,
+} from "@/constants/profile-options";
+import { useApp, type UserProfile } from "@/context/AppContext";
 
-function SettingRow({
-  icon,
+function Field({
   label,
   value,
-  onPress,
-  danger,
-  rightElement,
+  onChangeText,
+  placeholder,
+  multiline,
 }: {
-  icon: string;
   label: string;
-  value?: string;
-  onPress?: () => void;
-  danger?: boolean;
-  rightElement?: React.ReactNode;
+  value: string;
+  onChangeText?: (value: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
 }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        s.row,
-        pressed && onPress && { opacity: 0.7 },
-      ]}
-      disabled={!onPress && !rightElement}
-    >
-      <View style={[s.rowIcon, danger && s.rowIconDanger]}>
-        <Feather
-          name={icon as any}
-          size={16}
-          color={danger ? colors.dislikeRed : colors.gold}
-        />
-      </View>
-      <Text style={[s.rowLabel, danger && s.rowLabelDanger]}>{label}</Text>
-      <View style={s.rowRight}>
-        {rightElement ? (
-          rightElement
-        ) : value ? (
-          <Text style={s.rowValue}>{value}</Text>
-        ) : null}
-        {onPress && !rightElement && (
-          <Feather name="chevron-right" size={16} color={colors.slateLight} />
-        )}
-      </View>
-    </Pressable>
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput
+        style={[s.input, multiline && s.inputMultiline, !onChangeText && s.inputReadonly]}
+        value={value}
+        onChangeText={onChangeText}
+        editable={Boolean(onChangeText)}
+        multiline={multiline}
+        numberOfLines={multiline ? 5 : 1}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textMuted}
+        selectionColor={colors.primaryLight}
+        textAlignVertical={multiline ? "top" : "center"}
+      />
+    </View>
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
-  return <Text style={s.sectionHeader}>{title}</Text>;
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={s.selectField}
+      >
+        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+          {value || "—"}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={s.dropdown}>
+          {options.map((option) => (
+            <Pressable
+              key={option}
+              onPress={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  s.dropdownOptionText,
+                  value === option && s.dropdownOptionTextActive,
+                ]}
+              >
+                {option}
+              </Text>
+              {value === option ? (
+                <Feather name="check" size={14} color={colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
-function Divider() {
-  return <View style={s.divider} />;
+function LanguageField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: "es" | "en";
+  onChange: (value: "es" | "en") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const options: Array<{ value: "es" | "en"; label: string }> = [
+    { value: "es", label: "Español" },
+    { value: "en", label: "English" },
+  ];
+
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={s.selectField}
+      >
+        <Text style={s.selectValue}>
+          {options.find((option) => option.value === value)?.label || value}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={s.dropdown}>
+          {options.map((option) => (
+            <Pressable
+              key={option.value}
+              onPress={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  s.dropdownOptionText,
+                  value === option.value && s.dropdownOptionTextActive,
+                ]}
+              >
+                {option.label}
+              </Text>
+              {value === option.value ? (
+                <Feather name="check" size={14} color={colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={s.section}>
+      <Text style={s.sectionTitle}>{title}</Text>
+      <View style={s.card}>{children}</View>
+    </View>
+  );
 }
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const { language, setLanguage, logout } = useApp();
+  const {
+    accountProfile,
+    biometricsEnabled,
+    language,
+    logout,
+    setBiometricsEnabled,
+    setLanguage,
+    t,
+    updateProfile,
+  } = useApp();
 
-  const [notifMatches, setNotifMatches] = useState(true);
-  const [notifMessages, setNotifMessages] = useState(true);
-  const [notifTips, setNotifTips] = useState(false);
-  const [showAge, setShowAge] = useState(true);
-  const [showDistance, setShowDistance] = useState(true);
+  const [local, setLocal] = useState<UserProfile>({
+    name: accountProfile.name,
+    age: accountProfile.age,
+    dateOfBirth: accountProfile.dateOfBirth,
+    bio: accountProfile.bio,
+    bodyType: accountProfile.bodyType,
+    height: accountProfile.height,
+    hairColor: accountProfile.hairColor,
+    ethnicity: accountProfile.ethnicity,
+    interests: accountProfile.interests,
+    photos: accountProfile.photos,
+  });
+  const [biometricPending, setBiometricPending] = useState(false);
+
+  useEffect(() => {
+    setLocal({
+      name: accountProfile.name,
+      age: accountProfile.age,
+      dateOfBirth: accountProfile.dateOfBirth,
+      bio: accountProfile.bio,
+      bodyType: accountProfile.bodyType,
+      height: accountProfile.height,
+      hairColor: accountProfile.hairColor,
+      ethnicity: accountProfile.ethnicity,
+      interests: accountProfile.interests,
+      photos: accountProfile.photos,
+    });
+  }, [accountProfile]);
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
+  const hasChanges = useMemo(() => {
+    const current = {
+      name: accountProfile.name,
+      age: accountProfile.age,
+      dateOfBirth: accountProfile.dateOfBirth,
+      bio: accountProfile.bio,
+      bodyType: accountProfile.bodyType,
+      height: accountProfile.height,
+      hairColor: accountProfile.hairColor,
+      ethnicity: accountProfile.ethnicity,
+      interests: accountProfile.interests,
+      photos: accountProfile.photos,
+    };
+
+    return JSON.stringify(current) !== JSON.stringify(local);
+  }, [accountProfile, local]);
+
+  const update = (key: keyof UserProfile, value: string | string[]) => {
+    setLocal((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const toggleInterest = (interest: string) => {
+    setLocal((prev) => ({
+      ...prev,
+      interests: prev.interests.includes(interest)
+        ? prev.interests.filter((item) => item !== interest)
+        : [...prev.interests, interest],
+    }));
+  };
+
+  const handleSave = async () => {
+    if (!hasChanges) return;
+    updateProfile(local);
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.replace("/(tabs)/profile");
+  };
+
+  const handleBiometricToggle = async (enabled: boolean) => {
+    setBiometricPending(true);
+    const result = await setBiometricsEnabled(enabled);
+    setBiometricPending(false);
+
+    if (result.ok) {
+      return;
+    }
+
+    if (result.code === "BIOMETRICS_UNAVAILABLE") {
+      Alert.alert(
+        t("Biometría no disponible", "Biometrics unavailable"),
+        t(
+          "Este dispositivo no admite desbloqueo biométrico.",
+          "This device does not support biometric unlock."
+        )
+      );
+      return;
+    }
+
+    if (result.code === "BIOMETRICS_NOT_ENROLLED") {
+      Alert.alert(
+        t("Biometría no configurada", "Biometrics not set up"),
+        t(
+          "Configura Face ID, Touch ID o huella en tu dispositivo antes de activar esta opción.",
+          "Set up Face ID, Touch ID, or fingerprint on your device before enabling this."
+        )
+      );
+      return;
+    }
+  };
+
   const handleLogout = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
-      language === "es" ? "Cerrar sesión" : "Log out",
-      language === "es"
-        ? "¿Estás seguro que deseas salir?"
-        : "Are you sure you want to log out?",
+      t("Cerrar sesión", "Log out"),
+      t("¿Estás seguro que deseas salir?", "Are you sure you want to log out?"),
       [
         {
-          text: language === "es" ? "Cancelar" : "Cancel",
+          text: t("Cancelar", "Cancel"),
           style: "cancel",
         },
         {
-          text: language === "es" ? "Salir" : "Log out",
+          text: t("Salir", "Log out"),
           style: "destructive",
           onPress: async () => {
             await logout();
@@ -111,31 +335,29 @@ export default function SettingsScreen() {
   const handleDeleteAccount = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     Alert.alert(
-      language === "es" ? "Eliminar cuenta" : "Delete account",
-      language === "es"
-        ? "Esta acción es permanente e irreversible."
-        : "This action is permanent and irreversible.",
+      t("Eliminar cuenta", "Delete account"),
+      t(
+        "Esta acción es permanente e irreversible.",
+        "This action is permanent and irreversible."
+      ),
       [
         {
-          text: language === "es" ? "Cancelar" : "Cancel",
+          text: t("Cancelar", "Cancel"),
           style: "cancel",
         },
         {
-          text: language === "es" ? "Eliminar" : "Delete",
+          text: t("Eliminar", "Delete"),
           style: "destructive",
-          onPress: () => Alert.alert("Demo", "Funcionalidad en desarrollo."),
+          onPress: () =>
+            Alert.alert(
+              "Demo",
+              t(
+                "La eliminación de cuenta aún no está conectada al backend.",
+                "Account deletion is not connected to the backend yet."
+              )
+            ),
         },
       ]
-    );
-  };
-
-  const handleComingSoon = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Alert.alert(
-      language === "es" ? "Próximamente" : "Coming soon",
-      language === "es"
-        ? "Esta función estará disponible pronto."
-        : "This feature will be available soon."
     );
   };
 
@@ -148,220 +370,159 @@ export default function SettingsScreen() {
         >
           <Feather name="chevron-left" size={22} color={colors.ivory} />
         </Pressable>
-        <Text style={s.headerTitle}>
-          {language === "es" ? "Ajustes" : "Settings"}
-        </Text>
-        <View style={{ width: 40 }} />
+        <Text style={s.headerTitle}>{t("Ajustes", "Settings")}</Text>
+        <Pressable
+          onPress={handleSave}
+          disabled={!hasChanges}
+          style={({ pressed }) => [
+            s.saveIconBtn,
+            !hasChanges && s.saveIconBtnDisabled,
+            pressed && hasChanges && { opacity: 0.82 },
+          ]}
+        >
+          <Feather
+            name="check"
+            size={20}
+            color={hasChanges ? colors.primaryLight : colors.textMuted}
+          />
+        </Pressable>
       </View>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
       >
-        <SectionHeader title={language === "es" ? "Cuenta" : "Account"} />
-        <View style={s.card}>
-          <SettingRow
-            icon="user"
-            label={language === "es" ? "Nombre de usuario" : "Username"}
-            value="@tu_usuario"
-            onPress={handleComingSoon}
+        <Section title={t("Cuenta", "Account")}>
+          <Field
+            label={t("Correo electrónico", "Email")}
+            value={accountProfile.email || t("Sin correo", "No email")}
           />
-          <Divider />
-          <SettingRow
-            icon="mail"
-            label={language === "es" ? "Correo electrónico" : "Email"}
-            value="tu@email.com"
-            onPress={handleComingSoon}
+          <View style={s.divider} />
+          <View style={s.toggleRow}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={s.toggleLabel}>
+                {t("Desbloqueo con biometría", "Biometric unlock")}
+              </Text>
+              <Text style={s.toggleHint}>
+                {t(
+                  "Se pedirá al abrir la app solo si ya lo activaste para esta cuenta.",
+                  "It will be requested on app open only if you already enabled it for this account."
+                )}
+              </Text>
+            </View>
+            <Switch
+              value={biometricsEnabled}
+              disabled={biometricPending}
+              onValueChange={handleBiometricToggle}
+              trackColor={{ false: colors.cardBorder, true: colors.gold }}
+              thumbColor={colors.ivory}
+            />
+          </View>
+          <View style={s.divider} />
+          <LanguageField
+            label={t("Idioma de la app", "App language")}
+            value={language}
+            onChange={setLanguage}
           />
-          <Divider />
-          <SettingRow
-            icon="phone"
-            label={language === "es" ? "Teléfono" : "Phone number"}
-            value="+34 ··· ··· ···"
-            onPress={handleComingSoon}
-          />
-          <Divider />
-          <SettingRow
-            icon="lock"
-            label={language === "es" ? "Cambiar contraseña" : "Change password"}
-            onPress={handleComingSoon}
-          />
-        </View>
+        </Section>
 
-        <SectionHeader
-          title={language === "es" ? "Preferencias de búsqueda" : "Discovery preferences"}
-        />
-        <View style={s.card}>
-          <SettingRow
-            icon="users"
-            label={language === "es" ? "Mostrar perfiles de" : "Show me"}
-            value={language === "es" ? "Mujeres" : "Women"}
-            onPress={handleComingSoon}
+        <Section title={t("Información básica", "Basic info")}>
+          <Field
+            label={t("Nombre completo", "Full name")}
+            value={local.name}
+            onChangeText={(value) => update("name", value)}
+            placeholder={t("Tu nombre", "Your name")}
           />
-          <Divider />
-          <SettingRow
-            icon="calendar"
-            label={language === "es" ? "Rango de edad" : "Age range"}
-            value="24 – 36"
-            onPress={handleComingSoon}
+          <DateOfBirthField
+            label={t("Fecha de nacimiento", "Date of birth")}
+            value={local.dateOfBirth}
+            onChange={(value) => update("dateOfBirth", value)}
+            cancelLabel={t("Cancelar", "Cancel")}
+            confirmLabel={t("Guardar", "Save")}
           />
-          <Divider />
-          <SettingRow
-            icon="map-pin"
-            label={language === "es" ? "Distancia máxima" : "Maximum distance"}
-            value="50 km"
-            onPress={handleComingSoon}
+          <Field
+            label={t("Sobre mí", "About me")}
+            value={local.bio}
+            onChangeText={(value) => update("bio", value)}
+            placeholder={t("Cuéntanos algo sobre ti...", "Tell us something about you...")}
+            multiline
           />
-          <Divider />
-          <SettingRow
-            icon="globe"
-            label={language === "es" ? "Idioma de la app" : "App language"}
-            value={language === "es" ? "Español" : "English"}
-            onPress={() => setLanguage(language === "es" ? "en" : "es")}
-          />
-        </View>
+        </Section>
 
-        <SectionHeader
-          title={language === "es" ? "Notificaciones" : "Notifications"}
-        />
-        <View style={s.card}>
-          <SettingRow
-            icon="heart"
-            label={language === "es" ? "Nuevos matches" : "New matches"}
-            rightElement={
-              <Switch
-                value={notifMatches}
-                onValueChange={setNotifMatches}
-                trackColor={{ false: colors.cardBorder, true: colors.gold }}
-                thumbColor={colors.ivory}
-              />
-            }
+        <Section title={t("Atributos físicos", "Physical attributes")}>
+          <SelectField
+            label={t("Tipo de cuerpo", "Body type")}
+            value={local.bodyType}
+            options={BODY_TYPES}
+            onChange={(value) => update("bodyType", value)}
           />
-          <Divider />
-          <SettingRow
-            icon="message-circle"
-            label={language === "es" ? "Mensajes" : "Messages"}
-            rightElement={
-              <Switch
-                value={notifMessages}
-                onValueChange={setNotifMessages}
-                trackColor={{ false: colors.cardBorder, true: colors.gold }}
-                thumbColor={colors.ivory}
-              />
-            }
+          <SelectField
+            label={t("Altura", "Height")}
+            value={local.height}
+            options={HEIGHTS}
+            onChange={(value) => update("height", value)}
           />
-          <Divider />
-          <SettingRow
-            icon="zap"
-            label={language === "es" ? "Consejos de mejora" : "Improvement tips"}
-            rightElement={
-              <Switch
-                value={notifTips}
-                onValueChange={setNotifTips}
-                trackColor={{ false: colors.cardBorder, true: colors.gold }}
-                thumbColor={colors.ivory}
-              />
-            }
+          <SelectField
+            label={t("Color de cabello", "Hair color")}
+            value={local.hairColor}
+            options={HAIR_COLORS}
+            onChange={(value) => update("hairColor", value)}
           />
-        </View>
+          <SelectField
+            label={t("Etnia", "Ethnicity")}
+            value={local.ethnicity}
+            options={ETHNICITIES}
+            onChange={(value) => update("ethnicity", value)}
+          />
+        </Section>
 
-        <SectionHeader
-          title={language === "es" ? "Privacidad" : "Privacy"}
-        />
-        <View style={s.card}>
-          <SettingRow
-            icon="eye"
-            label={language === "es" ? "Mostrar mi edad" : "Show my age"}
-            rightElement={
-              <Switch
-                value={showAge}
-                onValueChange={setShowAge}
-                trackColor={{ false: colors.cardBorder, true: colors.gold }}
-                thumbColor={colors.ivory}
-              />
-            }
-          />
-          <Divider />
-          <SettingRow
-            icon="navigation"
-            label={language === "es" ? "Mostrar mi distancia" : "Show my distance"}
-            rightElement={
-              <Switch
-                value={showDistance}
-                onValueChange={setShowDistance}
-                trackColor={{ false: colors.cardBorder, true: colors.gold }}
-                thumbColor={colors.ivory}
-              />
-            }
-          />
-          <Divider />
-          <SettingRow
-            icon="shield"
-            label={language === "es" ? "Bloquear y reportar" : "Block & report"}
-            onPress={handleComingSoon}
-          />
-          <Divider />
-          <SettingRow
-            icon="file-text"
-            label={language === "es" ? "Política de privacidad" : "Privacy policy"}
-            onPress={handleComingSoon}
-          />
-          <Divider />
-          <SettingRow
-            icon="info"
-            label={language === "es" ? "Términos de uso" : "Terms of service"}
-            onPress={handleComingSoon}
-          />
-        </View>
-
-        <SectionHeader
-          title={language === "es" ? "Soporte" : "Support"}
-        />
-        <View style={s.card}>
-          <SettingRow
-            icon="help-circle"
-            label={language === "es" ? "Centro de ayuda" : "Help center"}
-            onPress={handleComingSoon}
-          />
-          <Divider />
-          <SettingRow
-            icon="star"
-            label={language === "es" ? "Valora la app" : "Rate the app"}
-            onPress={handleComingSoon}
-          />
-          <Divider />
-          <SettingRow
-            icon="share-2"
-            label={language === "es" ? "Compartir MatchA" : "Share MatchA"}
-            onPress={handleComingSoon}
-          />
-        </View>
+        <Section title={t("Intereses", "Interests")}>
+          <View style={s.interestsWrap}>
+            {INTERESTS_LIST.map((interest) => {
+              const selected = local.interests.includes(interest);
+              return (
+                <Pressable
+                  key={interest}
+                  onPress={() => toggleInterest(interest)}
+                  style={[
+                    s.interestChip,
+                    selected && s.interestChipSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      s.interestChipText,
+                      selected && s.interestChipTextSelected,
+                    ]}
+                  >
+                    {interest}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Section>
 
         <Pressable
           onPress={handleLogout}
-          style={({ pressed }) => [s.logoutBtn, pressed && { opacity: 0.8 }]}
+          style={({ pressed }) => [s.logoutBtn, pressed && { opacity: 0.84 }]}
         >
           <Feather name="log-out" size={18} color={colors.ivory} />
-          <Text style={s.logoutText}>
-            {language === "es" ? "Cerrar sesión" : "Log out"}
-          </Text>
+          <Text style={s.logoutText}>{t("Cerrar sesión", "Log out")}</Text>
         </Pressable>
 
         <View style={s.dangerZone}>
-          <Text style={s.dangerTitle}>
-            {language === "es" ? "Zona de peligro" : "Danger zone"}
-          </Text>
-          <View style={s.card}>
-            <SettingRow
-              icon="trash-2"
-              label={language === "es" ? "Eliminar mi cuenta" : "Delete my account"}
-              onPress={handleDeleteAccount}
-              danger
-            />
-          </View>
+          <Text style={s.dangerTitle}>{t("Zona de peligro", "Danger zone")}</Text>
+          <Pressable
+            onPress={handleDeleteAccount}
+            style={({ pressed }) => [s.deleteBtn, pressed && { opacity: 0.8 }]}
+          >
+            <Feather name="trash-2" size={17} color={colors.dislikeRed} />
+            <Text style={s.deleteBtnText}>
+              {t("Eliminar mi cuenta", "Delete my account")}
+            </Text>
+          </Pressable>
         </View>
-
-        <Text style={s.version}>MatchA v1.0.0 · Hecho con ♥</Text>
       </ScrollView>
     </View>
   );
@@ -389,6 +550,20 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  saveIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  saveIconBtnDisabled: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+  },
   headerTitle: {
     fontFamily: "Inter_700Bold",
     fontSize: 18,
@@ -398,78 +573,159 @@ const s = StyleSheet.create({
   scroll: {
     paddingHorizontal: 20,
     paddingTop: 8,
-    gap: 0,
   },
-  sectionHeader: {
+  section: {
+    marginTop: 24,
+    gap: 10,
+  },
+  sectionTitle: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 12,
     color: colors.gold,
     textTransform: "uppercase",
     letterSpacing: 1,
-    marginTop: 24,
-    marginBottom: 8,
     paddingHorizontal: 4,
   },
   card: {
     backgroundColor: colors.cardBg,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    overflow: "hidden",
+    padding: 16,
+    gap: 14,
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 12,
+  field: {
+    gap: 7,
   },
-  rowIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
-    backgroundColor: "rgba(76,175,114,0.1)",
-    alignItems: "center",
-    justifyContent: "center",
+  fieldLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: colors.slateLight,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
-  rowIconDanger: {
-    backgroundColor: "rgba(239,68,68,0.1)",
-  },
-  rowLabel: {
-    flex: 1,
+  input: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     fontFamily: "Inter_400Regular",
     fontSize: 15,
     color: colors.ivory,
   },
-  rowLabelDanger: {
-    color: colors.dislikeRed,
+  inputMultiline: {
+    minHeight: 118,
   },
-  rowRight: {
+  inputReadonly: {
+    color: colors.slateLight,
+  },
+  selectField: {
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  selectValue: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 15,
+    color: colors.ivory,
+  },
+  selectPlaceholder: {
+    color: colors.textMuted,
+  },
+  dropdown: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    backgroundColor: colors.backgroundElevated,
+    overflow: "hidden",
+  },
+  dropdownOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
   },
-  rowValue: {
+  dropdownOptionActive: {
+    backgroundColor: "rgba(82,183,136,0.08)",
+  },
+  dropdownOptionText: {
     fontFamily: "Inter_400Regular",
     fontSize: 14,
     color: colors.slateLight,
   },
+  dropdownOptionTextActive: {
+    color: colors.primaryLight,
+    fontFamily: "Inter_500Medium",
+  },
   divider: {
     height: 1,
     backgroundColor: colors.cardBorder,
-    marginLeft: 60,
   },
-  logoutBtn: {
+  toggleRow: {
     flexDirection: "row",
+    gap: 12,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginTop: 28,
-    backgroundColor: colors.cardBg,
-    borderRadius: 16,
+  },
+  toggleLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 15,
+    color: colors.ivory,
+  },
+  toggleHint: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.slateLight,
+  },
+  interestsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  interestChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    paddingVertical: 16,
+  },
+  interestChipSelected: {
+    backgroundColor: "rgba(82,183,136,0.15)",
+    borderColor: colors.primaryLight,
+  },
+  interestChipText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: colors.slateLight,
+  },
+  interestChipTextSelected: {
+    color: colors.primaryLight,
+  },
+  logoutBtn: {
+    marginTop: 12,
+    height: 54,
+    borderRadius: 18,
+    backgroundColor: colors.cardBg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   logoutText: {
     fontFamily: "Inter_600SemiBold",
@@ -478,6 +734,8 @@ const s = StyleSheet.create({
   },
   dangerZone: {
     marginTop: 24,
+    marginBottom: 12,
+    gap: 10,
   },
   dangerTitle: {
     fontFamily: "Inter_600SemiBold",
@@ -485,15 +743,22 @@ const s = StyleSheet.create({
     color: colors.dislikeRed,
     textTransform: "uppercase",
     letterSpacing: 1,
-    marginBottom: 8,
     paddingHorizontal: 4,
   },
-  version: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 12,
-    color: colors.slateLight,
-    textAlign: "center",
-    marginTop: 32,
-    marginBottom: 8,
+  deleteBtn: {
+    height: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(230,57,70,0.25)",
+    backgroundColor: "rgba(230,57,70,0.07)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  deleteBtnText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 15,
+    color: colors.dislikeRed,
   },
 });

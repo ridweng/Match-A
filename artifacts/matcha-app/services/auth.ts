@@ -34,6 +34,18 @@ export type MeResponse = {
 
 export type ProviderAvailability = Record<AuthProvider, boolean>;
 
+const DEMO_EMAIL = "test@gmail.com";
+const DEMO_PASSWORD = "test";
+const DEMO_ACCESS_TOKEN = "demo-access-token";
+const DEMO_REFRESH_TOKEN = "demo-refresh-token";
+const DEMO_USER: AuthUser = {
+  id: 1,
+  email: DEMO_EMAIL,
+  name: "Test User",
+  dateOfBirth: "2000-01-01",
+  emailVerified: true,
+};
+
 type RequestOptions = {
   method?: string;
   body?: unknown;
@@ -47,6 +59,17 @@ class ApiError extends Error {
     super(message || code);
     this.code = code;
   }
+}
+
+function isDemoCredentials(input: { email: string; password: string }) {
+  return (
+    input.email.trim().toLowerCase() === DEMO_EMAIL &&
+    input.password === DEMO_PASSWORD
+  );
+}
+
+function isDemoToken(token: string | null | undefined) {
+  return token === DEMO_ACCESS_TOKEN || token === DEMO_REFRESH_TOKEN;
 }
 
 function getBaseUrl() {
@@ -122,6 +145,15 @@ export async function signUp(input: {
 }
 
 export async function signIn(input: { email: string; password: string }) {
+  if (isDemoCredentials(input)) {
+    return {
+      status: "authenticated" as const,
+      accessToken: DEMO_ACCESS_TOKEN,
+      refreshToken: DEMO_REFRESH_TOKEN,
+      user: DEMO_USER,
+      needsProfileCompletion: false,
+    };
+  }
   return request<AuthSessionResponse>("/api/auth/sign-in", {
     method: "POST",
     body: input,
@@ -129,6 +161,15 @@ export async function signIn(input: { email: string; password: string }) {
 }
 
 export async function refreshSession(refreshToken: string) {
+  if (isDemoToken(refreshToken)) {
+    return {
+      status: "authenticated" as const,
+      accessToken: DEMO_ACCESS_TOKEN,
+      refreshToken: DEMO_REFRESH_TOKEN,
+      user: DEMO_USER,
+      needsProfileCompletion: false,
+    };
+  }
   return request<AuthSessionResponse>("/api/auth/refresh", {
     method: "POST",
     body: { refreshToken },
@@ -136,6 +177,9 @@ export async function refreshSession(refreshToken: string) {
 }
 
 export async function signOut(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return;
+  }
   return request<void>("/api/auth/sign-out", {
     method: "POST",
     accessToken,
@@ -143,6 +187,12 @@ export async function signOut(accessToken: string) {
 }
 
 export async function getMe(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return {
+      user: DEMO_USER,
+      needsProfileCompletion: false,
+    };
+  }
   return request<MeResponse>("/api/auth/me", {
     accessToken,
   });
