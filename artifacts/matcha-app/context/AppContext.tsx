@@ -44,6 +44,7 @@ export type UserProfile = {
   age: string;
   dateOfBirth: string;
   genderIdentity: string;
+  pronouns: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -56,6 +57,8 @@ export type UserProfile = {
 export type AccountProfile = UserProfile & {
   email: string;
 };
+
+export type HeightUnit = "metric" | "imperial";
 
 type AuthStatus =
   | "loading"
@@ -139,6 +142,7 @@ const DEFAULT_PROFILE: UserProfile = {
   age: "",
   dateOfBirth: "",
   genderIdentity: "",
+  pronouns: "",
   bio: "",
   bodyType: "",
   height: "",
@@ -180,6 +184,8 @@ type AppContextType = {
   setBiometricsEnabled: (enabled: boolean) => Promise<BiometricResult>;
   language: "es" | "en";
   setLanguage: (lang: "es" | "en") => void;
+  heightUnit: HeightUnit;
+  setHeightUnit: (unit: HeightUnit) => void;
   t: (es: string, en: string) => string;
   goals: Goal[];
   updateGoalProgress: (id: string, progress: number) => void;
@@ -210,6 +216,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [language, setLanguageState] = useState<"es" | "en">("es");
+  const [heightUnit, setHeightUnitState] = useState<HeightUnit>("metric");
   const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
   const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
@@ -235,16 +242,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const [lang, storedToken, savedGoals, savedProfile, savedBiometrics] =
+        const [lang, storedToken, savedGoals, savedProfile, savedBiometrics, savedHeightUnit] =
           await Promise.all([
             AsyncStorage.getItem("language"),
             AsyncStorage.getItem("accessToken"),
             AsyncStorage.getItem("goals"),
             AsyncStorage.getItem("profile"),
             AsyncStorage.getItem("biometricsEnabled"),
+            AsyncStorage.getItem("heightUnit"),
           ]);
 
         if (lang === "es" || lang === "en") setLanguageState(lang);
+        if (savedHeightUnit === "metric" || savedHeightUnit === "imperial") {
+          setHeightUnitState(savedHeightUnit);
+        }
         if (savedGoals) setGoals(JSON.parse(savedGoals));
         if (savedProfile) {
           const p = JSON.parse(savedProfile);
@@ -286,6 +297,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setLanguage = useCallback((lang: "es" | "en") => {
     setLanguageState(lang);
     AsyncStorage.setItem("language", lang).catch(() => {});
+  }, []);
+
+  const setHeightUnit = useCallback((unit: HeightUnit) => {
+    setHeightUnitState(unit);
+    AsyncStorage.setItem("heightUnit", unit).catch(() => {});
   }, []);
 
   const clearAuthFeedback = useCallback(() => {
@@ -558,6 +574,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setBiometricsEnabled,
         language,
         setLanguage,
+        heightUnit,
+        setHeightUnit,
         t,
         goals,
         updateGoalProgress,

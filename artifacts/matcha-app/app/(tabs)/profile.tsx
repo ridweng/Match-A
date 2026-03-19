@@ -20,14 +20,20 @@ import Colors from "@/constants/colors";
 import {
   BODY_TYPES,
   ETHNICITIES,
+  getBodyTypeLabel,
+  getEthnicityLabel,
   getGenderIdentityLabel,
+  getHairColorLabel,
+  getPronounLabel,
   HAIR_COLORS,
-  HEIGHTS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
+  normalizeBodyType,
+  normalizeEthnicity,
+  normalizeHairColor,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
-import { formatDateForDisplay, getAgeFromIsoDate } from "@/utils/dateOfBirth";
+import { getAgeFromIsoDate } from "@/utils/dateOfBirth";
 
 function SummaryField({
   label,
@@ -49,11 +55,13 @@ function SelectField({
   value,
   options,
   onChange,
+  getOptionLabel,
 }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
+  getOptionLabel?: (value: string) => string;
 }) {
   const [open, setOpen] = React.useState(false);
 
@@ -62,7 +70,7 @@ function SelectField({
       <Text style={styles.editLabel}>{label}</Text>
       <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
         <Text style={[styles.selectValue, !value && styles.selectPlaceholder]}>
-          {value || "—"}
+          {value ? getOptionLabel?.(value) || value : "—"}
         </Text>
         <Feather
           name={open ? "chevron-up" : "chevron-down"}
@@ -87,7 +95,7 @@ function SelectField({
                   value === option && styles.dropdownOptionTextActive,
                 ]}
               >
-                {option}
+                {getOptionLabel?.(option) || option}
               </Text>
               {value === option ? (
                 <Feather name="check" size={14} color={Colors.primaryLight} />
@@ -100,11 +108,74 @@ function SelectField({
   );
 }
 
+function normalizeHeightInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = trimmed.match(/\d+(\.\d+)?/);
+  return match?.[0] || "";
+}
+
+function getHeightLimit(unit: "metric" | "imperial") {
+  return unit === "imperial" ? 157.5 : 400;
+}
+
+function clampHeightValue(value: string, unit: "metric" | "imperial") {
+  const normalized = normalizeHeightInput(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+
+  const clamped = Math.min(Math.max(parsed, 0), getHeightLimit(unit));
+  return Number.isInteger(clamped) ? String(clamped) : clamped.toFixed(1);
+}
+
+function validateHeightValue(value: string, unit: "metric" | "imperial") {
+  const normalized = normalizeHeightInput(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+
+  if (parsed < 0 || parsed > getHeightLimit(unit)) {
+    return clampHeightValue(normalized, unit);
+  }
+
+  return normalized;
+}
+
+function isHeightOutOfRange(value: string, unit: "metric" | "imperial") {
+  const normalized = normalizeHeightInput(value);
+  if (!normalized) {
+    return false;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+
+  return parsed < 0 || parsed > getHeightLimit(unit);
+}
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
     t,
     accountProfile,
+    heightUnit,
+    language,
     removeProfilePhoto,
     setProfilePhoto,
     updateProfile,
@@ -117,13 +188,18 @@ export default function ProfileScreen() {
   const ageLabel = calculatedAge
     ? t(`${calculatedAge} años`, `${calculatedAge} years`)
     : placeholder;
+  const pronounLabel = getPronounLabel(accountProfile.pronouns, language);
+  const heightUnitLabel = heightUnit === "imperial" ? "in" : "cm";
+  const heightMax = getHeightLimit(heightUnit);
+  const heightOutOfRange = isHeightOutOfRange(accountProfile.height, heightUnit);
+  const heightPlaceholder =
+    heightUnit === "imperial"
+      ? t("Tu altura en pulgadas", "Your height in inches")
+      : t("Tu altura en cm", "Your height in cm");
 
   const showValue = (value: string | string[]) => {
     if (Array.isArray(value)) {
       return value.length ? value.join(", ") : placeholder;
-    }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      return formatDateForDisplay(value) || placeholder;
     }
     return value?.trim() ? value : placeholder;
   };
@@ -194,6 +270,18 @@ export default function ProfileScreen() {
     } as Partial<UserProfile>);
   };
 
+  const updateHeight = (value: string) => {
+    const sanitized = value.replace(/[^0-9.]/g, "");
+    const firstDecimalIndex = sanitized.indexOf(".");
+    const nextValue =
+      firstDecimalIndex === -1
+        ? sanitized
+        : `${sanitized.slice(0, firstDecimalIndex + 1)}${sanitized
+            .slice(firstDecimalIndex + 1)
+            .replace(/\./g, "")}`;
+    update("height", nextValue);
+  };
+
   const toggleInterest = (interest: string) => {
     const next = accountProfile.interests.includes(interest)
       ? accountProfile.interests.filter((item) => item !== interest)
@@ -247,6 +335,9 @@ export default function ProfileScreen() {
           </Pressable>
 
           <Text style={styles.nameText}>
+            {pronounLabel ? (
+              <Text style={styles.namePrefixText}>{pronounLabel} </Text>
+            ) : null}
             {showValue(accountProfile.name)}
           </Text>
           <Text style={styles.emailText}>
@@ -341,27 +432,47 @@ export default function ProfileScreen() {
           <View style={styles.card}>
             <SelectField
               label={t("Tipo de cuerpo", "Body type")}
-              value={accountProfile.bodyType}
+              value={normalizeBodyType(accountProfile.bodyType)}
               options={BODY_TYPES}
               onChange={(value) => update("bodyType", value)}
+              getOptionLabel={(value) => getBodyTypeLabel(value, t)}
             />
-            <SelectField
-              label={t("Altura", "Height")}
-              value={accountProfile.height}
-              options={HEIGHTS}
-              onChange={(value) => update("height", value)}
-            />
+            <View style={styles.editField}>
+              <Text style={styles.editLabel}>{t("Altura", "Height")}</Text>
+              <View style={styles.heightRow}>
+                <TextInput
+                  style={[styles.editInput, styles.heightInput]}
+                  value={normalizeHeightInput(accountProfile.height)}
+                  onChangeText={updateHeight}
+                  onBlur={() => update("height", validateHeightValue(accountProfile.height, heightUnit))}
+                  placeholder={heightPlaceholder}
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType={Platform.OS === "ios" ? "decimal-pad" : "numeric"}
+                />
+                <View style={styles.heightUnitBadge}>
+                  <Text style={styles.heightUnitText}>{heightUnitLabel}</Text>
+                </View>
+              </View>
+              {heightOutOfRange ? (
+                <Text style={styles.heightHint}>
+                  {t("Rango permitido: 0 a", "Allowed range: 0 to")} {heightMax}{" "}
+                  {heightUnitLabel}
+                </Text>
+              ) : null}
+            </View>
             <SelectField
               label={t("Color de cabello", "Hair color")}
-              value={accountProfile.hairColor}
+              value={normalizeHairColor(accountProfile.hairColor)}
               options={HAIR_COLORS}
               onChange={(value) => update("hairColor", value)}
+              getOptionLabel={(value) => getHairColorLabel(value, t)}
             />
             <SelectField
               label={t("Etnia", "Ethnicity")}
-              value={accountProfile.ethnicity}
+              value={normalizeEthnicity(accountProfile.ethnicity)}
               options={ETHNICITIES}
               onChange={(value) => update("ethnicity", value)}
+              getOptionLabel={(value) => getEthnicityLabel(value, t)}
             />
           </View>
         </View>
@@ -480,6 +591,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: Colors.text,
     textAlign: "center",
+  },
+  namePrefixText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
   emailText: {
     marginTop: 4,
@@ -623,6 +739,36 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 15,
     color: Colors.text,
+  },
+  heightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  heightInput: {
+    flex: 1,
+  },
+  heightUnitBadge: {
+    minWidth: 60,
+    minHeight: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  heightUnitText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.primaryLight,
+  },
+  heightHint: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginTop: 2,
   },
   editInputMultiline: {
     minHeight: 118,

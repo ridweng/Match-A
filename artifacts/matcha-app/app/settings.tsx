@@ -18,11 +18,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DateOfBirthField } from "@/components/DateOfBirthField";
 import colors from "@/constants/colors";
 import {
+  ENGLISH_PRONOUNS,
   GENDER_IDENTITIES,
   getGenderIdentityLabel,
+  getPronounLabel,
   normalizeGenderIdentity,
+  normalizePronouns,
+  SPANISH_PRONOUNS,
 } from "@/constants/profile-options";
-import { useApp, type UserProfile } from "@/context/AppContext";
+import { useApp, type HeightUnit, type UserProfile } from "@/context/AppContext";
 
 function Field({
   label,
@@ -69,6 +73,69 @@ function LanguageField({
   const options: Array<{ value: "es" | "en"; label: string }> = [
     { value: "es", label: "Español" },
     { value: "en", label: "English" },
+  ];
+
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={s.selectField}
+      >
+        <Text style={s.selectValue}>
+          {options.find((option) => option.value === value)?.label || value}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={s.dropdown}>
+          {options.map((option) => (
+            <Pressable
+              key={option.value}
+              onPress={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  s.dropdownOptionText,
+                  value === option.value && s.dropdownOptionTextActive,
+                ]}
+              >
+                {option.label}
+              </Text>
+              {value === option.value ? (
+                <Feather name="check" size={14} color={colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function HeightUnitField({
+  label,
+  value,
+  onChange,
+  t,
+}: {
+  label: string;
+  value: HeightUnit;
+  onChange: (value: HeightUnit) => void;
+  t: (es: string, en: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const options: Array<{ value: HeightUnit; label: string }> = [
+    { value: "metric", label: t("Métrico", "Metric") },
+    { value: "imperial", label: t("Imperial", "Imperial") },
   ];
 
   return (
@@ -178,6 +245,68 @@ function IdentityField({
   );
 }
 
+function PronounsField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  language,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  language: "es" | "en";
+}) {
+  const [open, setOpen] = useState(false);
+  const options = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
+
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={s.selectField}
+      >
+        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+          {value ? getPronounLabel(value, language) : placeholder}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={s.dropdown}>
+          {options.map((option) => (
+            <Pressable
+              key={option}
+              onPress={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  s.dropdownOptionText,
+                  value === option && s.dropdownOptionTextActive,
+                ]}
+              >
+                {getPronounLabel(option, language)}
+              </Text>
+              {value === option ? (
+                <Feather name="check" size={14} color={colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function Section({
   title,
   children,
@@ -198,9 +327,11 @@ export default function SettingsScreen() {
   const {
     accountProfile,
     biometricsEnabled,
+    heightUnit,
     language,
     logout,
     setBiometricsEnabled,
+    setHeightUnit,
     setLanguage,
     t,
     updateProfile,
@@ -211,6 +342,7 @@ export default function SettingsScreen() {
     age: accountProfile.age,
     dateOfBirth: accountProfile.dateOfBirth,
     genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
+    pronouns: normalizePronouns(accountProfile.pronouns),
     bio: accountProfile.bio,
     bodyType: accountProfile.bodyType,
     height: accountProfile.height,
@@ -220,6 +352,7 @@ export default function SettingsScreen() {
     photos: accountProfile.photos,
   });
   const [biometricPending, setBiometricPending] = useState(false);
+  const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
 
   useEffect(() => {
     setLocal({
@@ -227,6 +360,7 @@ export default function SettingsScreen() {
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
+      pronouns: normalizePronouns(accountProfile.pronouns),
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -235,7 +369,8 @@ export default function SettingsScreen() {
       interests: accountProfile.interests,
       photos: accountProfile.photos,
     });
-  }, [accountProfile]);
+    setLocalHeightUnit(heightUnit);
+  }, [accountProfile, heightUnit]);
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
@@ -246,6 +381,7 @@ export default function SettingsScreen() {
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
+      pronouns: normalizePronouns(accountProfile.pronouns),
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -255,8 +391,8 @@ export default function SettingsScreen() {
       photos: accountProfile.photos,
     };
 
-    return JSON.stringify(current) !== JSON.stringify(local);
-  }, [accountProfile, local]);
+    return JSON.stringify(current) !== JSON.stringify(local) || heightUnit !== localHeightUnit;
+  }, [accountProfile, heightUnit, local, localHeightUnit]);
 
   const update = (key: keyof UserProfile, value: string | string[]) => {
     setLocal((prev) => ({
@@ -268,6 +404,9 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     if (!hasChanges) return;
     updateProfile(local);
+    if (heightUnit !== localHeightUnit) {
+      setHeightUnit(localHeightUnit);
+    }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.replace("/(tabs)/profile");
   };
@@ -427,6 +566,12 @@ export default function SettingsScreen() {
             value={language}
             onChange={setLanguage}
           />
+          <HeightUnitField
+            label={t("Unidades de altura", "Height units")}
+            value={localHeightUnit}
+            onChange={setLocalHeightUnit}
+            t={t}
+          />
         </Section>
 
         <Section title={t("Información básica", "Basic info")}>
@@ -449,6 +594,13 @@ export default function SettingsScreen() {
             onChange={(value) => update("genderIdentity", value)}
             placeholder={t("Selecciona una opción", "Select an option")}
             t={t}
+          />
+          <PronounsField
+            label={t("Pronombres", "Pronouns")}
+            value={local.pronouns}
+            onChange={(value) => update("pronouns", value)}
+            placeholder={t("Selecciona pronombres", "Select pronouns")}
+            language={language}
           />
         </Section>
 
