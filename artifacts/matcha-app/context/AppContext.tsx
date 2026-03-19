@@ -1,32 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Linking from "expo-linking";
 import * as LocalAuthentication from "expo-local-authentication";
 import React, {
   createContext,
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 import { Platform } from "react-native";
-
-import {
-  ApiError,
-  extractAuthCallback,
-  fetchProviderAvailability,
-  getMe,
-  refreshSession,
-  signIn,
-  signInWithProvider,
-  signOut,
-  signUp,
-  toReadableAuthError,
-  updateMe,
-  type AuthProvider,
-  type AuthUser,
-  type ProviderAvailability,
-} from "@/services/auth";
 
 export type Goal = {
   id: string;
@@ -44,6 +25,7 @@ export type UserProfile = {
   name: string;
   age: string;
   dateOfBirth: string;
+  email?: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -53,81 +35,17 @@ export type UserProfile = {
   photos: string[];
 };
 
-export type AccountProfile = UserProfile & {
-  email: string;
+export type AuthUser = {
+  id: number;
+  email: string | null;
+  name: string;
+  dateOfBirth: string | null;
+  emailVerified: boolean;
 };
 
-export type AuthStatus =
-  | "loading"
-  | "anonymous"
-  | "authenticated"
-  | "verification_pending";
+type AuthStatus = "loading" | "unauthenticated" | "authenticated";
 
-type SessionState = {
-  accessToken: string;
-  refreshToken: string;
-};
-
-type BiometricActionResult = {
-  ok: boolean;
-  code?: string;
-};
-
-type AppContextType = {
-  authStatus: AuthStatus;
-  authBusy: boolean;
-  authError: string | null;
-  authNotice: string | null;
-  isLoggedIn: boolean;
-  user: AuthUser | null;
-  needsProfileCompletion: boolean;
-  pendingVerificationEmail: string | null;
-  verificationPreviewUrl: string | null;
-  providerAvailability: ProviderAvailability;
-  signIn: (input: { email: string; password: string }) => Promise<boolean>;
-  signUp: (input: {
-    name: string;
-    email: string;
-    password: string;
-    dateOfBirth: string;
-  }) => Promise<boolean>;
-  signInWithProvider: (
-    provider: AuthProvider,
-    mode: "signin" | "signup"
-  ) => Promise<boolean>;
-  completeProfile: (input: {
-    name?: string;
-    dateOfBirth?: string;
-  }) => Promise<boolean>;
-  logout: () => Promise<void>;
-  clearAuthFeedback: () => void;
-  refreshProviderSupport: () => Promise<void>;
-  language: "es" | "en";
-  setLanguage: (lang: "es" | "en") => Promise<void>;
-  t: (es: string, en: string) => string;
-  goals: Goal[];
-  updateGoalProgress: (id: string, progress: number) => void;
-  likedProfiles: string[];
-  likeProfile: (profileId: string) => void;
-  profile: UserProfile;
-  accountProfile: AccountProfile;
-  setProfile: (profile: UserProfile) => void;
-  updateProfile: (updates: Partial<UserProfile>) => void;
-  setProfilePhoto: (index: number, uri: string) => void;
-  removeProfilePhoto: (index: number) => void;
-  biometricsEnabled: boolean;
-  biometricBusy: boolean;
-  biometricLockRequired: boolean;
-  setBiometricsEnabled: (enabled: boolean) => Promise<BiometricActionResult>;
-  unlockWithBiometrics: () => Promise<BiometricActionResult>;
-};
-
-const LANGUAGE_KEY = "language";
-const GOALS_KEY = "goals";
-const PROFILE_KEY = "profile";
-const LIKED_PROFILES_KEY = "likedProfiles";
-const SESSION_KEY = "auth.session.v1";
-const BIOMETRIC_PREF_PREFIX = "biometric.preference.v1";
+type BiometricResult = { ok: boolean; code?: string };
 
 const DEFAULT_GOALS: Goal[] = [
   {
@@ -199,9 +117,10 @@ const DEFAULT_GOALS: Goal[] = [
 ];
 
 const DEFAULT_PROFILE: UserProfile = {
-  name: "",
-  age: "",
+  name: "Alejandro",
+  age: "29",
   dateOfBirth: "",
+  email: "",
   bio: "",
   bodyType: "",
   height: "",
@@ -211,294 +130,104 @@ const DEFAULT_PROFILE: UserProfile = {
   photos: [],
 };
 
-const DEFAULT_PROVIDER_AVAILABILITY: ProviderAvailability = {
-  google: false,
-  facebook: false,
-  apple: false,
+type AppContextType = {
+  authStatus: AuthStatus;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+  user: AuthUser | null;
+  authBusy: boolean;
+  authError: string | null;
+  clearAuthFeedback: () => void;
+  needsProfileCompletion: boolean;
+  completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<void>;
+  biometricLockRequired: boolean;
+  biometricBusy: boolean;
+  biometricsEnabled: boolean;
+  unlockWithBiometrics: () => Promise<BiometricResult>;
+  setBiometricsEnabled: (enabled: boolean) => Promise<BiometricResult>;
+  language: "es" | "en";
+  setLanguage: (lang: "es" | "en") => Promise<void>;
+  t: (es: string, en: string) => string;
+  goals: Goal[];
+  updateGoalProgress: (id: string, progress: number) => void;
+  likedProfiles: string[];
+  likeProfile: (profileId: string) => void;
+  profile: UserProfile;
+  accountProfile: UserProfile;
+  updateProfile: (updates: Partial<UserProfile>) => void;
 };
 
 const AppContext = createContext<AppContextType | null>(null);
 
-function calculateAge(dateOfBirth: string | null) {
-  if (!dateOfBirth) return "";
-  const birth = new Date(`${dateOfBirth}T00:00:00.000Z`);
-  if (Number.isNaN(birth.getTime())) return "";
-  const now = new Date();
-  let age = now.getUTCFullYear() - birth.getUTCFullYear();
-  const month = now.getUTCMonth() - birth.getUTCMonth();
-  const day = now.getUTCDate() - birth.getUTCDate();
-  if (month < 0 || (month === 0 && day < 0)) {
-    age -= 1;
+async function checkBiometricHardware(): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  try {
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+    return hasHardware && isEnrolled;
+  } catch {
+    return false;
   }
-  return String(age);
-}
-
-function normalizeProfile(input: Partial<UserProfile>): UserProfile {
-  const dateOfBirth = input.dateOfBirth?.trim() || "";
-  const age = input.age?.trim() || (dateOfBirth ? calculateAge(dateOfBirth) : "");
-  return {
-    name: input.name?.trim() || "",
-    age,
-    dateOfBirth,
-    bio: input.bio?.trim() || "",
-    bodyType: input.bodyType?.trim() || "",
-    height: input.height?.trim() || "",
-    hairColor: input.hairColor?.trim() || "",
-    ethnicity: input.ethnicity?.trim() || "",
-    interests: Array.isArray(input.interests) ? input.interests : [],
-    photos: Array.isArray(input.photos)
-      ? input.photos.filter((value) => Boolean(value))
-      : [],
-  };
-}
-
-function biometricPreferenceKey(user: AuthUser | null) {
-  if (!user) return null;
-  const accountId = user.email?.toLowerCase() || String(user.id);
-  return `${BIOMETRIC_PREF_PREFIX}:${accountId}`;
-}
-
-async function checkBiometricCapability() {
-  if (Platform.OS === "web") {
-    return {
-      hasHardware: false,
-      isEnrolled: false,
-    };
-  }
-
-  const [hasHardware, isEnrolled] = await Promise.all([
-    LocalAuthentication.hasHardwareAsync(),
-    LocalAuthentication.isEnrolledAsync(),
-  ]);
-  return { hasHardware, isEnrolled };
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [session, setSession] = useState<SessionState | null>(null);
-  const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
-  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(
-    null
-  );
-  const [verificationPreviewUrl, setVerificationPreviewUrl] = useState<string | null>(
-    null
-  );
-  const [providerAvailability, setProviderAvailability] = useState<ProviderAvailability>(
-    DEFAULT_PROVIDER_AVAILABILITY
-  );
-  const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
-  const [biometricBusy, setBiometricBusy] = useState(false);
-  const [biometricLockRequired, setBiometricLockRequired] = useState(false);
-
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
   const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
-  const [profile, setProfileState] = useState<UserProfile>(DEFAULT_PROFILE);
-
-  const clearAuthFeedback = useCallback(() => {
-    setAuthError(null);
-    setAuthNotice(null);
-  }, []);
-
-  const persistProfile = useCallback(async (nextProfile: UserProfile) => {
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(nextProfile));
-  }, []);
-
-  const persistSession = useCallback(async (nextSession: SessionState | null) => {
-    if (!nextSession) {
-      await AsyncStorage.removeItem(SESSION_KEY);
-      return;
-    }
-    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
-  }, []);
-
-  const readBiometricPreference = useCallback(async (targetUser: AuthUser | null) => {
-    const key = biometricPreferenceKey(targetUser);
-    if (!key) return false;
-    return (await AsyncStorage.getItem(key)) === "true";
-  }, []);
-
-  const writeBiometricPreference = useCallback(
-    async (targetUser: AuthUser | null, enabled: boolean) => {
-      const key = biometricPreferenceKey(targetUser);
-      if (!key) return;
-      if (enabled) {
-        await AsyncStorage.setItem(key, "true");
-      } else {
-        await AsyncStorage.removeItem(key);
-      }
-    },
-    []
-  );
-
-  const syncProfileFromUser = useCallback(
-    (nextUser: AuthUser | null) => {
-      if (!nextUser) return;
-      setProfileState((prev) => {
-        const merged = normalizeProfile({
-          ...prev,
-          name: prev.name || nextUser.name || "",
-          dateOfBirth: prev.dateOfBirth || nextUser.dateOfBirth || "",
-          age:
-            prev.age ||
-            calculateAge(prev.dateOfBirth || nextUser.dateOfBirth || null),
-        });
-        AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(merged));
-        return merged;
-      });
-    },
-    []
-  );
-
-  const applyAuthenticatedSession = useCallback(
-    async (
-      payload: {
-        accessToken: string;
-        refreshToken: string;
-        user: AuthUser;
-        needsProfileCompletion: boolean;
-      },
-      options?: { lockOnLaunch?: boolean }
-    ) => {
-      const nextSession = {
-        accessToken: payload.accessToken,
-        refreshToken: payload.refreshToken,
-      };
-      const biometricPref = await readBiometricPreference(payload.user);
-      setSession(nextSession);
-      setUser(payload.user);
-      setNeedsProfileCompletion(payload.needsProfileCompletion);
-      setAuthStatus("authenticated");
-      setAuthError(null);
-      setPendingVerificationEmail(null);
-      setVerificationPreviewUrl(null);
-      setBiometricsEnabledState(biometricPref);
-      setBiometricLockRequired(Boolean(options?.lockOnLaunch && biometricPref));
-      await persistSession(nextSession);
-      syncProfileFromUser(payload.user);
-    },
-    [persistSession, readBiometricPreference, syncProfileFromUser]
-  );
-
-  const clearSession = useCallback(async () => {
-    setSession(null);
-    setUser(null);
-    setNeedsProfileCompletion(false);
-    setAuthStatus("anonymous");
-    setBiometricLockRequired(false);
-    setBiometricsEnabledState(false);
-    await persistSession(null);
-  }, [persistSession]);
-
-  const refreshProviderSupport = useCallback(async () => {
-    const availability = await fetchProviderAvailability();
-    setProviderAvailability(availability);
-  }, []);
+  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
+  const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
+  const [biometricLockRequired, setBiometricLockRequired] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
 
   useEffect(() => {
-    let active = true;
-
-    const restore = async () => {
+    (async () => {
       try {
-        const [storedLanguage, storedGoals, storedProfile, storedLikes, storedSession] =
-          await Promise.all([
-            AsyncStorage.getItem(LANGUAGE_KEY),
-            AsyncStorage.getItem(GOALS_KEY),
-            AsyncStorage.getItem(PROFILE_KEY),
-            AsyncStorage.getItem(LIKED_PROFILES_KEY),
-            AsyncStorage.getItem(SESSION_KEY),
-          ]);
+        const [
+          lang,
+          logged,
+          savedGoals,
+          savedProfile,
+          savedBiometrics,
+        ] = await Promise.all([
+          AsyncStorage.getItem("language"),
+          AsyncStorage.getItem("isLoggedIn"),
+          AsyncStorage.getItem("goals"),
+          AsyncStorage.getItem("profile"),
+          AsyncStorage.getItem("biometricsEnabled"),
+        ]);
 
-        if (!active) return;
+        if (lang === "es" || lang === "en") setLanguageState(lang);
+        if (savedGoals) setGoals(JSON.parse(savedGoals));
+        if (savedProfile) setProfile(JSON.parse(savedProfile));
 
-        if (storedLanguage === "es" || storedLanguage === "en") {
-          setLanguageState(storedLanguage);
-        }
-        if (storedGoals) {
-          setGoals(JSON.parse(storedGoals));
-        }
-        if (storedProfile) {
-          setProfileState(normalizeProfile(JSON.parse(storedProfile)));
-        }
-        if (storedLikes) {
-          setLikedProfiles(JSON.parse(storedLikes));
-        }
+        const bioEnabled = savedBiometrics === "true";
+        setBiometricsEnabledState(bioEnabled);
 
-        await refreshProviderSupport();
-
-        if (!storedSession) {
-          setAuthStatus("anonymous");
-          return;
-        }
-
-        const parsedSession = JSON.parse(storedSession) as SessionState;
-        try {
-          const me = await getMe(parsedSession.accessToken);
-          if (!active) return;
-          await applyAuthenticatedSession(
-            {
-              accessToken: parsedSession.accessToken,
-              refreshToken: parsedSession.refreshToken,
-              user: me.user,
-              needsProfileCompletion: me.needsProfileCompletion,
-            },
-            { lockOnLaunch: true }
-          );
-          return;
-        } catch (error) {
-          if (!(error instanceof ApiError)) {
-            throw error;
+        if (logged === "true") {
+          setAuthStatus("authenticated");
+          setUser({
+            id: 1,
+            email: "user@matcha.app",
+            name: "Alejandro",
+            dateOfBirth: null,
+            emailVerified: true,
+          });
+          if (bioEnabled && Platform.OS !== "web") {
+            setBiometricLockRequired(true);
           }
-        }
-
-        try {
-          const refreshed = await refreshSession(parsedSession.refreshToken);
-          if (!active) return;
-          await applyAuthenticatedSession(refreshed, { lockOnLaunch: true });
-        } catch {
-          await clearSession();
+        } else {
+          setAuthStatus("unauthenticated");
         }
       } catch {
-        if (active) {
-          setAuthStatus("anonymous");
-        }
+        setAuthStatus("unauthenticated");
       }
-    };
-
-    restore();
-
-    return () => {
-      active = false;
-    };
-  }, [applyAuthenticatedSession, clearSession, refreshProviderSupport]);
-
-  useEffect(() => {
-    const handleAuthLink = async (url: string | null) => {
-      if (!url) return;
-      const callback = extractAuthCallback(url);
-      if (callback.status === "verified") {
-        setAuthNotice(
-          language === "es"
-            ? "Correo verificado. Ahora puedes iniciar sesión."
-            : "Email verified. You can sign in now."
-        );
-        setAuthStatus((current) => (current === "loading" ? "anonymous" : current));
-      }
-    };
-
-    Linking.getInitialURL().then(handleAuthLink).catch(() => {});
-    const subscription = Linking.addEventListener("url", (event) => {
-      handleAuthLink(event.url).catch(() => {});
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [language]);
+    })();
+  }, []);
 
   const t = useCallback(
     (es: string, en: string) => (language === "es" ? es : en),
@@ -507,237 +236,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setLanguage = useCallback(async (lang: "es" | "en") => {
     setLanguageState(lang);
-    await AsyncStorage.setItem(LANGUAGE_KEY, lang);
+    await AsyncStorage.setItem("language", lang);
   }, []);
 
-  const handleSignUp = useCallback(
-    async (input: {
-      name: string;
-      email: string;
-      password: string;
-      dateOfBirth: string;
-    }) => {
-      setAuthBusy(true);
-      clearAuthFeedback();
-      try {
-        const response = await signUp(input);
-        setAuthStatus("verification_pending");
-        setPendingVerificationEmail(response.email);
-        setVerificationPreviewUrl(response.verificationPreviewUrl || null);
-        setAuthNotice(
-          language === "es"
-            ? "Revisa tu correo para verificar la cuenta."
-            : "Check your email to verify your account."
-        );
-        return true;
-      } catch (error) {
-        setAuthError(
-          toReadableAuthError(error instanceof ApiError ? error.code : "SIGN_UP_FAILED")
-        );
-        return false;
-      } finally {
-        setAuthBusy(false);
-      }
-    },
-    [clearAuthFeedback, language]
-  );
-
-  const handleSignIn = useCallback(
-    async (input: { email: string; password: string }) => {
-      setAuthBusy(true);
-      clearAuthFeedback();
-      try {
-        const response = await signIn(input);
-        await applyAuthenticatedSession(response, { lockOnLaunch: false });
-        return true;
-      } catch (error) {
-        setAuthError(
-          toReadableAuthError(error instanceof ApiError ? error.code : "SIGN_IN_FAILED")
-        );
-        return false;
-      } finally {
-        setAuthBusy(false);
-      }
-    },
-    [applyAuthenticatedSession, clearAuthFeedback]
-  );
-
-  const handleProviderSignIn = useCallback(
-    async (provider: AuthProvider, mode: "signin" | "signup") => {
-      setAuthBusy(true);
-      clearAuthFeedback();
-      try {
-        if (!providerAvailability[provider]) {
-          throw new ApiError("PROVIDER_UNAVAILABLE");
-        }
-        const response = await signInWithProvider(provider, mode);
-        await applyAuthenticatedSession(response, { lockOnLaunch: false });
-        return true;
-      } catch (error) {
-        setAuthError(
-          toReadableAuthError(
-            error instanceof ApiError ? error.code : "SOCIAL_AUTH_FAILED"
-          )
-        );
-        return false;
-      } finally {
-        setAuthBusy(false);
-      }
-    },
-    [applyAuthenticatedSession, clearAuthFeedback, providerAvailability]
-  );
-
-  const completeProfile = useCallback(
-    async (input: { name?: string; dateOfBirth?: string }) => {
-      if (!session) return false;
-      setAuthBusy(true);
-      clearAuthFeedback();
-      try {
-        const response = await updateMe(session.accessToken, input);
-        setUser(response.user);
-        setNeedsProfileCompletion(response.needsProfileCompletion);
-        syncProfileFromUser(response.user);
-        return true;
-      } catch (error) {
-        setAuthError(
-          toReadableAuthError(
-            error instanceof ApiError ? error.code : "PROFILE_UPDATE_FAILED"
-          )
-        );
-        return false;
-      } finally {
-        setAuthBusy(false);
-      }
-    },
-    [clearAuthFeedback, session, syncProfileFromUser]
-  );
+  const login = useCallback(async () => {
+    setAuthStatus("authenticated");
+    setNeedsProfileCompletion(false);
+    setUser({
+      id: 1,
+      email: "user@matcha.app",
+      name: "Alejandro",
+      dateOfBirth: null,
+      emailVerified: true,
+    });
+    await AsyncStorage.setItem("isLoggedIn", "true");
+  }, []);
 
   const logout = useCallback(async () => {
-    if (session?.accessToken) {
+    setAuthStatus("unauthenticated");
+    setUser(null);
+    setBiometricLockRequired(false);
+    await AsyncStorage.setItem("isLoggedIn", "false");
+  }, []);
+
+  const clearAuthFeedback = useCallback(() => {
+    setAuthError(null);
+  }, []);
+
+  const completeProfile = useCallback(
+    async (data: { name: string; dateOfBirth: string }) => {
+      setAuthBusy(true);
       try {
-        await signOut(session.accessToken);
-      } catch {}
-    }
-    clearAuthFeedback();
-    setPendingVerificationEmail(null);
-    setVerificationPreviewUrl(null);
-    await clearSession();
-  }, [clearAuthFeedback, clearSession, session?.accessToken]);
-
-  const updateGoalProgress = useCallback(async (id: string, progress: number) => {
-    setGoals((prev) => {
-      const updated = prev.map((goal) =>
-        goal.id === id ? { ...goal, progress } : goal
-      );
-      AsyncStorage.setItem(GOALS_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const likeProfile = useCallback(async (profileId: string) => {
-    setLikedProfiles((prev) => {
-      if (prev.includes(profileId)) return prev;
-      const updated = [...prev, profileId];
-      AsyncStorage.setItem(LIKED_PROFILES_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const setProfile = useCallback(
-    (nextProfile: UserProfile) => {
-      const normalized = normalizeProfile(nextProfile);
-      setProfileState(normalized);
-      persistProfile(normalized);
+        const updated = { ...profile, name: data.name, dateOfBirth: data.dateOfBirth };
+        setProfile(updated);
+        await AsyncStorage.setItem("profile", JSON.stringify(updated));
+        if (user) {
+          setUser({ ...user, name: data.name, dateOfBirth: data.dateOfBirth });
+        }
+        setNeedsProfileCompletion(false);
+      } catch (e: any) {
+        setAuthError(e?.message || "UNKNOWN_ERROR");
+      } finally {
+        setAuthBusy(false);
+      }
     },
-    [persistProfile]
+    [profile, user]
   );
 
-  const updateProfile = useCallback(
-    (updates: Partial<UserProfile>) => {
-      setProfileState((prev) => {
-        const updated = normalizeProfile({ ...prev, ...updates });
-        AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
-        return updated;
-      });
-    },
-    []
-  );
-
-  const setProfilePhoto = useCallback((index: number, uri: string) => {
-    if (index < 0) return;
-    setProfileState((prev) => {
-      const nextPhotos = [...prev.photos];
-      nextPhotos[index] = uri;
-      const updated = normalizeProfile({ ...prev, photos: nextPhotos });
-      AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const removeProfilePhoto = useCallback((index: number) => {
-    if (index < 0) return;
-    setProfileState((prev) => {
-      const nextPhotos = [...prev.photos];
-      nextPhotos.splice(index, 1);
-      const updated = normalizeProfile({ ...prev, photos: nextPhotos });
-      AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  const setBiometricsEnabled = useCallback(
-    async (enabled: boolean): Promise<BiometricActionResult> => {
-      if (!user) {
-        return { ok: false, code: "NO_ACCOUNT" };
-      }
-      if (!enabled) {
-        await writeBiometricPreference(user, false);
-        setBiometricsEnabledState(false);
-        return { ok: true };
-      }
-
-      const capability = await checkBiometricCapability();
-      if (!capability.hasHardware) {
-        return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
-      }
-      if (!capability.isEnrolled) {
-        return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
-      }
-
-      await writeBiometricPreference(user, true);
-      setBiometricsEnabledState(true);
-      return { ok: true };
-    },
-    [user, writeBiometricPreference]
-  );
-
-  const unlockWithBiometrics = useCallback(async (): Promise<BiometricActionResult> => {
-    if (!biometricLockRequired) {
+  const unlockWithBiometrics = useCallback(async (): Promise<BiometricResult> => {
+    if (Platform.OS === "web") {
+      setBiometricLockRequired(false);
       return { ok: true };
     }
-
-    const capability = await checkBiometricCapability();
-    if (!capability.hasHardware) {
-      return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
-    }
-    if (!capability.isEnrolled) {
-      return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
-    }
-
     setBiometricBusy(true);
     try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      if (!hasHardware) {
+        return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
+      }
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!isEnrolled) {
+        return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
+      }
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage:
-          language === "es" ? "Desbloquear MatchA" : "Unlock MatchA",
-        cancelLabel: language === "es" ? "Cancelar" : "Cancel",
-        fallbackLabel: language === "es" ? "Usar código" : "Use passcode",
+        promptMessage: "Desbloquear MatchA",
+        fallbackLabel: "Usar contraseña",
+        cancelLabel: "Cancelar",
       });
-
       if (result.success) {
         setBiometricLockRequired(false);
         return { ok: true };
       }
-
       if (result.error === "user_cancel" || result.error === "system_cancel") {
         return { ok: false, code: "BIOMETRIC_CANCELLED" };
       }
@@ -747,105 +316,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setBiometricBusy(false);
     }
-  }, [biometricLockRequired, language]);
+  }, []);
 
-  const accountProfile = useMemo<AccountProfile>(() => {
-    const dateOfBirth = profile.dateOfBirth || user?.dateOfBirth || "";
-    const age = profile.age || calculateAge(dateOfBirth);
-    return {
-      ...normalizeProfile({
-        ...profile,
-        name: profile.name || user?.name || "",
-        dateOfBirth,
-        age,
-      }),
-      email: user?.email || "",
-    };
-  }, [profile, user]);
-
-  const value = useMemo<AppContextType>(
-    () => ({
-      authStatus,
-      authBusy,
-      authError,
-      authNotice,
-      isLoggedIn: authStatus === "authenticated",
-      user,
-      needsProfileCompletion,
-      pendingVerificationEmail,
-      verificationPreviewUrl,
-      providerAvailability,
-      signIn: handleSignIn,
-      signUp: handleSignUp,
-      signInWithProvider: handleProviderSignIn,
-      completeProfile,
-      logout,
-      clearAuthFeedback,
-      refreshProviderSupport,
-      language,
-      setLanguage,
-      t,
-      goals,
-      updateGoalProgress,
-      likedProfiles,
-      likeProfile,
-      profile,
-      accountProfile,
-      setProfile,
-      updateProfile,
-      setProfilePhoto,
-      removeProfilePhoto,
-      biometricsEnabled,
-      biometricBusy,
-      biometricLockRequired,
-      setBiometricsEnabled,
-      unlockWithBiometrics,
-    }),
-    [
-      authStatus,
-      authBusy,
-      authError,
-      authNotice,
-      user,
-      needsProfileCompletion,
-      pendingVerificationEmail,
-      verificationPreviewUrl,
-      providerAvailability,
-      handleSignIn,
-      handleSignUp,
-      handleProviderSignIn,
-      completeProfile,
-      logout,
-      clearAuthFeedback,
-      refreshProviderSupport,
-      language,
-      setLanguage,
-      t,
-      goals,
-      updateGoalProgress,
-      likedProfiles,
-      likeProfile,
-      profile,
-      accountProfile,
-      setProfile,
-      updateProfile,
-      setProfilePhoto,
-      removeProfilePhoto,
-      biometricsEnabled,
-      biometricBusy,
-      biometricLockRequired,
-      setBiometricsEnabled,
-      unlockWithBiometrics,
-    ]
+  const setBiometricsEnabled = useCallback(
+    async (enabled: boolean): Promise<BiometricResult> => {
+      if (Platform.OS === "web") {
+        return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
+      }
+      if (enabled) {
+        const available = await checkBiometricHardware();
+        if (!available) {
+          const hasHardware = await LocalAuthentication.hasHardwareAsync();
+          if (!hasHardware) return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
+          return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
+        }
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: "Confirmar biometría",
+          cancelLabel: "Cancelar",
+        });
+        if (!result.success) {
+          return { ok: false, code: "BIOMETRIC_CANCELLED" };
+        }
+      }
+      setBiometricsEnabledState(enabled);
+      await AsyncStorage.setItem("biometricsEnabled", enabled ? "true" : "false");
+      return { ok: true };
+    },
+    []
   );
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  const updateGoalProgress = useCallback(async (id: string, progress: number) => {
+    setGoals((prev) => {
+      const updated = prev.map((g) => (g.id === id ? { ...g, progress } : g));
+      AsyncStorage.setItem("goals", JSON.stringify(updated)).catch(() => {});
+      return updated;
+    });
+  }, []);
+
+  const likeProfile = useCallback(async (profileId: string) => {
+    setLikedProfiles((prev) =>
+      prev.includes(profileId) ? prev : [...prev, profileId]
+    );
+  }, []);
+
+  const updateProfile = useCallback((updates: Partial<UserProfile>) => {
+    setProfile((prev) => {
+      const updated = { ...prev, ...updates };
+      AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
+      return updated;
+    });
+  }, []);
+
+  return (
+    <AppContext.Provider
+      value={{
+        authStatus,
+        login,
+        logout,
+        user,
+        authBusy,
+        authError,
+        clearAuthFeedback,
+        needsProfileCompletion,
+        completeProfile,
+        biometricLockRequired,
+        biometricBusy,
+        biometricsEnabled,
+        unlockWithBiometrics,
+        setBiometricsEnabled,
+        language,
+        setLanguage,
+        t,
+        goals,
+        updateGoalProgress,
+        likedProfiles,
+        likeProfile,
+        profile,
+        accountProfile: { ...profile, email: user?.email || "" },
+        updateProfile,
+      }}
+    >
+      {children}
+    </AppContext.Provider>
+  );
 }
 
 export function useApp() {
-  const context = useContext(AppContext);
-  if (!context) {
-    throw new Error("useApp must be used within AppProvider");
-  }
-  return context;
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error("useApp must be used within AppProvider");
+  return ctx;
 }

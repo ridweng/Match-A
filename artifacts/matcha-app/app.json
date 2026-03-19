@@ -10,12 +10,15 @@
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
-      "resizeMode": "cover",
+      "resizeMode": "contain",
       "backgroundColor": "#0F1A14"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.matcha.app"
+      "bundleIdentifier": "com.matcha.app",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -32,18 +35,13 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      [
-        "expo-local-authentication",
-        {
-          "faceIDPermission": "Use Face ID to unlock your MatchA account."
-        }
-      ],
+      "expo-local-authentication",
       [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
-          "resizeMode": "cover",
+          "resizeMode": "contain",
           "backgroundColor": "#0F1A14"
         }
       ]
