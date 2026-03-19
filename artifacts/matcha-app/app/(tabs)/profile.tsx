@@ -20,30 +20,48 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 import {
+  ALCOHOL_USE_OPTIONS,
   BODY_TYPES,
   CHILDREN_PREFERENCES,
   EDUCATION_LEVELS,
   ETHNICITIES,
+  getAlcoholUseLabel,
   getBodyTypeLabel,
   getChildrenPreferenceLabel,
   getEducationLabel,
   getEthnicityLabel,
   getGenderIdentityLabel,
   getHairColorLabel,
+  getPhysicalActivityLabel,
+  getPoliticalInterestLabel,
   getPronounLabel,
+  getReligionImportanceLabel,
+  getReligionLabel,
   getRelationshipGoalLabel,
   getSpokenLanguageLabel,
+  getTobaccoUseLabel,
   HAIR_COLORS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
+  normalizeAlcoholUse,
   normalizeBodyType,
   normalizeChildrenPreference,
   normalizeEducation,
   normalizeEthnicity,
   normalizeHairColor,
+  normalizePhysicalActivity,
+  normalizePoliticalInterest,
+  normalizeReligion,
+  normalizeReligionImportance,
   normalizeRelationshipGoal,
+  normalizeTobaccoUse,
+  PHYSICAL_ACTIVITY_OPTIONS,
+  POLITICAL_INTEREST_OPTIONS,
+  RELIGION_IMPORTANCE_OPTIONS,
+  RELIGION_OPTIONS,
   RELATIONSHIP_GOALS,
   SPOKEN_LANGUAGES,
+  TOBACCO_USE_OPTIONS,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
 import {
@@ -86,7 +104,7 @@ function SelectField({
   const [open, setOpen] = React.useState(false);
 
   return (
-    <View style={styles.editField}>
+    <View style={[styles.editField, open && styles.editFieldOpen]}>
       <Text style={styles.editLabel}>{label}</Text>
       <View style={[styles.selectWrap, open && styles.selectWrapOpen]}>
         <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
@@ -256,6 +274,27 @@ export default function ProfileScreen() {
     return value?.trim() ? value : placeholder;
   };
 
+  const savePickedPhoto = async (index: number, sourceUri: string) => {
+    if (!sourceUri) {
+      return;
+    }
+
+    const extension = sourceUri.split(".").pop()?.split("?")[0] || "jpg";
+    const targetUri = `${PROFILE_PHOTOS_DIR}${Date.now()}-${index}.${extension}`;
+    await FileSystem.makeDirectoryAsync(PROFILE_PHOTOS_DIR, { intermediates: true });
+    await FileSystem.copyAsync({
+      from: sourceUri,
+      to: targetUri,
+    });
+
+    const previousUri = accountProfile.photos[index];
+    if (isStoredProfilePhoto(previousUri)) {
+      FileSystem.deleteAsync(previousUri!, { idempotent: true }).catch(() => {});
+    }
+
+    setProfilePhoto(index, targetUri);
+  };
+
   const requestAndPickPhoto = async (index: number) => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -280,26 +319,70 @@ export default function ProfileScreen() {
       return;
     }
 
-    const sourceUri = result.assets[0].uri;
-    const extension = sourceUri.split(".").pop()?.split("?")[0] || "jpg";
-    const targetUri = `${PROFILE_PHOTOS_DIR}${Date.now()}-${index}.${extension}`;
-    await FileSystem.makeDirectoryAsync(PROFILE_PHOTOS_DIR, { intermediates: true });
-    await FileSystem.copyAsync({
-      from: sourceUri,
-      to: targetUri,
-    });
+    await savePickedPhoto(index, result.assets[0].uri);
+  };
 
-    const previousUri = accountProfile.photos[index];
-    if (isStoredProfilePhoto(previousUri)) {
-      FileSystem.deleteAsync(previousUri!, { idempotent: true }).catch(() => {});
+  const requestAndCapturePhoto = async (index: number) => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        t("Permiso requerido", "Permission required"),
+        t(
+          "Permite acceso a la cámara para tomar una foto.",
+          "Allow camera access to take a photo."
+        )
+      );
+      return;
     }
 
-    setProfilePhoto(index, targetUri);
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 0.85,
+      aspect: [4, 5],
+    });
+
+    if (result.canceled || !result.assets?.[0]?.uri) {
+      return;
+    }
+
+    await savePickedPhoto(index, result.assets[0].uri);
+  };
+
+  const openMainPhotoPicker = (index: number) => {
+    Alert.alert(
+      t("Foto principal", "Main photo"),
+      t(
+        "Elige si quieres usar una foto de tu galería o tomar una nueva.",
+        "Choose whether to use a photo from your library or take a new one."
+      ),
+      [
+        {
+          text: t("Cancelar", "Cancel"),
+          style: "cancel",
+        },
+        {
+          text: t("Fotos", "Library"),
+          onPress: () => {
+            requestAndPickPhoto(index).catch(() => {});
+          },
+        },
+        {
+          text: t("Cámara", "Camera"),
+          onPress: () => {
+            requestAndCapturePhoto(index).catch(() => {});
+          },
+        },
+      ]
+    );
   };
 
   const handlePhotoPress = (index: number) => {
     const currentPhoto = accountProfile.photos[index];
     if (!currentPhoto) {
+      if (index === 0) {
+        openMainPhotoPicker(index);
+        return;
+      }
       requestAndPickPhoto(index).catch(() => {});
       return;
     }
@@ -328,6 +411,10 @@ export default function ProfileScreen() {
         {
           text: t("Reemplazar", "Replace"),
           onPress: () => {
+            if (index === 0) {
+              openMainPhotoPicker(index);
+              return;
+            }
             requestAndPickPhoto(index).catch(() => {});
           },
         },
@@ -434,12 +521,9 @@ export default function ProfileScreen() {
               <Image source={{ uri: mainPhoto }} style={styles.mainPhoto} />
             ) : (
               <View style={styles.mainPhotoPlaceholder}>
-                <Feather name="user" size={40} color={Colors.textMuted} />
+                <Feather name="user" size={68} color={Colors.textMuted} />
               </View>
             )}
-            <View style={styles.photoEditBadge}>
-              <Feather name="camera" size={14} color={Colors.textInverted} />
-            </View>
           </Pressable>
 
           <Text style={styles.nameText}>
@@ -588,6 +672,57 @@ export default function ProfileScreen() {
                 </View>
               ) : null}
             </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t("Estilo de vida", "Life Style")}</Text>
+          <View style={styles.card}>
+            <SelectField
+              label={t("Actividad física", "Physical activity")}
+              value={normalizePhysicalActivity(accountProfile.physicalActivity)}
+              options={PHYSICAL_ACTIVITY_OPTIONS}
+              onChange={(value) => update("physicalActivity", value)}
+              getOptionLabel={(value) => getPhysicalActivityLabel(value, t)}
+            />
+            <SelectField
+              label={t("Bebida", "Drink")}
+              value={normalizeAlcoholUse(accountProfile.alcoholUse)}
+              options={ALCOHOL_USE_OPTIONS}
+              onChange={(value) => update("alcoholUse", value)}
+              getOptionLabel={(value) => getAlcoholUseLabel(value, t)}
+            />
+            <SelectField
+              label={t("Tabaco", "Smoke")}
+              value={normalizeTobaccoUse(accountProfile.tobaccoUse)}
+              options={TOBACCO_USE_OPTIONS}
+              onChange={(value) => update("tobaccoUse", value)}
+              getOptionLabel={(value) => getTobaccoUseLabel(value, t)}
+            />
+            <SelectField
+              label={t("Interés en la política", "Interest in politics")}
+              value={normalizePoliticalInterest(accountProfile.politicalInterest)}
+              options={POLITICAL_INTEREST_OPTIONS}
+              onChange={(value) => update("politicalInterest", value)}
+              getOptionLabel={(value) => getPoliticalInterestLabel(value, t)}
+            />
+            <SelectField
+              label={t(
+                "Importancia de la religión en tu vida",
+                "Importance of religion in your life"
+              )}
+              value={normalizeReligionImportance(accountProfile.religionImportance)}
+              options={RELIGION_IMPORTANCE_OPTIONS}
+              onChange={(value) => update("religionImportance", value)}
+              getOptionLabel={(value) => getReligionImportanceLabel(value, t)}
+            />
+            <SelectField
+              label={t("Religión", "Religion")}
+              value={normalizeReligion(accountProfile.religion)}
+              options={RELIGION_OPTIONS}
+              onChange={(value) => update("religion", value)}
+              getOptionLabel={(value) => getReligionLabel(value, t)}
+            />
           </View>
         </View>
 
@@ -835,19 +970,6 @@ const styles = StyleSheet.create({
   mainPhotoPlaceholder: {
     flex: 1,
     backgroundColor: Colors.surface,
-    borderWidth: 2,
-    borderColor: Colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  photoEditBadge: {
-    position: "absolute",
-    right: 6,
-    bottom: 6,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: Colors.primaryLight,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -950,8 +1072,7 @@ const styles = StyleSheet.create({
   },
   photoSlotPlaceholderMain: {
     backgroundColor: Colors.backgroundElevated,
-    borderColor: Colors.primaryLight,
-    borderStyle: "dashed",
+    borderColor: Colors.border,
   },
   mainBadge: {
     position: "absolute",
@@ -985,6 +1106,9 @@ const styles = StyleSheet.create({
   },
   editField: {
     gap: 10,
+  },
+  editFieldOpen: {
+    zIndex: 60,
   },
   editLabel: {
     fontFamily: "Inter_500Medium",

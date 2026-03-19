@@ -76,7 +76,7 @@ function LanguageField({
   ];
 
   return (
-    <View style={s.field}>
+    <View style={[s.field, open && s.fieldOpen]}>
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={[s.selectWrap, open && s.selectWrapOpen]}>
         <Pressable
@@ -141,7 +141,7 @@ function HeightUnitField({
   ];
 
   return (
-    <View style={s.field}>
+    <View style={[s.field, open && s.fieldOpen]}>
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={[s.selectWrap, open && s.selectWrapOpen]}>
         <Pressable
@@ -204,7 +204,7 @@ function IdentityField({
   const [open, setOpen] = useState(false);
 
   return (
-    <View style={s.field}>
+    <View style={[s.field, open && s.fieldOpen]}>
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={[s.selectWrap, open && s.selectWrapOpen]}>
         <Pressable
@@ -353,6 +353,12 @@ export default function SettingsScreen() {
     languagesSpoken: accountProfile.languagesSpoken,
     education: accountProfile.education,
     childrenPreference: accountProfile.childrenPreference,
+    physicalActivity: accountProfile.physicalActivity,
+    alcoholUse: accountProfile.alcoholUse,
+    tobaccoUse: accountProfile.tobaccoUse,
+    politicalInterest: accountProfile.politicalInterest,
+    religionImportance: accountProfile.religionImportance,
+    religion: accountProfile.religion,
     bio: accountProfile.bio,
     bodyType: accountProfile.bodyType,
     height: accountProfile.height,
@@ -376,6 +382,12 @@ export default function SettingsScreen() {
       languagesSpoken: accountProfile.languagesSpoken,
       education: accountProfile.education,
       childrenPreference: accountProfile.childrenPreference,
+      physicalActivity: accountProfile.physicalActivity,
+      alcoholUse: accountProfile.alcoholUse,
+      tobaccoUse: accountProfile.tobaccoUse,
+      politicalInterest: accountProfile.politicalInterest,
+      religionImportance: accountProfile.religionImportance,
+      religion: accountProfile.religion,
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -402,6 +414,12 @@ export default function SettingsScreen() {
       languagesSpoken: accountProfile.languagesSpoken,
       education: accountProfile.education,
       childrenPreference: accountProfile.childrenPreference,
+      physicalActivity: accountProfile.physicalActivity,
+      alcoholUse: accountProfile.alcoholUse,
+      tobaccoUse: accountProfile.tobaccoUse,
+      politicalInterest: accountProfile.politicalInterest,
+      religionImportance: accountProfile.religionImportance,
+      religion: accountProfile.religion,
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -757,6 +775,9 @@ const s = StyleSheet.create({
   field: {
     gap: 7,
     zIndex: 1,
+  },
+  fieldOpen: {
+    zIndex: 60,
   },
   fieldLabel: {
     fontFamily: "Inter_500Medium",

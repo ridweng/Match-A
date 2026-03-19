@@ -51,6 +51,12 @@ export type UserProfile = {
   languagesSpoken: string[];
   education: string;
   childrenPreference: string;
+  physicalActivity: string;
+  alcoholUse: string;
+  tobaccoUse: string;
+  politicalInterest: string;
+  religionImportance: string;
+  religion: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -153,6 +159,12 @@ const DEFAULT_PROFILE: UserProfile = {
   languagesSpoken: [],
   education: "",
   childrenPreference: "",
+  physicalActivity: "",
+  alcoholUse: "",
+  tobaccoUse: "",
+  politicalInterest: "",
+  religionImportance: "",
+  religion: "",
   bio: "",
   bodyType: "",
   height: "",

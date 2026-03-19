@@ -141,12 +141,25 @@ export const ETHNICITIES: EthnicityValue[] = [
   "prefer_not_to_say",
 ];
 
-export type GenderIdentityValue = "male" | "female" | "non_binary";
+export type GenderIdentityValue =
+  | "male"
+  | "female"
+  | "non_binary"
+  | "fluid"
+  | "therian_male"
+  | "therian_female"
+  | "therian_fluid"
+  | "therian_non_binary";
 
 export const GENDER_IDENTITIES: GenderIdentityValue[] = [
   "male",
   "female",
   "non_binary",
+  "fluid",
+  "therian_male",
+  "therian_female",
+  "therian_fluid",
+  "therian_non_binary",
 ];
 
 export type PronounValue = "he" | "she" | "they" | "elle" | "ellx";
@@ -200,6 +213,140 @@ export const CHILDREN_PREFERENCES: ChildrenPreferenceValue[] = [
   "have_and_want_more",
   "have_and_dont_want_more",
   "not_sure",
+];
+
+export type PhysicalActivityValue =
+  | "never"
+  | "rarely"
+  | "once_week"
+  | "two_to_three_week"
+  | "four_to_five_week"
+  | "six_plus_week"
+  | "every_day"
+  | "varies_week_to_week"
+  | "prefer_not_to_say";
+
+export const PHYSICAL_ACTIVITY_OPTIONS: PhysicalActivityValue[] = [
+  "never",
+  "rarely",
+  "once_week",
+  "two_to_three_week",
+  "four_to_five_week",
+  "six_plus_week",
+  "every_day",
+  "varies_week_to_week",
+  "prefer_not_to_say",
+];
+
+export type AlcoholUseValue =
+  | "never"
+  | "rarely"
+  | "special_occasions"
+  | "socially"
+  | "one_to_two_week"
+  | "three_plus_week"
+  | "prefer_not_to_say";
+
+export const ALCOHOL_USE_OPTIONS: AlcoholUseValue[] = [
+  "never",
+  "rarely",
+  "special_occasions",
+  "socially",
+  "one_to_two_week",
+  "three_plus_week",
+  "prefer_not_to_say",
+];
+
+export type TobaccoUseValue =
+  | "dont_smoke"
+  | "smoke_occasionally"
+  | "smoke_socially"
+  | "smoke_regularly"
+  | "quitting"
+  | "vape"
+  | "tobacco_or_vape"
+  | "prefer_not_to_say";
+
+export const TOBACCO_USE_OPTIONS: TobaccoUseValue[] = [
+  "dont_smoke",
+  "smoke_occasionally",
+  "smoke_socially",
+  "smoke_regularly",
+  "quitting",
+  "vape",
+  "tobacco_or_vape",
+  "prefer_not_to_say",
+];
+
+export type PoliticalInterestValue =
+  | "not_interested"
+  | "somewhat_interested"
+  | "quite_interested"
+  | "very_interested"
+  | "enjoy_talking_politics"
+  | "prefer_not_to_talk_politics"
+  | "prefer_not_to_say";
+
+export const POLITICAL_INTEREST_OPTIONS: PoliticalInterestValue[] = [
+  "not_interested",
+  "somewhat_interested",
+  "quite_interested",
+  "very_interested",
+  "enjoy_talking_politics",
+  "prefer_not_to_talk_politics",
+  "prefer_not_to_say",
+];
+
+export type ReligionImportanceValue =
+  | "not_important"
+  | "slightly_important"
+  | "somewhat_important"
+  | "very_important"
+  | "central_to_my_life";
+
+export const RELIGION_IMPORTANCE_OPTIONS: ReligionImportanceValue[] = [
+  "not_important",
+  "slightly_important",
+  "somewhat_important",
+  "very_important",
+  "central_to_my_life",
+];
+
+export type ReligionValue =
+  | "atheist"
+  | "agnostic"
+  | "spiritual_not_religious"
+  | "catholic"
+  | "christian"
+  | "evangelical_protestant"
+  | "orthodox"
+  | "jewish"
+  | "muslim"
+  | "buddhist"
+  | "hindu"
+  | "sikh"
+  | "indigenous_ancestral"
+  | "other_religion"
+  | "prefer_self_describe"
+  | "prefer_not_to_say";
+
+export const RELIGION_OPTIONS: ReligionValue[] = [
+  "atheist",
+  "agnostic",
+  "spiritual_not_religious",
+  "catholic",
+  "christian",
+  "evangelical_protestant",
+  "orthodox",
+  "jewish",
+  "muslim",
+  "buddhist",
+  "hindu",
+  "sikh",
+  "indigenous_ancestral",
+  "other_religion",
+  "prefer_self_describe",
+  "prefer_not_to_say",
 ];
 
 export type SpokenLanguageOption = {
@@ -776,6 +923,24 @@ export function normalizeGenderIdentity(value: string | null | undefined): strin
     case "female":
     case "mujer":
       return "female";
+    case "fluidx":
+    case "fluid":
+    case "fluido":
+    case "fluida":
+      return "fluid";
+    case "therian hombre":
+    case "male therian":
+      return "therian_male";
+    case "therian mujer":
+    case "female therian":
+      return "therian_female";
+    case "therian fluido":
+    case "fluid therian":
+      return "therian_fluid";
+    case "therian no binario":
+    case "therian non binary":
+    case "therian non-binary":
+      return "therian_non_binary";
     case "non-binary":
     case "non binary":
     case "non_binary":
@@ -979,6 +1144,394 @@ export function getChildrenPreferenceLabel(
   }
 }
 
+export function normalizePhysicalActivity(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "nunca":
+    case "never":
+      return "never";
+    case "casi nunca":
+    case "rarely":
+      return "rarely";
+    case "1 vez por semana":
+    case "once a week":
+      return "once_week";
+    case "2 a 3 veces por semana":
+    case "2 to 3 times a week":
+      return "two_to_three_week";
+    case "4 a 5 veces por semana":
+    case "4 to 5 times a week":
+      return "four_to_five_week";
+    case "6 o más veces por semana":
+    case "6 o mas veces por semana":
+    case "6 or more times a week":
+      return "six_plus_week";
+    case "todos los días":
+    case "todos los dias":
+    case "every day":
+      return "every_day";
+    case "varía según la semana":
+    case "varia segun la semana":
+    case "it varies week to week":
+      return "varies_week_to_week";
+    case "prefiero no decirlo":
+    case "prefer not to say":
+      return "prefer_not_to_say";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getPhysicalActivityLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizePhysicalActivity(value)) {
+    case "never":
+      return t("Nunca", "Never");
+    case "rarely":
+      return t("Casi nunca", "Rarely");
+    case "once_week":
+      return t("1 vez por semana", "Once a week");
+    case "two_to_three_week":
+      return t("2 a 3 veces por semana", "2 to 3 times a week");
+    case "four_to_five_week":
+      return t("4 a 5 veces por semana", "4 to 5 times a week");
+    case "six_plus_week":
+      return t("6 o más veces por semana", "6 or more times a week");
+    case "every_day":
+      return t("Todos los días", "Every day");
+    case "varies_week_to_week":
+      return t("Varía según la semana", "It varies week to week");
+    case "prefer_not_to_say":
+      return t("Prefiero no decirlo", "Prefer not to say");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeAlcoholUse(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "nunca":
+    case "never":
+      return "never";
+    case "casi nunca":
+    case "rarely":
+      return "rarely";
+    case "solo en ocasiones especiales":
+    case "only on special occasions":
+      return "special_occasions";
+    case "socialmente":
+    case "socially":
+      return "socially";
+    case "1 a 2 veces por semana":
+    case "1 to 2 times a week":
+      return "one_to_two_week";
+    case "3 o más veces por semana":
+    case "3 o mas veces por semana":
+    case "3 or more times a week":
+      return "three_plus_week";
+    case "prefiero no decirlo":
+    case "prefer not to say":
+      return "prefer_not_to_say";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getAlcoholUseLabel(value: string | null | undefined, t: Translator) {
+  switch (normalizeAlcoholUse(value)) {
+    case "never":
+      return t("Nunca", "Never");
+    case "rarely":
+      return t("Casi nunca", "Rarely");
+    case "special_occasions":
+      return t("Solo en ocasiones especiales", "Only on special occasions");
+    case "socially":
+      return t("Socialmente", "Socially");
+    case "one_to_two_week":
+      return t("1 a 2 veces por semana", "1 to 2 times a week");
+    case "three_plus_week":
+      return t("3 o más veces por semana", "3 or more times a week");
+    case "prefer_not_to_say":
+      return t("Prefiero no decirlo", "Prefer not to say");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeTobaccoUse(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "no fumo":
+    case "i don’t smoke":
+    case "i don't smoke":
+      return "dont_smoke";
+    case "fumo ocasionalmente":
+    case "i smoke occasionally":
+      return "smoke_occasionally";
+    case "fumo socialmente":
+    case "i smoke socially":
+      return "smoke_socially";
+    case "fumo con frecuencia":
+    case "i smoke regularly":
+      return "smoke_regularly";
+    case "estoy dejando de fumar":
+    case "i’m quitting smoking":
+    case "i'm quitting smoking":
+      return "quitting";
+    case "uso vapeador":
+    case "i vape":
+      return "vape";
+    case "uso tabaco y/o vapeador":
+    case "i use tobacco and/or vape":
+      return "tobacco_or_vape";
+    case "prefiero no decirlo":
+    case "prefer not to say":
+      return "prefer_not_to_say";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getTobaccoUseLabel(value: string | null | undefined, t: Translator) {
+  switch (normalizeTobaccoUse(value)) {
+    case "dont_smoke":
+      return t("No fumo", "I don't smoke");
+    case "smoke_occasionally":
+      return t("Fumo ocasionalmente", "I smoke occasionally");
+    case "smoke_socially":
+      return t("Fumo socialmente", "I smoke socially");
+    case "smoke_regularly":
+      return t("Fumo con frecuencia", "I smoke regularly");
+    case "quitting":
+      return t("Estoy dejando de fumar", "I'm quitting smoking");
+    case "vape":
+      return t("Uso vapeador", "I vape");
+    case "tobacco_or_vape":
+      return t("Uso tabaco y/o vapeador", "I use tobacco and/or vape");
+    case "prefer_not_to_say":
+      return t("Prefiero no decirlo", "Prefer not to say");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizePoliticalInterest(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "no me interesa la política":
+    case "no me interesa la politica":
+    case "i’m not interested in politics":
+    case "i'm not interested in politics":
+      return "not_interested";
+    case "me interesa un poco":
+    case "i’m somewhat interested in politics":
+    case "i'm somewhat interested in politics":
+      return "somewhat_interested";
+    case "me interesa bastante":
+    case "i’m quite interested in politics":
+    case "i'm quite interested in politics":
+      return "quite_interested";
+    case "me interesa mucho":
+    case "i’m very interested in politics":
+    case "i'm very interested in politics":
+      return "very_interested";
+    case "me gusta conversar de política":
+    case "me gusta conversar de politica":
+    case "i enjoy talking about politics":
+      return "enjoy_talking_politics";
+    case "prefiero no hablar de política":
+    case "prefiero no hablar de politica":
+    case "i prefer not to talk about politics":
+      return "prefer_not_to_talk_politics";
+    case "prefiero no decirlo":
+    case "prefer not to say":
+      return "prefer_not_to_say";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getPoliticalInterestLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizePoliticalInterest(value)) {
+    case "not_interested":
+      return t("No me interesa la política", "I'm not interested in politics");
+    case "somewhat_interested":
+      return t("Me interesa un poco", "I'm somewhat interested in politics");
+    case "quite_interested":
+      return t("Me interesa bastante", "I'm quite interested in politics");
+    case "very_interested":
+      return t("Me interesa mucho", "I'm very interested in politics");
+    case "enjoy_talking_politics":
+      return t("Me gusta conversar de política", "I enjoy talking about politics");
+    case "prefer_not_to_talk_politics":
+      return t(
+        "Prefiero no hablar de política",
+        "I prefer not to talk about politics"
+      );
+    case "prefer_not_to_say":
+      return t("Prefiero no decirlo", "Prefer not to say");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeReligionImportance(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "nada importante":
+    case "not important at all":
+      return "not_important";
+    case "poco importante":
+    case "slightly important":
+      return "slightly_important";
+    case "algo importante":
+    case "somewhat important":
+      return "somewhat_important";
+    case "muy importante":
+    case "very important":
+      return "very_important";
+    case "es central en mi vida":
+    case "it’s central to my life":
+    case "it's central to my life":
+      return "central_to_my_life";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getReligionImportanceLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizeReligionImportance(value)) {
+    case "not_important":
+      return t("Nada importante", "Not important at all");
+    case "slightly_important":
+      return t("Poco importante", "Slightly important");
+    case "somewhat_important":
+      return t("Algo importante", "Somewhat important");
+    case "very_important":
+      return t("Muy importante", "Very important");
+    case "central_to_my_life":
+      return t("Es central en mi vida", "It's central to my life");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeReligion(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "ateo":
+    case "atheist":
+      return "atheist";
+    case "agnóstico":
+    case "agnostico":
+    case "agnostic":
+      return "agnostic";
+    case "espiritual pero no religioso":
+    case "spiritual but not religious":
+      return "spiritual_not_religious";
+    case "católico":
+    case "catolico":
+    case "catholic":
+      return "catholic";
+    case "cristiano":
+    case "christian":
+      return "christian";
+    case "evangélico / protestante":
+    case "evangelico / protestante":
+    case "evangelical / protestant":
+      return "evangelical_protestant";
+    case "ortodoxo":
+    case "orthodox":
+      return "orthodox";
+    case "judío":
+    case "judio":
+    case "jewish":
+      return "jewish";
+    case "musulmán":
+    case "musulman":
+    case "muslim":
+      return "muslim";
+    case "budista":
+    case "buddhist":
+      return "buddhist";
+    case "hindú":
+    case "hindu":
+      return "hindu";
+    case "sikh":
+      return "sikh";
+    case "tradición indígena / ancestral":
+    case "tradicion indigena / ancestral":
+    case "indigenous / ancestral tradition":
+      return "indigenous_ancestral";
+    case "otra religión":
+    case "otra religion":
+    case "other religion":
+      return "other_religion";
+    case "prefiero autodescribirme":
+    case "prefer to self-describe":
+      return "prefer_self_describe";
+    case "prefiero no decirlo":
+    case "prefer not to say":
+      return "prefer_not_to_say";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getReligionLabel(value: string | null | undefined, t: Translator) {
+  switch (normalizeReligion(value)) {
+    case "atheist":
+      return t("Ateo", "Atheist");
+    case "agnostic":
+      return t("Agnóstico", "Agnostic");
+    case "spiritual_not_religious":
+      return t("Espiritual pero no religioso", "Spiritual but not religious");
+    case "catholic":
+      return t("Católico", "Catholic");
+    case "christian":
+      return t("Cristiano", "Christian");
+    case "evangelical_protestant":
+      return t("Evangélico / Protestante", "Evangelical / Protestant");
+    case "orthodox":
+      return t("Ortodoxo", "Orthodox");
+    case "jewish":
+      return t("Judío", "Jewish");
+    case "muslim":
+      return t("Musulmán", "Muslim");
+    case "buddhist":
+      return t("Budista", "Buddhist");
+    case "hindu":
+      return t("Hindú", "Hindu");
+    case "sikh":
+      return "Sikh";
+    case "indigenous_ancestral":
+      return t("Tradición indígena / ancestral", "Indigenous / ancestral tradition");
+    case "other_religion":
+      return t("Otra religión", "Other religion");
+    case "prefer_self_describe":
+      return t("Prefiero autodescribirme", "Prefer to self-describe");
+    case "prefer_not_to_say":
+      return t("Prefiero no decirlo", "Prefer not to say");
+    default:
+      return value?.trim() || "";
+  }
+}
+
 export function getGenderIdentityLabel(
   value: string | null | undefined,
   t: Translator
@@ -988,6 +1541,16 @@ export function getGenderIdentityLabel(
       return t("Hombre", "Male");
     case "female":
       return t("Mujer", "Female");
+    case "fluid":
+      return t("Fluidx", "Fluid");
+    case "therian_male":
+      return t("Therian Hombre", "Male Therian");
+    case "therian_female":
+      return t("Therian Mujer", "Female Therian");
+    case "therian_fluid":
+      return t("Therian Fluido", "Fluid Therian");
+    case "therian_non_binary":
+      return t("Therian no binario", "Non binary Therian");
     case "non_binary":
       return t("No binario", "Non-binary");
     default:
