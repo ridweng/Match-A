@@ -43,7 +43,6 @@ export type UserProfile = {
   name: string;
   age: string;
   dateOfBirth: string;
-  email?: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -53,7 +52,15 @@ export type UserProfile = {
   photos: string[];
 };
 
-type AuthStatus = "loading" | "unauthenticated" | "authenticated";
+export type AccountProfile = UserProfile & {
+  email: string;
+};
+
+type AuthStatus =
+  | "loading"
+  | "unauthenticated"
+  | "authenticated"
+  | "verification_pending";
 
 type BiometricResult = { ok: boolean; code?: string };
 
@@ -143,9 +150,17 @@ type AppContextType = {
   authStatus: AuthStatus;
   login: () => Promise<void>;
   logout: () => Promise<void>;
-  signIn: (input: { email: string; password: string }) => Promise<void>;
-  signUp: (input: { name: string; email: string; password: string; dateOfBirth: string }) => Promise<void>;
-  signInWithProvider: (provider: AuthProvider, mode: "signin" | "signup") => Promise<void>;
+  signIn: (input: { email: string; password: string }) => Promise<boolean>;
+  signUp: (input: {
+    name: string;
+    email: string;
+    password: string;
+    dateOfBirth: string;
+  }) => Promise<boolean>;
+  signInWithProvider: (
+    provider: AuthProvider,
+    mode: "signin" | "signup"
+  ) => Promise<boolean>;
   user: AuthUser | null;
   authBusy: boolean;
   authError: string | null;
@@ -155,7 +170,7 @@ type AppContextType = {
   clearAuthFeedback: () => void;
   providerAvailability: ProviderAvailability;
   needsProfileCompletion: boolean;
-  completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<void>;
+  completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<boolean>;
   biometricLockRequired: boolean;
   biometricBusy: boolean;
   biometricsEnabled: boolean;
@@ -169,7 +184,7 @@ type AppContextType = {
   likedProfiles: string[];
   likeProfile: (profileId: string) => void;
   profile: UserProfile;
-  accountProfile: UserProfile;
+  accountProfile: AccountProfile;
   updateProfile: (updates: Partial<UserProfile>) => void;
   setProfilePhoto: (index: number, uri: string) => void;
   removeProfilePhoto: (index: number) => void;
@@ -319,9 +334,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const session = await authSignIn(input);
         await applySession(session);
+        return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
         setAuthError(code);
+        return false;
       } finally {
         setAuthBusy(false);
       }
@@ -337,13 +354,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const result = await authSignUp(input);
         if (result.status === "verification_pending") {
+          setAuthStatus("verification_pending");
           setPendingVerificationEmail(result.email);
           setVerificationPreviewUrl(result.verificationPreviewUrl || null);
           setAuthNotice("VERIFICATION_EMAIL_SENT");
         }
+        return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
         setAuthError(code);
+        return false;
       } finally {
         setAuthBusy(false);
       }
@@ -363,9 +383,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           user: session.user,
           needsProfileCompletion: session.needsProfileCompletion,
         });
+        return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
         setAuthError(code);
+        return false;
       } finally {
         setAuthBusy(false);
       }
@@ -400,8 +422,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setProfile(updated);
         await AsyncStorage.setItem("profile", JSON.stringify(updated));
         setNeedsProfileCompletion(false);
+        return true;
       } catch (e: any) {
         setAuthError(e?.message || "UNKNOWN_ERROR");
+        return false;
       } finally {
         setAuthBusy(false);
       }

@@ -376,15 +376,24 @@ export default function SettingsScreen() {
           disabled={!hasChanges}
           style={({ pressed }) => [
             s.saveIconBtn,
+            hasChanges && s.saveIconBtnActive,
             !hasChanges && s.saveIconBtnDisabled,
             pressed && hasChanges && { opacity: 0.82 },
           ]}
         >
           <Feather
             name="check"
-            size={20}
-            color={hasChanges ? colors.primaryLight : colors.textMuted}
+            size={22}
+            color={hasChanges ? colors.textInverted : colors.textMuted}
           />
+          <Text
+            style={[
+              s.saveIconBtnText,
+              !hasChanges && s.saveIconBtnTextDisabled,
+            ]}
+          >
+            {t("Guardar", "Save")}
+          </Text>
         </Pressable>
       </View>
 
@@ -539,6 +548,7 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 14,
+    position: "relative",
   },
   backBtn: {
     width: 40,
@@ -551,24 +561,53 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   saveIconBtn: {
-    width: 40,
+    width: 94,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 999,
     backgroundColor: colors.cardBg,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    gap: 6,
+  },
+  saveIconBtnActive: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primaryLight,
+    shadowColor: colors.primaryLight,
+    shadowOpacity: 0.38,
+    shadowRadius: 12,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 6,
   },
   saveIconBtnDisabled: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
   },
+  saveIconBtnText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: colors.textInverted,
+  },
+  saveIconBtnTextDisabled: {
+    color: colors.textMuted,
+  },
   headerTitle: {
+    position: "absolute",
+    left: 0,
+    right: 0,
     fontFamily: "Inter_700Bold",
     fontSize: 18,
     color: colors.ivory,
     letterSpacing: -0.3,
+    textAlign: "center",
+    pointerEvents: "none",
   },
   scroll: {
     paddingHorizontal: 20,
