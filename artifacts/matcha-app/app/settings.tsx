@@ -330,11 +330,9 @@ export default function SettingsScreen() {
     heightUnit,
     language,
     logout,
+    saveSettings,
     setBiometricsEnabled,
-    setHeightUnit,
-    setLanguage,
     t,
-    updateProfile,
   } = useApp();
 
   const [local, setLocal] = useState<UserProfile>({
@@ -355,6 +353,7 @@ export default function SettingsScreen() {
   });
   const [biometricPending, setBiometricPending] = useState(false);
   const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
+  const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
 
   useEffect(() => {
     setLocal({
@@ -374,7 +373,8 @@ export default function SettingsScreen() {
       photos: accountProfile.photos,
     });
     setLocalHeightUnit(heightUnit);
-  }, [accountProfile, heightUnit]);
+    setLocalLanguage(language);
+  }, [accountProfile, heightUnit, language]);
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
@@ -397,8 +397,12 @@ export default function SettingsScreen() {
       photos: accountProfile.photos,
     };
 
-    return JSON.stringify(current) !== JSON.stringify(local) || heightUnit !== localHeightUnit;
-  }, [accountProfile, heightUnit, local, localHeightUnit]);
+    return (
+      JSON.stringify(current) !== JSON.stringify(local) ||
+      heightUnit !== localHeightUnit ||
+      language !== localLanguage
+    );
+  }, [accountProfile, heightUnit, language, local, localHeightUnit, localLanguage]);
 
   const update = (key: keyof UserProfile, value: string | string[]) => {
     setLocal((prev) => ({
@@ -409,10 +413,15 @@ export default function SettingsScreen() {
 
   const handleSave = async () => {
     if (!hasChanges) return;
-    updateProfile(local);
-    if (heightUnit !== localHeightUnit) {
-      setHeightUnit(localHeightUnit);
-    }
+    const saved = await saveSettings({
+      name: local.name,
+      dateOfBirth: local.dateOfBirth,
+      genderIdentity: local.genderIdentity,
+      pronouns: local.pronouns,
+      language: localLanguage,
+      heightUnit: localHeightUnit,
+    });
+    if (!saved) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.replace("/(tabs)/profile");
   };
@@ -569,8 +578,8 @@ export default function SettingsScreen() {
           <View style={s.divider} />
           <LanguageField
             label={t("Idioma de la app", "App language")}
-            value={language}
-            onChange={setLanguage}
+            value={localLanguage}
+            onChange={setLocalLanguage}
           />
           <HeightUnitField
             label={t("Unidades de altura", "Height units")}

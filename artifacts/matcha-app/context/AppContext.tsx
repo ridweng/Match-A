@@ -14,11 +14,13 @@ import {
   type ProviderAvailability,
   type AuthProvider,
   fetchProviderAvailability,
+  getSettings,
   signIn as authSignIn,
   signUp as authSignUp,
   signOut as authSignOut,
   getMe,
   updateMe,
+  updateSettings,
   refreshSession,
   signInWithProvider as authSignInWithProvider,
   toReadableAuthError,
@@ -200,6 +202,14 @@ type AppContextType = {
   setLanguage: (lang: "es" | "en") => void;
   heightUnit: HeightUnit;
   setHeightUnit: (unit: HeightUnit) => void;
+  saveSettings: (input: {
+    name: string;
+    dateOfBirth: string;
+    genderIdentity: string;
+    pronouns: string;
+    language: "es" | "en";
+    heightUnit: HeightUnit;
+  }) => Promise<boolean>;
   t: (es: string, en: string) => string;
   goals: Goal[];
   updateGoalProgress: (id: string, progress: number) => void;
@@ -253,6 +263,82 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     fetchProviderAvailability().then(setProviderAvailability).catch(() => {});
   }, []);
 
+  const t = useCallback(
+    (es: string, en: string) => (language === "es" ? es : en),
+    [language]
+  );
+
+  const setLanguage = useCallback((lang: "es" | "en") => {
+    setLanguageState(lang);
+    AsyncStorage.setItem("language", lang).catch(() => {});
+  }, []);
+
+  const setHeightUnit = useCallback((unit: HeightUnit) => {
+    setHeightUnitState(unit);
+    AsyncStorage.setItem("heightUnit", unit).catch(() => {});
+  }, []);
+
+  const clearAuthFeedback = useCallback(() => {
+    setAuthError(null);
+    setAuthNotice(null);
+  }, []);
+
+  const applyServerSettings = useCallback(
+    async (settings: {
+      language: "es" | "en";
+      heightUnit: HeightUnit;
+      genderIdentity: string;
+      pronouns: string;
+    }) => {
+      setLanguageState(settings.language);
+      setHeightUnitState(settings.heightUnit);
+      await AsyncStorage.setItem("language", settings.language);
+      await AsyncStorage.setItem("heightUnit", settings.heightUnit);
+      setProfile((prev) => {
+        const updated = normalizeStoredProfile({
+          ...prev,
+          genderIdentity: settings.genderIdentity,
+          pronouns: settings.pronouns,
+        });
+        AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    },
+    []
+  );
+
+  const hydrateServerSettings = useCallback(
+    async (token: string) => {
+      try {
+        const result = await getSettings(token);
+        await applyServerSettings(result.settings);
+      } catch {}
+    },
+    [applyServerSettings]
+  );
+
+  const applySession = useCallback(
+    async (session: {
+      accessToken: string;
+      refreshToken?: string;
+      user: AuthUser;
+      needsProfileCompletion: boolean;
+    }) => {
+      setAccessToken(session.accessToken);
+      setUser(session.user);
+      setNeedsProfileCompletion(session.needsProfileCompletion);
+      await AsyncStorage.setItem("accessToken", session.accessToken);
+      setProfile((prev) => normalizeStoredProfile({
+        ...prev,
+        name: session.user.name || prev.name,
+        dateOfBirth: session.user.dateOfBirth || prev.dateOfBirth,
+      }));
+      setAuthStatus("authenticated");
+      await hydrateServerSettings(session.accessToken);
+    },
+    [hydrateServerSettings]
+  );
+
   useEffect(() => {
     (async () => {
       try {
@@ -282,11 +368,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (storedToken) {
           try {
             const session = await refreshSession(storedToken);
-            setAccessToken(session.accessToken);
-            setUser(session.user);
-            setNeedsProfileCompletion(session.needsProfileCompletion);
-            await AsyncStorage.setItem("accessToken", session.accessToken);
-            setAuthStatus("authenticated");
+            await applySession(session);
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
             }
@@ -301,47 +383,63 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthStatus("unauthenticated");
       }
     })();
-  }, []);
+  }, [applySession]);
 
-  const t = useCallback(
-    (es: string, en: string) => (language === "es" ? es : en),
-    [language]
-  );
-
-  const setLanguage = useCallback((lang: "es" | "en") => {
-    setLanguageState(lang);
-    AsyncStorage.setItem("language", lang).catch(() => {});
-  }, []);
-
-  const setHeightUnit = useCallback((unit: HeightUnit) => {
-    setHeightUnitState(unit);
-    AsyncStorage.setItem("heightUnit", unit).catch(() => {});
-  }, []);
-
-  const clearAuthFeedback = useCallback(() => {
-    setAuthError(null);
-    setAuthNotice(null);
-  }, []);
-
-  const applySession = useCallback(
-    async (session: {
-      accessToken: string;
-      refreshToken?: string;
-      user: AuthUser;
-      needsProfileCompletion: boolean;
+  const saveSettings = useCallback(
+    async (input: {
+      name: string;
+      dateOfBirth: string;
+      genderIdentity: string;
+      pronouns: string;
+      language: "es" | "en";
+      heightUnit: HeightUnit;
     }) => {
-      setAccessToken(session.accessToken);
-      setUser(session.user);
-      setNeedsProfileCompletion(session.needsProfileCompletion);
-      await AsyncStorage.setItem("accessToken", session.accessToken);
-      setProfile((prev) => normalizeStoredProfile({
-        ...prev,
-        name: session.user.name || prev.name,
-        dateOfBirth: session.user.dateOfBirth || prev.dateOfBirth,
-      }));
-      setAuthStatus("authenticated");
+      setAuthBusy(true);
+      setAuthError(null);
+      try {
+        if (accessToken) {
+          const me = await updateMe(accessToken, {
+            name: input.name,
+            dateOfBirth: input.dateOfBirth,
+          });
+          await updateSettings(accessToken, {
+            language: input.language,
+            heightUnit: input.heightUnit,
+            genderIdentity: input.genderIdentity,
+            pronouns: input.pronouns,
+          });
+          setUser(me.user);
+          setNeedsProfileCompletion(me.needsProfileCompletion);
+        }
+
+        await applyServerSettings({
+          language: input.language,
+          heightUnit: input.heightUnit,
+          genderIdentity: input.genderIdentity,
+          pronouns: input.pronouns,
+        });
+
+        setProfile((prev) => {
+          const updated = normalizeStoredProfile({
+            ...prev,
+            name: input.name,
+            dateOfBirth: input.dateOfBirth,
+            genderIdentity: input.genderIdentity,
+            pronouns: input.pronouns,
+          });
+          AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+
+        return true;
+      } catch (e: any) {
+        setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
     },
-    []
+    [accessToken, applyServerSettings]
   );
 
   const login = useCallback(async () => {
@@ -594,6 +692,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setLanguage,
         heightUnit,
         setHeightUnit,
+        saveSettings,
         t,
         goals,
         updateGoalProgress,

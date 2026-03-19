@@ -32,6 +32,15 @@ export type MeResponse = {
   needsProfileCompletion: boolean;
 };
 
+export type UserSettingsResponse = {
+  settings: {
+    language: "es" | "en";
+    heightUnit: "metric" | "imperial";
+    genderIdentity: string;
+    pronouns: string;
+  };
+};
+
 export type ProviderAvailability = Record<AuthProvider, boolean>;
 
 const DEMO_EMAIL = "test@gmail.com";
@@ -44,6 +53,12 @@ const DEMO_USER: AuthUser = {
   name: "Test User",
   dateOfBirth: "2000-01-01",
   emailVerified: true,
+};
+const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
+  language: "es",
+  heightUnit: "metric",
+  genderIdentity: "",
+  pronouns: "",
 };
 
 type RequestOptions = {
@@ -146,13 +161,20 @@ export async function signUp(input: {
 
 export async function signIn(input: { email: string; password: string }) {
   if (isDemoCredentials(input)) {
-    return {
-      status: "authenticated" as const,
-      accessToken: DEMO_ACCESS_TOKEN,
-      refreshToken: DEMO_REFRESH_TOKEN,
-      user: DEMO_USER,
-      needsProfileCompletion: false,
-    };
+    try {
+      return await request<AuthSessionResponse>("/api/auth/sign-in", {
+        method: "POST",
+        body: input,
+      });
+    } catch {
+      return {
+        status: "authenticated" as const,
+        accessToken: DEMO_ACCESS_TOKEN,
+        refreshToken: DEMO_REFRESH_TOKEN,
+        user: DEMO_USER,
+        needsProfileCompletion: false,
+      };
+    }
   }
   return request<AuthSessionResponse>("/api/auth/sign-in", {
     method: "POST",
@@ -202,7 +224,39 @@ export async function updateMe(
   accessToken: string,
   payload: { name?: string; dateOfBirth?: string }
 ) {
+  if (isDemoToken(accessToken)) {
+    if (typeof payload.name === "string") DEMO_USER.name = payload.name;
+    if (typeof payload.dateOfBirth === "string") DEMO_USER.dateOfBirth = payload.dateOfBirth;
+    return {
+      user: DEMO_USER,
+      needsProfileCompletion: false,
+    };
+  }
   return request<MeResponse>("/api/auth/me", {
+    method: "PATCH",
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function getSettings(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return { settings: DEMO_SETTINGS };
+  }
+  return request<UserSettingsResponse>("/api/auth/settings", {
+    accessToken,
+  });
+}
+
+export async function updateSettings(
+  accessToken: string,
+  payload: Partial<UserSettingsResponse["settings"]>
+) {
+  if (isDemoToken(accessToken)) {
+    Object.assign(DEMO_SETTINGS, payload);
+    return { settings: DEMO_SETTINGS };
+  }
+  return request<UserSettingsResponse>("/api/auth/settings", {
     method: "PATCH",
     accessToken,
     body: payload,

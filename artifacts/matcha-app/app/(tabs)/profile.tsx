@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import React from "react";
@@ -46,6 +47,7 @@ import {
 } from "@/utils/dateOfBirth";
 
 const MAX_SPOKEN_LANGUAGES = 7;
+const PROFILE_PHOTOS_DIR = `${FileSystem.documentDirectory ?? ""}matcha-profile-photos/`;
 
 function SummaryField({
   label,
@@ -181,6 +183,10 @@ function isHeightOutOfRange(value: string, unit: "metric" | "imperial") {
   return parsed < 0 || parsed > getHeightLimit(unit);
 }
 
+function isStoredProfilePhoto(uri: string | null | undefined) {
+  return Boolean(uri && uri.startsWith(PROFILE_PHOTOS_DIR));
+}
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const {
@@ -266,7 +272,21 @@ export default function ProfileScreen() {
       return;
     }
 
-    setProfilePhoto(index, result.assets[0].uri);
+    const sourceUri = result.assets[0].uri;
+    const extension = sourceUri.split(".").pop()?.split("?")[0] || "jpg";
+    const targetUri = `${PROFILE_PHOTOS_DIR}${Date.now()}-${index}.${extension}`;
+    await FileSystem.makeDirectoryAsync(PROFILE_PHOTOS_DIR, { intermediates: true });
+    await FileSystem.copyAsync({
+      from: sourceUri,
+      to: targetUri,
+    });
+
+    const previousUri = accountProfile.photos[index];
+    if (isStoredProfilePhoto(previousUri)) {
+      FileSystem.deleteAsync(previousUri!, { idempotent: true }).catch(() => {});
+    }
+
+    setProfilePhoto(index, targetUri);
   };
 
   const handlePhotoPress = (index: number) => {
@@ -290,7 +310,12 @@ export default function ProfileScreen() {
         {
           text: t("Eliminar", "Remove"),
           style: "destructive",
-          onPress: () => removeProfilePhoto(index),
+          onPress: () => {
+            if (isStoredProfilePhoto(currentPhoto)) {
+              FileSystem.deleteAsync(currentPhoto, { idempotent: true }).catch(() => {});
+            }
+            removeProfilePhoto(index);
+          },
         },
         {
           text: t("Reemplazar", "Replace"),

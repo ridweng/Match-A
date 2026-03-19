@@ -42,6 +42,13 @@ const updateProfileSchema = z.object({
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+const updateSettingsSchema = z.object({
+  language: z.enum(["es", "en"]).optional(),
+  heightUnit: z.enum(["metric", "imperial"]).optional(),
+  genderIdentity: z.string().trim().max(64).optional(),
+  pronouns: z.string().trim().max(64).optional(),
+});
+
 const providerSchema = z.enum(["google", "facebook", "apple"]);
 
 const { store, driver } = await createStore();
@@ -181,6 +188,15 @@ function sanitizeUser(user) {
     name: user.name,
     dateOfBirth: user.dateOfBirth,
     emailVerified: Boolean(user.emailVerified),
+  };
+}
+
+function sanitizeSettings(settings) {
+  return {
+    language: settings?.language === "en" ? "en" : "es",
+    heightUnit: settings?.heightUnit === "imperial" ? "imperial" : "metric",
+    genderIdentity: settings?.genderIdentity || "",
+    pronouns: settings?.pronouns || "",
   };
 }
 
@@ -640,6 +656,29 @@ app.patch("/api/auth/me", authenticate, async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "INVALID_PROFILE_PAYLOAD", issues: error.flatten() });
+    }
+    console.error(error);
+    return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
+  }
+});
+
+app.get("/api/auth/settings", authenticate, async (req, res) => {
+  const settings = await store.findUserSettings(req.auth.user.id);
+  return res.json({
+    settings: sanitizeSettings(settings),
+  });
+});
+
+app.patch("/api/auth/settings", authenticate, async (req, res) => {
+  try {
+    const updates = updateSettingsSchema.parse(req.body);
+    const settings = await store.upsertUserSettings(req.auth.user.id, updates);
+    return res.json({
+      settings: sanitizeSettings(settings),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "INVALID_SETTINGS_PAYLOAD", issues: error.flatten() });
     }
     console.error(error);
     return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });

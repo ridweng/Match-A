@@ -38,12 +38,16 @@ class FileStore {
       this.data = {
         counters: { user: 1, identity: 1, verification: 1, session: 1 },
         users: [],
+        userSettings: [],
         identities: [],
         verificationTokens: [],
         sessions: [],
       };
       await this.save();
     }
+    this.data.userSettings = Array.isArray(this.data.userSettings)
+      ? this.data.userSettings
+      : [];
   }
 
   async save() {
@@ -91,6 +95,36 @@ class FileStore {
     user.updatedAt = nowIso();
     await this.save();
     return user;
+  }
+
+  async findUserSettings(userId) {
+    return (
+      this.data.userSettings.find((item) => item.userId === Number(userId)) || null
+    );
+  }
+
+  async upsertUserSettings(userId, updates) {
+    let settings = await this.findUserSettings(userId);
+    if (!settings) {
+      settings = {
+        userId: Number(userId),
+        language: "es",
+        heightUnit: "metric",
+        genderIdentity: "",
+        pronouns: "",
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      this.data.userSettings.push(settings);
+    }
+
+    if (typeof updates.language === "string") settings.language = updates.language;
+    if (typeof updates.heightUnit === "string") settings.heightUnit = updates.heightUnit;
+    if (typeof updates.genderIdentity === "string") settings.genderIdentity = updates.genderIdentity;
+    if (typeof updates.pronouns === "string") settings.pronouns = updates.pronouns;
+    settings.updatedAt = nowIso();
+    await this.save();
+    return settings;
   }
 
   async verifyUserEmail(userId) {
@@ -293,6 +327,19 @@ class MysqlStore {
         CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
+
+    await this.connection.query(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        user_id BIGINT PRIMARY KEY,
+        language VARCHAR(8) NOT NULL DEFAULT 'es',
+        height_unit VARCHAR(16) NOT NULL DEFAULT 'metric',
+        gender_identity VARCHAR(64) NOT NULL DEFAULT '',
+        pronouns VARCHAR(64) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        CONSTRAINT fk_user_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   mapUser(row) {
@@ -363,6 +410,58 @@ class MysqlStore {
       values
     );
     return this.findUserById(userId);
+  }
+
+  async findUserSettings(userId) {
+    const [rows] = await this.connection.query(
+      "SELECT * FROM user_settings WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      userId: Number(row.user_id),
+      language: row.language,
+      heightUnit: row.height_unit,
+      genderIdentity: row.gender_identity,
+      pronouns: row.pronouns,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  async upsertUserSettings(userId, updates) {
+    const existing = await this.findUserSettings(userId);
+    if (!existing) {
+      await this.connection.query(
+        "INSERT INTO user_settings (user_id, language, height_unit, gender_identity, pronouns, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          userId,
+          updates.language || "es",
+          updates.heightUnit || "metric",
+          updates.genderIdentity || "",
+          updates.pronouns || "",
+          new Date(),
+          new Date(),
+        ]
+      );
+      return this.findUserSettings(userId);
+    }
+
+    await this.connection.query(
+      "UPDATE user_settings SET language = ?, height_unit = ?, gender_identity = ?, pronouns = ?, updated_at = ? WHERE user_id = ?",
+      [
+        typeof updates.language === "string" ? updates.language : existing.language,
+        typeof updates.heightUnit === "string" ? updates.heightUnit : existing.heightUnit,
+        typeof updates.genderIdentity === "string"
+          ? updates.genderIdentity
+          : existing.genderIdentity,
+        typeof updates.pronouns === "string" ? updates.pronouns : existing.pronouns,
+        new Date(),
+        userId,
+      ]
+    );
+    return this.findUserSettings(userId);
   }
 
   async verifyUserEmail(userId) {
