@@ -43,6 +43,7 @@ export type UserProfile = {
   name: string;
   age: string;
   dateOfBirth: string;
+  genderIdentity: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -137,6 +138,7 @@ const DEFAULT_PROFILE: UserProfile = {
   name: "",
   age: "",
   dateOfBirth: "",
+  genderIdentity: "",
   bio: "",
   bodyType: "",
   height: "",

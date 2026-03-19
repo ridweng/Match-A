@@ -17,6 +17,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
 import colors from "@/constants/colors";
+import {
+  GENDER_IDENTITIES,
+  getGenderIdentityLabel,
+  normalizeGenderIdentity,
+} from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
 
 function Field({
@@ -112,6 +117,67 @@ function LanguageField({
   );
 }
 
+function IdentityField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  t,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  t: (es: string, en: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={s.selectField}
+      >
+        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+          {value ? getGenderIdentityLabel(value, t) : placeholder}
+        </Text>
+        <Feather
+          name={open ? "chevron-up" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={s.dropdown}>
+          {GENDER_IDENTITIES.map((option) => (
+            <Pressable
+              key={option}
+              onPress={() => {
+                onChange(option);
+                setOpen(false);
+              }}
+              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
+            >
+              <Text
+                style={[
+                  s.dropdownOptionText,
+                  value === option && s.dropdownOptionTextActive,
+                ]}
+              >
+                {getGenderIdentityLabel(option, t)}
+              </Text>
+              {value === option ? (
+                <Feather name="check" size={14} color={colors.primaryLight} />
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function Section({
   title,
   children,
@@ -144,6 +210,7 @@ export default function SettingsScreen() {
     name: accountProfile.name,
     age: accountProfile.age,
     dateOfBirth: accountProfile.dateOfBirth,
+    genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
     bio: accountProfile.bio,
     bodyType: accountProfile.bodyType,
     height: accountProfile.height,
@@ -159,6 +226,7 @@ export default function SettingsScreen() {
       name: accountProfile.name,
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
+      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -177,6 +245,7 @@ export default function SettingsScreen() {
       name: accountProfile.name,
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
+      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -373,6 +442,13 @@ export default function SettingsScreen() {
             onChange={(value) => update("dateOfBirth", value)}
             cancelLabel={t("Cancelar", "Cancel")}
             confirmLabel={t("Guardar", "Save")}
+          />
+          <IdentityField
+            label={t("Cómo te identificas", "How you identify")}
+            value={local.genderIdentity}
+            onChange={(value) => update("genderIdentity", value)}
+            placeholder={t("Selecciona una opción", "Select an option")}
+            t={t}
           />
         </Section>
 

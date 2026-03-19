@@ -36,6 +36,54 @@ export const ETHNICITIES = [
   "Otro / Other",
 ];
 
+export type GenderIdentityValue = "male" | "female" | "non_binary";
+
+export const GENDER_IDENTITIES: GenderIdentityValue[] = [
+  "male",
+  "female",
+  "non_binary",
+];
+
+type Translator = (es: string, en: string) => string;
+
+export function normalizeGenderIdentity(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "male":
+    case "hombre":
+      return "male";
+    case "female":
+    case "mujer":
+      return "female";
+    case "non-binary":
+    case "non binary":
+    case "non_binary":
+    case "no binario":
+    case "no binaria":
+    case "no binarie":
+      return "non_binary";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getGenderIdentityLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizeGenderIdentity(value)) {
+    case "male":
+      return t("Hombre", "Male");
+    case "female":
+      return t("Mujer", "Female");
+    case "non_binary":
+      return t("No binario", "Non-binary");
+    default:
+      return value?.trim() || "";
+  }
+}
+
 export const INTERESTS_LIST = [
   "Fitness",
   "Senderismo",

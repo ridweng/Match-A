@@ -48,3 +48,20 @@ export function isAdultBirthDate(value: string | null | undefined) {
 
   return parsed.getTime() <= getAdultMaximumDate().getTime();
 }
+
+export function getAgeFromIsoDate(value: string | null | undefined, today = new Date()) {
+  const parsed = parseIsoDate(value);
+  if (!parsed) {
+    return null;
+  }
+
+  let age = today.getFullYear() - parsed.getFullYear();
+  const monthDiff = today.getMonth() - parsed.getMonth();
+  const dayDiff = today.getDate() - parsed.getDate();
+
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}

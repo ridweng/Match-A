@@ -20,13 +20,14 @@ import Colors from "@/constants/colors";
 import {
   BODY_TYPES,
   ETHNICITIES,
+  getGenderIdentityLabel,
   HAIR_COLORS,
   HEIGHTS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
-import { formatDateForDisplay } from "@/utils/dateOfBirth";
+import { formatDateForDisplay, getAgeFromIsoDate } from "@/utils/dateOfBirth";
 
 function SummaryField({
   label,
@@ -112,6 +113,10 @@ export default function ProfileScreen() {
   const placeholder = t("Ninguno", "None");
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 100);
+  const calculatedAge = getAgeFromIsoDate(accountProfile.dateOfBirth);
+  const ageLabel = calculatedAge
+    ? t(`${calculatedAge} años`, `${calculatedAge} years`)
+    : placeholder;
 
   const showValue = (value: string | string[]) => {
     if (Array.isArray(value)) {
@@ -251,16 +256,12 @@ export default function ProfileScreen() {
           <View style={styles.quickStats}>
             <View style={styles.quickChip}>
               <Feather name="calendar" size={14} color={Colors.primaryLight} />
-              <Text style={styles.quickChipText}>
-                {accountProfile.age
-                  ? t(`${accountProfile.age} años`, `${accountProfile.age} years`)
-                  : placeholder}
-              </Text>
+              <Text style={styles.quickChipText}>{ageLabel}</Text>
             </View>
             <View style={styles.quickChip}>
-              <Feather name="gift" size={14} color={Colors.accent} />
+              <Feather name="user" size={14} color={Colors.accent} />
               <Text style={styles.quickChipText}>
-                {showValue(accountProfile.dateOfBirth)}
+                {getGenderIdentityLabel(accountProfile.genderIdentity, t) || placeholder}
               </Text>
             </View>
           </View>
@@ -311,28 +312,6 @@ export default function ProfileScreen() {
                 </Pressable>
               );
             })}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t("Cuenta", "Account")}</Text>
-          <View style={styles.card}>
-            <SummaryField
-              label={t("Nombre completo", "Full name")}
-              value={showValue(accountProfile.name)}
-            />
-            <SummaryField
-              label={t("Correo electrónico", "Email")}
-              value={showValue(accountProfile.email)}
-            />
-            <SummaryField
-              label={t("Edad", "Age")}
-              value={accountProfile.age || placeholder}
-            />
-            <SummaryField
-              label={t("Fecha de nacimiento", "Date of birth")}
-              value={showValue(accountProfile.dateOfBirth)}
-            />
           </View>
         </View>
 
