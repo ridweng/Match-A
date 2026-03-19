@@ -45,6 +45,8 @@ export type UserProfile = {
   dateOfBirth: string;
   genderIdentity: string;
   pronouns: string;
+  relationshipGoals: string;
+  languagesSpoken: string[];
   bio: string;
   bodyType: string;
   height: string;
@@ -143,6 +145,8 @@ const DEFAULT_PROFILE: UserProfile = {
   dateOfBirth: "",
   genderIdentity: "",
   pronouns: "",
+  relationshipGoals: "",
+  languagesSpoken: [],
   bio: "",
   bodyType: "",
   height: "",
@@ -151,6 +155,16 @@ const DEFAULT_PROFILE: UserProfile = {
   interests: [],
   photos: [],
 };
+
+function normalizeStoredProfile(input: Partial<UserProfile> | null | undefined): UserProfile {
+  return {
+    ...DEFAULT_PROFILE,
+    ...(input || {}),
+    interests: Array.isArray(input?.interests) ? input.interests : [],
+    photos: Array.isArray(input?.photos) ? input.photos : [],
+    languagesSpoken: Array.isArray(input?.languagesSpoken) ? input.languagesSpoken : [],
+  };
+}
 
 type AppContextType = {
   authStatus: AuthStatus;
@@ -259,7 +273,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (savedGoals) setGoals(JSON.parse(savedGoals));
         if (savedProfile) {
           const p = JSON.parse(savedProfile);
-          setProfile(p);
+          setProfile(normalizeStoredProfile(p));
         }
 
         const bioEnabled = savedBiometrics === "true";
@@ -320,7 +334,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setUser(session.user);
       setNeedsProfileCompletion(session.needsProfileCompletion);
       await AsyncStorage.setItem("accessToken", session.accessToken);
-      setProfile((prev) => ({
+      setProfile((prev) => normalizeStoredProfile({
         ...prev,
         name: session.user.name || prev.name,
         dateOfBirth: session.user.dateOfBirth || prev.dateOfBirth,
@@ -436,7 +450,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setUser(result.user);
           setNeedsProfileCompletion(result.needsProfileCompletion);
         }
-        const updated = { ...profile, name: data.name, dateOfBirth: data.dateOfBirth };
+        const updated = normalizeStoredProfile({
+          ...profile,
+          name: data.name,
+          dateOfBirth: data.dateOfBirth,
+        });
         setProfile(updated);
         await AsyncStorage.setItem("profile", JSON.stringify(updated));
         setNeedsProfileCompletion(false);
@@ -523,7 +541,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateProfile = useCallback((updates: Partial<UserProfile>) => {
     setProfile((prev) => {
-      const updated = { ...prev, ...updates };
+      const updated = normalizeStoredProfile({ ...prev, ...updates });
       AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
       return updated;
     });
@@ -533,7 +551,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setProfile((prev) => {
       const photos = [...prev.photos];
       photos[index] = uri;
-      const updated = { ...prev, photos };
+      const updated = normalizeStoredProfile({ ...prev, photos });
       AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
       return updated;
     });
@@ -542,7 +560,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const removeProfilePhoto = useCallback((index: number) => {
     setProfile((prev) => {
       const photos = prev.photos.filter((_, i) => i !== index);
-      const updated = { ...prev, photos };
+      const updated = normalizeStoredProfile({ ...prev, photos });
       AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
       return updated;
     });
@@ -582,7 +600,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         likedProfiles,
         likeProfile,
         profile,
-        accountProfile: { ...profile, email: user?.email || "" },
+        accountProfile: { ...normalizeStoredProfile(profile), email: user?.email || "" },
         updateProfile,
         setProfilePhoto,
         removeProfilePhoto,

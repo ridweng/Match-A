@@ -155,7 +155,163 @@ export const SPANISH_PRONOUNS: PronounValue[] = ["he", "she", "elle", "ellx"];
 
 export const ENGLISH_PRONOUNS: PronounValue[] = ["he", "she", "they"];
 
+export type RelationshipGoalValue =
+  | "stable_relationship"
+  | "nothing_serious"
+  | "making_friends"
+  | "still_figuring_it_out";
+
+export const RELATIONSHIP_GOALS: RelationshipGoalValue[] = [
+  "stable_relationship",
+  "nothing_serious",
+  "making_friends",
+  "still_figuring_it_out",
+];
+
+export type SpokenLanguageOption = {
+  value: string;
+  es: string;
+  en: string;
+};
+
+export const SPOKEN_LANGUAGES: SpokenLanguageOption[] = [
+  { value: "spanish", es: "Español", en: "Spanish" },
+  { value: "english", es: "Inglés", en: "English" },
+  { value: "portuguese", es: "Portugués", en: "Portuguese" },
+  { value: "french", es: "Francés", en: "French" },
+  { value: "italian", es: "Italiano", en: "Italian" },
+  { value: "german", es: "Alemán", en: "German" },
+  { value: "dutch", es: "Neerlandés", en: "Dutch" },
+  { value: "catalan", es: "Catalán", en: "Catalan" },
+  { value: "galician", es: "Gallego", en: "Galician" },
+  { value: "basque", es: "Euskera / Vasco", en: "Basque" },
+  { value: "romanian", es: "Rumano", en: "Romanian" },
+  { value: "swedish", es: "Sueco", en: "Swedish" },
+  { value: "norwegian", es: "Noruego", en: "Norwegian" },
+  { value: "danish", es: "Danés", en: "Danish" },
+  { value: "finnish", es: "Finlandés", en: "Finnish" },
+  { value: "icelandic", es: "Islandés", en: "Icelandic" },
+  { value: "irish", es: "Irlandés", en: "Irish" },
+  { value: "welsh", es: "Galés", en: "Welsh" },
+  { value: "scottish_gaelic", es: "Escocés gaélico", en: "Scottish Gaelic" },
+  { value: "polish", es: "Polaco", en: "Polish" },
+  { value: "czech", es: "Checo", en: "Czech" },
+  { value: "slovak", es: "Eslovaco", en: "Slovak" },
+  { value: "hungarian", es: "Húngaro", en: "Hungarian" },
+  { value: "slovenian", es: "Esloveno", en: "Slovenian" },
+  { value: "croatian", es: "Croata", en: "Croatian" },
+  { value: "serbian", es: "Serbio", en: "Serbian" },
+  { value: "bosnian", es: "Bosnio", en: "Bosnian" },
+  { value: "montenegrin", es: "Montenegrino", en: "Montenegrin" },
+  { value: "macedonian", es: "Macedonio", en: "Macedonian" },
+  { value: "bulgarian", es: "Búlgaro", en: "Bulgarian" },
+  { value: "albanian", es: "Albanés", en: "Albanian" },
+  { value: "greek", es: "Griego", en: "Greek" },
+  { value: "russian", es: "Ruso", en: "Russian" },
+  { value: "ukrainian", es: "Ucraniano", en: "Ukrainian" },
+  { value: "belarusian", es: "Bielorruso", en: "Belarusian" },
+  { value: "lithuanian", es: "Lituano", en: "Lithuanian" },
+  { value: "latvian", es: "Letón", en: "Latvian" },
+  { value: "estonian", es: "Estonio", en: "Estonian" },
+  { value: "maltese", es: "Maltés", en: "Maltese" },
+  { value: "turkish", es: "Turco", en: "Turkish" },
+  { value: "arabic", es: "Árabe", en: "Arabic" },
+  { value: "hebrew", es: "Hebreo", en: "Hebrew" },
+  { value: "persian_farsi", es: "Persa / Farsi", en: "Persian / Farsi" },
+  { value: "kurdish", es: "Kurdo", en: "Kurdish" },
+  { value: "armenian", es: "Armenio", en: "Armenian" },
+  { value: "georgian", es: "Georgiano", en: "Georgian" },
+  { value: "azerbaijani", es: "Azerbaiyano", en: "Azerbaijani" },
+  { value: "kazakh", es: "Kazajo", en: "Kazakh" },
+  { value: "uzbek", es: "Uzbeko", en: "Uzbek" },
+  { value: "turkmen", es: "Turcomano", en: "Turkmen" },
+  { value: "tajik", es: "Tayiko", en: "Tajik" },
+  { value: "kyrgyz", es: "Kirguís", en: "Kyrgyz" },
+  { value: "pashto", es: "Pastún", en: "Pashto" },
+  { value: "dari", es: "Dari", en: "Dari" },
+  { value: "urdu", es: "Urdu", en: "Urdu" },
+  { value: "hindi", es: "Hindi", en: "Hindi" },
+  { value: "bengali", es: "Bengalí", en: "Bengali" },
+  { value: "punjabi", es: "Panyabí", en: "Punjabi" },
+  { value: "gujarati", es: "Guyaratí", en: "Gujarati" },
+  { value: "marathi", es: "Maratí", en: "Marathi" },
+  { value: "tamil", es: "Tamil", en: "Tamil" },
+  { value: "telugu", es: "Telugu", en: "Telugu" },
+  { value: "kannada", es: "Canarés / Kannada", en: "Kannada" },
+  { value: "malayalam", es: "Malayalam", en: "Malayalam" },
+  { value: "odia", es: "Odia", en: "Odia" },
+  { value: "assamese", es: "Asamés", en: "Assamese" },
+  { value: "nepali", es: "Nepalí", en: "Nepali" },
+  { value: "sinhala", es: "Cingalés", en: "Sinhala" },
+  { value: "burmese", es: "Birmano", en: "Burmese" },
+  { value: "thai", es: "Tailandés", en: "Thai" },
+  { value: "lao", es: "Lao", en: "Lao" },
+  { value: "khmer", es: "Jemer / Camboyano", en: "Khmer" },
+  { value: "vietnamese", es: "Vietnamita", en: "Vietnamese" },
+  { value: "indonesian", es: "Indonesio", en: "Indonesian" },
+  { value: "malay", es: "Malayo", en: "Malay" },
+  { value: "tagalog", es: "Tagalo", en: "Tagalog" },
+  { value: "filipino", es: "Filipino", en: "Filipino" },
+  { value: "cebuano", es: "Cebuano", en: "Cebuano" },
+  { value: "javanese", es: "Javanés", en: "Javanese" },
+  { value: "sundanese", es: "Sundanés", en: "Sundanese" },
+  { value: "mandarin_chinese", es: "Chino mandarín", en: "Mandarin Chinese" },
+  { value: "cantonese", es: "Cantonés", en: "Cantonese" },
+  { value: "hakka", es: "Hakka", en: "Hakka" },
+  { value: "japanese", es: "Japonés", en: "Japanese" },
+  { value: "korean", es: "Coreano", en: "Korean" },
+  { value: "mongolian", es: "Mongol", en: "Mongolian" },
+  { value: "tibetan", es: "Tibetano", en: "Tibetan" },
+  { value: "uyghur", es: "Uigur", en: "Uyghur" },
+  { value: "swahili", es: "Suajili", en: "Swahili" },
+  { value: "amharic", es: "Amhárico", en: "Amharic" },
+  { value: "somali", es: "Somali", en: "Somali" },
+  { value: "oromo", es: "Oromo", en: "Oromo" },
+  { value: "tigrinya", es: "Tigrinya", en: "Tigrinya" },
+  { value: "hausa", es: "Hausa", en: "Hausa" },
+  { value: "yoruba", es: "Yoruba", en: "Yoruba" },
+  { value: "igbo", es: "Igbo", en: "Igbo" },
+  { value: "zulu", es: "Zulú", en: "Zulu" },
+  { value: "xhosa", es: "Xhosa", en: "Xhosa" },
+  { value: "afrikaans", es: "Afrikáans", en: "Afrikaans" },
+  { value: "shona", es: "Shona", en: "Shona" },
+  { value: "kinyarwanda", es: "Kinyarwanda", en: "Kinyarwanda" },
+  { value: "lingala", es: "Lingala", en: "Lingala" },
+  { value: "wolof", es: "Wolof", en: "Wolof" },
+  { value: "malagasy", es: "Malagasy", en: "Malagasy" },
+  { value: "quechua", es: "Quechua", en: "Quechua" },
+  { value: "aymara", es: "Aymara", en: "Aymara" },
+  { value: "guarani", es: "Guaraní", en: "Guarani" },
+  { value: "nahuatl", es: "Náhuatl", en: "Nahuatl" },
+  { value: "mapudungun", es: "Mapudungun", en: "Mapudungun" },
+  { value: "yucatec_maya", es: "Maya yucateco", en: "Yucatec Maya" },
+  { value: "inuktitut", es: "Inuit / Inuktitut", en: "Inuktitut" },
+  { value: "hawaiian", es: "Hawaiano", en: "Hawaiian" },
+  { value: "maori", es: "Maorí", en: "Maori" },
+  { value: "samoan", es: "Samoano", en: "Samoan" },
+  { value: "tongan", es: "Tongano", en: "Tongan" },
+  { value: "fijian", es: "Fiyiano", en: "Fijian" },
+  { value: "haitian_creole", es: "Criollo haitiano", en: "Haitian Creole" },
+  { value: "papiamento", es: "Papiamento", en: "Papiamento" },
+  { value: "luxembourgish", es: "Luxemburgués", en: "Luxembourgish" },
+  { value: "esperanto", es: "Esperanto", en: "Esperanto" },
+  { value: "asl", es: "Lengua de señas americana", en: "American Sign Language" },
+  { value: "bsl", es: "Lengua de señas británica", en: "British Sign Language" },
+  { value: "chilean_sign_language", es: "Lengua de señas chilena", en: "Chilean Sign Language" },
+];
+
 type Translator = (es: string, en: string) => string;
+
+export function getSpokenLanguageLabel(
+  value: string | null | undefined,
+  language: "es" | "en"
+) {
+  const option = SPOKEN_LANGUAGES.find((item) => item.value === value);
+  if (!option) {
+    return value?.trim() || "";
+  }
+  return language === "es" ? option.es : option.en;
+}
 
 export function normalizeBodyType(value: string | null | undefined): string {
   const normalized = value?.trim().toLowerCase();
@@ -640,6 +796,45 @@ export function getPronounLabel(
       return language === "es" ? "Elle" : "They / Them / Theirs";
     case "ellx":
       return language === "es" ? "Ellx" : "They / Them / Theirs";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeRelationshipGoal(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "pareja estable":
+    case "stable relationship":
+      return "stable_relationship";
+    case "nada serio":
+    case "nothing serious":
+      return "nothing_serious";
+    case "hacer amigos":
+    case "making friends":
+      return "making_friends";
+    case "lo sigo pensando":
+    case "still figuring it out":
+      return "still_figuring_it_out";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getRelationshipGoalLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizeRelationshipGoal(value)) {
+    case "stable_relationship":
+      return t("Pareja estable", "Stable relationship");
+    case "nothing_serious":
+      return t("Nada serio", "Nothing serious");
+    case "making_friends":
+      return t("Hacer amigos", "Making friends");
+    case "still_figuring_it_out":
+      return t("Lo sigo pensando", "Still figuring it out");
     default:
       return value?.trim() || "";
   }

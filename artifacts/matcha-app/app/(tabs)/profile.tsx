@@ -5,6 +5,7 @@ import React from "react";
 import {
   Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -25,15 +26,22 @@ import {
   getGenderIdentityLabel,
   getHairColorLabel,
   getPronounLabel,
+  getRelationshipGoalLabel,
+  getSpokenLanguageLabel,
   HAIR_COLORS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
   normalizeBodyType,
   normalizeEthnicity,
   normalizeHairColor,
+  normalizeRelationshipGoal,
+  RELATIONSHIP_GOALS,
+  SPOKEN_LANGUAGES,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
 import { getAgeFromIsoDate } from "@/utils/dateOfBirth";
+
+const MAX_SPOKEN_LANGUAGES = 7;
 
 function SummaryField({
   label,
@@ -196,6 +204,28 @@ export default function ProfileScreen() {
     heightUnit === "imperial"
       ? t("Tu altura en pulgadas", "Your height in inches")
       : t("Tu altura en cm", "Your height in cm");
+  const spokenLanguages = Array.isArray(accountProfile.languagesSpoken)
+    ? accountProfile.languagesSpoken
+    : [];
+  const [languagesModalOpen, setLanguagesModalOpen] = React.useState(false);
+  const [languageSearch, setLanguageSearch] = React.useState("");
+  const [draftLanguages, setDraftLanguages] = React.useState<string[]>(
+    spokenLanguages
+  );
+  const selectedLanguageLabels = spokenLanguages.map((value) =>
+    getSpokenLanguageLabel(value, language)
+  );
+  const filteredLanguages = React.useMemo(() => {
+    const query = languageSearch.trim().toLowerCase();
+    if (!query) {
+      return SPOKEN_LANGUAGES;
+    }
+
+    return SPOKEN_LANGUAGES.filter((item) => {
+      const haystack = [item.es, item.en, item.value].join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [languageSearch]);
 
   const showValue = (value: string | string[]) => {
     if (Array.isArray(value)) {
@@ -268,6 +298,43 @@ export default function ProfileScreen() {
     updateProfile({
       [key]: value,
     } as Partial<UserProfile>);
+  };
+
+  const openLanguagesModal = () => {
+    setDraftLanguages(spokenLanguages);
+    setLanguageSearch("");
+    setLanguagesModalOpen(true);
+  };
+
+  const closeLanguagesModal = () => {
+    setLanguagesModalOpen(false);
+    setLanguageSearch("");
+  };
+
+  const toggleSpokenLanguage = (value: string) => {
+    setDraftLanguages((current) => {
+      if (current.includes(value)) {
+        return current.filter((item) => item !== value);
+      }
+
+      if (current.length >= MAX_SPOKEN_LANGUAGES) {
+        Alert.alert(
+          t("Máximo alcanzado", "Maximum reached"),
+          t(
+            "Puedes seleccionar hasta 7 idiomas.",
+            "You can select up to 7 languages."
+          )
+        );
+        return current;
+      }
+
+      return [...current, value];
+    });
+  };
+
+  const acceptLanguages = () => {
+    update("languagesSpoken", draftLanguages);
+    closeLanguagesModal();
   };
 
   const updateHeight = (value: string) => {
@@ -422,6 +489,48 @@ export default function ProfileScreen() {
                 textAlignVertical="top"
               />
             </View>
+            <SelectField
+              label={t("Metas de tu relación", "Your relationship goals")}
+              value={normalizeRelationshipGoal(accountProfile.relationshipGoals)}
+              options={RELATIONSHIP_GOALS}
+              onChange={(value) => update("relationshipGoals", value)}
+              getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
+            />
+            <View style={styles.editField}>
+              <Text style={styles.editLabel}>{t("Idiomas que hablo", "Languages I speak")}</Text>
+              <Pressable
+                onPress={openLanguagesModal}
+                style={({ pressed }) => [
+                  styles.selectField,
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.selectValue,
+                    !selectedLanguageLabels.length && styles.selectPlaceholder,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selectedLanguageLabels.length
+                    ? t(
+                        `${selectedLanguageLabels.length} idiomas seleccionados`,
+                        `${selectedLanguageLabels.length} languages selected`
+                      )
+                    : t("Selecciona idiomas", "Select languages")}
+                </Text>
+                <Feather name="chevron-right" size={16} color={Colors.textSecondary} />
+              </Pressable>
+              {selectedLanguageLabels.length ? (
+                <View style={styles.languageChipsWrap}>
+                  {selectedLanguageLabels.map((label) => (
+                    <View key={label} style={styles.languageChip}>
+                      <Text style={styles.languageChipText}>{label}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
 
@@ -508,6 +617,105 @@ export default function ProfileScreen() {
         </View>
 
       </ScrollView>
+
+      <Modal
+        visible={languagesModalOpen}
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        transparent
+        onRequestClose={closeLanguagesModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View
+            style={[
+              styles.modalContainer,
+              {
+                marginTop: insets.top + 16,
+                marginBottom: insets.bottom + 16,
+              },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <Pressable
+                onPress={closeLanguagesModal}
+                style={({ pressed }) => [
+                  styles.modalHeaderBtn,
+                  pressed && { opacity: 0.75 },
+                ]}
+              >
+                <Feather name="chevron-left" size={20} color={Colors.text} />
+              </Pressable>
+              <Pressable
+                onPress={acceptLanguages}
+                style={({ pressed }) => [
+                  styles.modalAcceptBtn,
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <Text style={styles.modalAcceptText}>{t("Aceptar", "Done")}</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalTitle}>{t("Idiomas que hablo", "Languages I speak")}</Text>
+            <Text style={styles.modalDescription}>
+              {t(
+                "Selecciona hasta 7 idiomas que hables para añadirlos a tu perfil.",
+                "Select up to 7 languages you speak to add them to your profile."
+              )}
+            </Text>
+            <Text style={styles.modalCounter}>
+              {draftLanguages.length}/{MAX_SPOKEN_LANGUAGES}{" "}
+              {t("seleccionados", "selected")}
+            </Text>
+
+            <View style={styles.searchField}>
+              <Feather name="search" size={15} color={Colors.textMuted} />
+              <TextInput
+                style={styles.searchInput}
+                value={languageSearch}
+                onChangeText={setLanguageSearch}
+                placeholder={t("Buscar idioma", "Search language")}
+                placeholderTextColor={Colors.textMuted}
+                selectionColor={Colors.primaryLight}
+              />
+            </View>
+
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.modalOptionsWrap}>
+                {filteredLanguages.map((item) => {
+                  const selected = draftLanguages.includes(item.value);
+                  return (
+                    <Pressable
+                      key={item.value}
+                      onPress={() => toggleSpokenLanguage(item.value)}
+                      style={[
+                        styles.modalOption,
+                        selected && styles.modalOptionSelected,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.modalOptionText,
+                          selected && styles.modalOptionTextSelected,
+                        ]}
+                      >
+                        {getSpokenLanguageLabel(item.value, language)}
+                      </Text>
+                      {selected ? (
+                        <Feather name="check" size={13} color={Colors.primaryLight} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -773,6 +981,24 @@ const styles = StyleSheet.create({
   editInputMultiline: {
     minHeight: 118,
   },
+  languageChipsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  languageChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: "rgba(82,183,136,0.12)",
+    borderWidth: 1,
+    borderColor: Colors.primaryLight,
+  },
+  languageChipText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.primaryLight,
+  },
   selectField: {
     minHeight: 52,
     borderRadius: 14,
@@ -845,5 +1071,126 @@ const styles = StyleSheet.create({
   },
   interestChipTextSelected: {
     color: Colors.primaryLight,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(6, 12, 10, 0.72)",
+    paddingHorizontal: 16,
+    justifyContent: "center",
+  },
+  modalContainer: {
+    flex: 1,
+    maxHeight: "88%",
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 18,
+  },
+  modalHeaderBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalAcceptBtn: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: Colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalAcceptText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: Colors.textInverted,
+  },
+  modalTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 22,
+    color: Colors.text,
+  },
+  modalDescription: {
+    marginTop: 8,
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    lineHeight: 21,
+    color: Colors.textSecondary,
+  },
+  modalCounter: {
+    marginTop: 10,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.primaryLight,
+  },
+  searchField: {
+    marginTop: 16,
+    minHeight: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 46,
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.text,
+  },
+  modalScroll: {
+    flex: 1,
+    marginTop: 16,
+  },
+  modalScrollContent: {
+    paddingBottom: 24,
+  },
+  modalOptionsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  modalOption: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+  },
+  modalOptionSelected: {
+    borderColor: Colors.primaryLight,
+    backgroundColor: "rgba(82,183,136,0.08)",
+  },
+  modalOptionText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.text,
+  },
+  modalOptionTextSelected: {
+    color: Colors.primaryLight,
+    fontFamily: "Inter_500Medium",
   },
 });
