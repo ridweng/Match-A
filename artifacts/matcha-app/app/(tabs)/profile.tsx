@@ -21,8 +21,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import {
   BODY_TYPES,
+  CHILDREN_PREFERENCES,
+  EDUCATION_LEVELS,
   ETHNICITIES,
   getBodyTypeLabel,
+  getChildrenPreferenceLabel,
+  getEducationLabel,
   getEthnicityLabel,
   getGenderIdentityLabel,
   getHairColorLabel,
@@ -33,6 +37,8 @@ import {
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
   normalizeBodyType,
+  normalizeChildrenPreference,
+  normalizeEducation,
   normalizeEthnicity,
   normalizeHairColor,
   normalizeRelationshipGoal,
@@ -82,42 +88,44 @@ function SelectField({
   return (
     <View style={styles.editField}>
       <Text style={styles.editLabel}>{label}</Text>
-      <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
-        <Text style={[styles.selectValue, !value && styles.selectPlaceholder]}>
-          {value ? getOptionLabel?.(value) || value : "—"}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={Colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={styles.dropdown}>
-          {options.map((option) => (
-            <Pressable
-              key={option}
-              onPress={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-              style={[styles.dropdownOption, value === option && styles.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  styles.dropdownOptionText,
-                  value === option && styles.dropdownOptionTextActive,
-                ]}
+      <View style={[styles.selectWrap, open && styles.selectWrapOpen]}>
+        <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
+          <Text style={[styles.selectValue, !value && styles.selectPlaceholder]}>
+            {value ? getOptionLabel?.(value) || value : "—"}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={Colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={styles.dropdown}>
+            {options.map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                style={[styles.dropdownOption, value === option && styles.dropdownOptionActive]}
               >
-                {getOptionLabel?.(option) || option}
-              </Text>
-              {value === option ? (
-                <Feather name="check" size={14} color={Colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+                <Text
+                  style={[
+                    styles.dropdownOptionText,
+                    value === option && styles.dropdownOptionTextActive,
+                  ]}
+                >
+                  {getOptionLabel?.(option) || option}
+                </Text>
+                {value === option ? (
+                  <Feather name="check" size={14} color={Colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -530,6 +538,20 @@ export default function ProfileScreen() {
               options={RELATIONSHIP_GOALS}
               onChange={(value) => update("relationshipGoals", value)}
               getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
+            />
+            <SelectField
+              label={t("Educación", "Education")}
+              value={normalizeEducation(accountProfile.education)}
+              options={EDUCATION_LEVELS}
+              onChange={(value) => update("education", value)}
+              getOptionLabel={(value) => getEducationLabel(value, t)}
+            />
+            <SelectField
+              label={t("Quiero tener hijxs", "Having children")}
+              value={normalizeChildrenPreference(accountProfile.childrenPreference)}
+              options={CHILDREN_PREFERENCES}
+              onChange={(value) => update("childrenPreference", value)}
+              getOptionLabel={(value) => getChildrenPreferenceLabel(value, t)}
             />
             <View style={styles.editField}>
               <Text style={styles.editLabel}>{t("Idiomas que hablo", "Languages I speak")}</Text>
@@ -971,6 +993,13 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.6,
   },
+  selectWrap: {
+    position: "relative",
+    zIndex: 1,
+  },
+  selectWrapOpen: {
+    zIndex: 40,
+  },
   editInput: {
     minHeight: 52,
     borderRadius: 14,
@@ -1055,11 +1084,17 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
   },
   dropdown: {
+    position: "absolute",
+    top: 58,
+    left: 0,
+    right: 0,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: Colors.border,
     backgroundColor: Colors.backgroundElevated,
     overflow: "hidden",
+    zIndex: 50,
+    elevation: 8,
   },
   dropdownOption: {
     paddingHorizontal: 14,

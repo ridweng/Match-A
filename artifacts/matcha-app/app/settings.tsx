@@ -78,45 +78,47 @@ function LanguageField({
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen((current) => !current)}
-        style={s.selectField}
-      >
-        <Text style={s.selectValue}>
-          {options.find((option) => option.value === value)?.label || value}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={s.dropdown}>
-          {options.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-              style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  s.dropdownOptionText,
-                  value === option.value && s.dropdownOptionTextActive,
-                ]}
+      <View style={[s.selectWrap, open && s.selectWrapOpen]}>
+        <Pressable
+          onPress={() => setOpen((current) => !current)}
+          style={s.selectField}
+        >
+          <Text style={s.selectValue}>
+            {options.find((option) => option.value === value)?.label || value}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={s.dropdown}>
+            {options.map((option) => (
+              <Pressable
+                key={option.value}
+                onPress={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
               >
-                {option.label}
-              </Text>
-              {value === option.value ? (
-                <Feather name="check" size={14} color={colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+                <Text
+                  style={[
+                    s.dropdownOptionText,
+                    value === option.value && s.dropdownOptionTextActive,
+                  ]}
+                >
+                  {option.label}
+                </Text>
+                {value === option.value ? (
+                  <Feather name="check" size={14} color={colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -141,45 +143,47 @@ function HeightUnitField({
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen((current) => !current)}
-        style={s.selectField}
-      >
-        <Text style={s.selectValue}>
-          {options.find((option) => option.value === value)?.label || value}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={s.dropdown}>
-          {options.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-              style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  s.dropdownOptionText,
-                  value === option.value && s.dropdownOptionTextActive,
-                ]}
+      <View style={[s.selectWrap, open && s.selectWrapOpen]}>
+        <Pressable
+          onPress={() => setOpen((current) => !current)}
+          style={s.selectField}
+        >
+          <Text style={s.selectValue}>
+            {options.find((option) => option.value === value)?.label || value}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={s.dropdown}>
+            {options.map((option) => (
+              <Pressable
+                key={option.value}
+                onPress={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                style={[s.dropdownOption, value === option.value && s.dropdownOptionActive]}
               >
-                {option.label}
-              </Text>
-              {value === option.value ? (
-                <Feather name="check" size={14} color={colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+                <Text
+                  style={[
+                    s.dropdownOptionText,
+                    value === option.value && s.dropdownOptionTextActive,
+                  ]}
+                >
+                  {option.label}
+                </Text>
+                {value === option.value ? (
+                  <Feather name="check" size={14} color={colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -202,45 +206,47 @@ function IdentityField({
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen((current) => !current)}
-        style={s.selectField}
-      >
-        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
-          {value ? getGenderIdentityLabel(value, t) : placeholder}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={s.dropdown}>
-          {GENDER_IDENTITIES.map((option) => (
-            <Pressable
-              key={option}
-              onPress={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  s.dropdownOptionText,
-                  value === option && s.dropdownOptionTextActive,
-                ]}
+      <View style={[s.selectWrap, open && s.selectWrapOpen]}>
+        <Pressable
+          onPress={() => setOpen((current) => !current)}
+          style={s.selectField}
+        >
+          <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+            {value ? getGenderIdentityLabel(value, t) : placeholder}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={s.dropdown}>
+            {GENDER_IDENTITIES.map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
               >
-                {getGenderIdentityLabel(option, t)}
-              </Text>
-              {value === option ? (
-                <Feather name="check" size={14} color={colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+                <Text
+                  style={[
+                    s.dropdownOptionText,
+                    value === option && s.dropdownOptionTextActive,
+                  ]}
+                >
+                  {getGenderIdentityLabel(option, t)}
+                </Text>
+                {value === option ? (
+                  <Feather name="check" size={14} color={colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -264,45 +270,47 @@ function PronounsField({
   return (
     <View style={s.field}>
       <Text style={s.fieldLabel}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen((current) => !current)}
-        style={s.selectField}
-      >
-        <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
-          {value ? getPronounLabel(value, language) : placeholder}
-        </Text>
-        <Feather
-          name={open ? "chevron-up" : "chevron-down"}
-          size={16}
-          color={colors.textSecondary}
-        />
-      </Pressable>
-      {open ? (
-        <View style={s.dropdown}>
-          {options.map((option) => (
-            <Pressable
-              key={option}
-              onPress={() => {
-                onChange(option);
-                setOpen(false);
-              }}
-              style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
-            >
-              <Text
-                style={[
-                  s.dropdownOptionText,
-                  value === option && s.dropdownOptionTextActive,
-                ]}
+      <View style={[s.selectWrap, open && s.selectWrapOpen]}>
+        <Pressable
+          onPress={() => setOpen((current) => !current)}
+          style={s.selectField}
+        >
+          <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+            {value ? getPronounLabel(value, language) : placeholder}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={s.dropdown}>
+            {options.map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
               >
-                {getPronounLabel(option, language)}
-              </Text>
-              {value === option ? (
-                <Feather name="check" size={14} color={colors.primaryLight} />
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+                <Text
+                  style={[
+                    s.dropdownOptionText,
+                    value === option && s.dropdownOptionTextActive,
+                  ]}
+                >
+                  {getPronounLabel(option, language)}
+                </Text>
+                {value === option ? (
+                  <Feather name="check" size={14} color={colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -343,6 +351,8 @@ export default function SettingsScreen() {
     pronouns: normalizePronouns(accountProfile.pronouns),
     relationshipGoals: accountProfile.relationshipGoals,
     languagesSpoken: accountProfile.languagesSpoken,
+    education: accountProfile.education,
+    childrenPreference: accountProfile.childrenPreference,
     bio: accountProfile.bio,
     bodyType: accountProfile.bodyType,
     height: accountProfile.height,
@@ -364,6 +374,8 @@ export default function SettingsScreen() {
       pronouns: normalizePronouns(accountProfile.pronouns),
       relationshipGoals: accountProfile.relationshipGoals,
       languagesSpoken: accountProfile.languagesSpoken,
+      education: accountProfile.education,
+      childrenPreference: accountProfile.childrenPreference,
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -388,6 +400,8 @@ export default function SettingsScreen() {
       pronouns: normalizePronouns(accountProfile.pronouns),
       relationshipGoals: accountProfile.relationshipGoals,
       languagesSpoken: accountProfile.languagesSpoken,
+      education: accountProfile.education,
+      childrenPreference: accountProfile.childrenPreference,
       bio: accountProfile.bio,
       bodyType: accountProfile.bodyType,
       height: accountProfile.height,
@@ -742,6 +756,7 @@ const s = StyleSheet.create({
   },
   field: {
     gap: 7,
+    zIndex: 1,
   },
   fieldLabel: {
     fontFamily: "Inter_500Medium",
@@ -749,6 +764,13 @@ const s = StyleSheet.create({
     color: colors.slateLight,
     textTransform: "uppercase",
     letterSpacing: 0.6,
+  },
+  selectWrap: {
+    position: "relative",
+    zIndex: 1,
+  },
+  selectWrapOpen: {
+    zIndex: 40,
   },
   input: {
     minHeight: 52,
@@ -789,11 +811,17 @@ const s = StyleSheet.create({
     color: colors.textMuted,
   },
   dropdown: {
+    position: "absolute",
+    top: 58,
+    left: 0,
+    right: 0,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     backgroundColor: colors.backgroundElevated,
     overflow: "hidden",
+    zIndex: 50,
+    elevation: 8,
   },
   dropdownOption: {
     paddingHorizontal: 14,

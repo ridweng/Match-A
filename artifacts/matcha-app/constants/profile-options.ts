@@ -168,6 +168,40 @@ export const RELATIONSHIP_GOALS: RelationshipGoalValue[] = [
   "still_figuring_it_out",
 ];
 
+export type EducationValue =
+  | "bachelors_degree"
+  | "university_student"
+  | "high_school"
+  | "doctorate"
+  | "studying_masters"
+  | "masters_degree"
+  | "technical_school";
+
+export const EDUCATION_LEVELS: EducationValue[] = [
+  "bachelors_degree",
+  "university_student",
+  "high_school",
+  "doctorate",
+  "studying_masters",
+  "masters_degree",
+  "technical_school",
+];
+
+export type ChildrenPreferenceValue =
+  | "want_children"
+  | "dont_want_children"
+  | "have_and_want_more"
+  | "have_and_dont_want_more"
+  | "not_sure";
+
+export const CHILDREN_PREFERENCES: ChildrenPreferenceValue[] = [
+  "want_children",
+  "dont_want_children",
+  "have_and_want_more",
+  "have_and_dont_want_more",
+  "not_sure",
+];
+
 export type SpokenLanguageOption = {
   value: string;
   es: string;
@@ -835,6 +869,111 @@ export function getRelationshipGoalLabel(
       return t("Hacer amigos", "Making friends");
     case "still_figuring_it_out":
       return t("Lo sigo pensando", "Still figuring it out");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeEducation(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "licenciatura":
+    case "bachelor's degree":
+    case "bachelors degree":
+      return "bachelors_degree";
+    case "estudiante universitario":
+    case "university student":
+      return "university_student";
+    case "preparatoria":
+    case "high school":
+      return "high_school";
+    case "doctorado":
+    case "doctorate":
+      return "doctorate";
+    case "estudiando una maestria":
+    case "estudiando una maestría":
+    case "studying a master's":
+    case "studying a masters":
+      return "studying_masters";
+    case "maestría":
+    case "maestria":
+    case "master's degree":
+    case "masters degree":
+      return "masters_degree";
+    case "escuela tecnica":
+    case "escuela técnica":
+    case "technical school":
+      return "technical_school";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getEducationLabel(value: string | null | undefined, t: Translator) {
+  switch (normalizeEducation(value)) {
+    case "bachelors_degree":
+      return t("Licenciatura", "Bachelor's degree");
+    case "university_student":
+      return t("Estudiante universitario", "University student");
+    case "high_school":
+      return t("Preparatoria", "High school");
+    case "doctorate":
+      return t("Doctorado", "Doctorate");
+    case "studying_masters":
+      return t("Estudiando una maestría", "Studying a master's");
+    case "masters_degree":
+      return t("Maestría", "Master's degree");
+    case "technical_school":
+      return t("Escuela técnica", "Technical school");
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function normalizeChildrenPreference(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "quiero hijxs":
+    case "want children":
+      return "want_children";
+    case "no quiero hijxs":
+    case "don't want children":
+    case "dont want children":
+      return "dont_want_children";
+    case "ya tengo y quiero más":
+    case "ya tengo y quiero mas":
+    case "already have and want more":
+      return "have_and_want_more";
+    case "ya tengo y no quiero más":
+    case "ya tengo y no quiero mas":
+    case "already have and don't want more":
+    case "already have and dont want more":
+      return "have_and_dont_want_more";
+    case "no estoy seguro":
+    case "not sure":
+      return "not_sure";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getChildrenPreferenceLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizeChildrenPreference(value)) {
+    case "want_children":
+      return t("Quiero hijxs", "Want children");
+    case "dont_want_children":
+      return t("No quiero hijxs", "Don't want children");
+    case "have_and_want_more":
+      return t("Ya tengo y quiero más", "Already have and want more");
+    case "have_and_dont_want_more":
+      return t("Ya tengo y no quiero más", "Already have and don't want more");
+    case "not_sure":
+      return t("No estoy seguro", "Not sure");
     default:
       return value?.trim() || "";
   }

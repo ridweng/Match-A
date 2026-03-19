@@ -49,6 +49,8 @@ export type UserProfile = {
   pronouns: string;
   relationshipGoals: string;
   languagesSpoken: string[];
+  education: string;
+  childrenPreference: string;
   bio: string;
   bodyType: string;
   height: string;
@@ -149,6 +151,8 @@ const DEFAULT_PROFILE: UserProfile = {
   pronouns: "",
   relationshipGoals: "",
   languagesSpoken: [],
+  education: "",
+  childrenPreference: "",
   bio: "",
   bodyType: "",
   height: "",
