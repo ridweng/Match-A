@@ -40,6 +40,7 @@ const CARD_WIDTH = width - 32;
 const CARD_HEIGHT = height * 0.62;
 const SWIPE_THRESHOLD = 80;
 const INFO_SWIPE_THRESHOLD = 82;
+const IS_WEB = Platform.OS === "web";
 
 type SwipeState = "idle" | "like" | "dislike";
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
@@ -168,6 +169,16 @@ export default function DiscoverScreen() {
   const backRotate = flipAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ["180deg", "360deg"],
+  });
+  const frontOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.48, 0.52, 1],
+    outputRange: [1, 1, 0, 0],
+    extrapolate: "clamp",
+  });
+  const backOpacity = flipAnim.interpolate({
+    inputRange: [0, 0.48, 0.52, 1],
+    outputRange: [0, 0, 1, 1],
+    extrapolate: "clamp",
   });
 
   const current = discoverProfiles[currentIndex];
@@ -375,9 +386,14 @@ export default function DiscoverScreen() {
             style={[
               styles.cardFace,
               styles.cardFaceFront,
-              {
-                transform: [{ perspective: 1200 }, { rotateY: frontRotate }],
-              },
+              IS_WEB
+                ? {
+                    opacity: frontOpacity,
+                    zIndex: isInfoVisible ? 1 : 3,
+                  }
+                : {
+                    transform: [{ perspective: 1200 }, { rotateY: frontRotate }],
+                  },
             ]}
           >
             <Image
@@ -453,9 +469,14 @@ export default function DiscoverScreen() {
             style={[
               styles.cardFace,
               styles.cardFaceBack,
-              {
-                transform: [{ perspective: 1200 }, { rotateY: backRotate }],
-              },
+              IS_WEB
+                ? {
+                    opacity: backOpacity,
+                    zIndex: isInfoVisible ? 3 : 1,
+                  }
+                : {
+                    transform: [{ perspective: 1200 }, { rotateY: backRotate }],
+                  },
             ]}
           >
             <View style={styles.backHeader}>
@@ -768,7 +789,7 @@ const styles = StyleSheet.create({
   },
   cardFace: {
     ...StyleSheet.absoluteFillObject,
-    backfaceVisibility: "hidden",
+    backfaceVisibility: IS_WEB ? "visible" : "hidden",
   },
   cardFaceFront: {
     backgroundColor: Colors.backgroundCard,
