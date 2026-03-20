@@ -25,6 +25,7 @@ import {
   getChildrenPreferenceLabel,
   getEducationLabel,
   getEthnicityLabel,
+  getGenderIdentityLabel,
   getHairColorLabel,
   getPhysicalActivityLabel,
   getPoliticalInterestLabel,
@@ -455,6 +456,9 @@ export default function DiscoverScreen() {
   const pronounLabel = current
     ? getPronounLabel(current.pronouns, language)
     : "";
+  const genderIdentityLabel = current
+    ? getGenderIdentityLabel(current.genderIdentity, t)
+    : "";
   const zodiacLabel = getZodiacSignLabel(
     getZodiacSignFromIsoDate(current?.dateOfBirth ?? ""),
     t
@@ -848,6 +852,9 @@ export default function DiscoverScreen() {
                     <Text style={styles.cardPronouns}>{pronounLabel}</Text>
                   ) : null}
                   <Text style={styles.cardName}>{current.name}</Text>
+                  {genderIdentityLabel ? (
+                    <Text style={styles.cardIdentity}>{genderIdentityLabel}</Text>
+                  ) : null}
                   <Text style={styles.cardAgeSign}>{ageWithSign}</Text>
                   <View style={styles.cardRow}>
                     <Feather name="map-pin" size={13} color={Colors.primaryLight} />
@@ -1425,8 +1432,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   filterCheckboxRowSelected: {
-    borderColor: "rgba(90,169,255,0.38)",
-    backgroundColor: Colors.infoOverlay,
+    borderColor: Colors.like,
+    backgroundColor: "rgba(82, 183, 136, 0.16)",
   },
   filterCheckboxRowCompact: {
     flex: 1,
@@ -1445,8 +1452,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   filterCheckboxBoxSelected: {
-    borderColor: Colors.info,
-    backgroundColor: Colors.info,
+    borderColor: Colors.like,
+    backgroundColor: Colors.like,
   },
   filterCheckboxBoxCompact: {
     width: 18,
@@ -1464,7 +1471,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   filterCheckboxLabelSelected: {
-    color: Colors.text,
+    color: Colors.primaryLight,
   },
   filterSelectWrap: {
     position: "relative",
@@ -1751,6 +1758,12 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: Colors.text,
     letterSpacing: -0.5,
+  },
+  cardIdentity: {
+    marginTop: 3,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.ivoryDim,
   },
   cardPronouns: {
     fontFamily: "Inter_500Medium",
