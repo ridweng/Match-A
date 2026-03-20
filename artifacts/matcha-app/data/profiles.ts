@@ -7,6 +7,8 @@ export type DiscoverProfile = {
   id: string;
   name: string;
   age: number;
+  dateOfBirth: string;
+  pronouns: string;
   location: string;
   occupation: LocalizedText;
   attributes: {
@@ -48,6 +50,8 @@ export const discoverProfiles: DiscoverProfile[] = [
     id: "p1",
     name: "Valentina",
     age: 27,
+    dateOfBirth: "1998-09-18",
+    pronouns: "she",
     location: "Madrid, España",
     occupation: {
       es: "Arquitecta",
@@ -110,6 +114,8 @@ export const discoverProfiles: DiscoverProfile[] = [
     id: "p2",
     name: "Sofía",
     age: 29,
+    dateOfBirth: "1996-07-30",
+    pronouns: "she",
     location: "Barcelona, España",
     occupation: {
       es: "Fotógrafa",
@@ -172,6 +178,8 @@ export const discoverProfiles: DiscoverProfile[] = [
     id: "p3",
     name: "Camila",
     age: 31,
+    dateOfBirth: "1994-12-09",
+    pronouns: "she",
     location: "Ciudad de México",
     occupation: {
       es: "Psicóloga",
@@ -234,6 +242,8 @@ export const discoverProfiles: DiscoverProfile[] = [
     id: "p4",
     name: "Isabella",
     age: 28,
+    dateOfBirth: "1997-05-11",
+    pronouns: "she",
     location: "Buenos Aires, Argentina",
     occupation: {
       es: "Chef",
@@ -296,6 +306,8 @@ export const discoverProfiles: DiscoverProfile[] = [
     id: "p5",
     name: "Lucía",
     age: 26,
+    dateOfBirth: "1999-10-02",
+    pronouns: "elle",
     location: "Bogotá, Colombia",
     occupation: {
       es: "Ingeniera de Software",

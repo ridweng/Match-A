@@ -27,6 +27,7 @@ import {
   getHairColorLabel,
   getPhysicalActivityLabel,
   getPoliticalInterestLabel,
+  getPronounLabel,
   getRelationshipGoalLabel,
   getReligionImportanceLabel,
   getReligionLabel,
@@ -34,6 +35,7 @@ import {
 } from "@/constants/profile-options";
 import { useApp } from "@/context/AppContext";
 import { discoverProfiles, type DiscoverProfile } from "@/data/profiles";
+import { getZodiacSignFromIsoDate, getZodiacSignLabel } from "@/utils/dateOfBirth";
 
 const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
@@ -136,7 +138,7 @@ function getLanguageFlagUri(value: string) {
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
-  const { t, likeProfile, goals } = useApp();
+  const { t, likeProfile, goals, language } = useApp();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [swipeState, setSwipeState] = useState<SwipeState>("idle");
   const [showInsight, setShowInsight] = useState(false);
@@ -184,6 +186,12 @@ export default function DiscoverScreen() {
   const current = discoverProfiles[currentIndex];
   const next = discoverProfiles[(currentIndex + 1) % discoverProfiles.length];
   const nextNext = discoverProfiles[(currentIndex + 2) % discoverProfiles.length];
+  const pronounLabel = getPronounLabel(current.pronouns, language);
+  const zodiacLabel = getZodiacSignLabel(
+    getZodiacSignFromIsoDate(current.dateOfBirth),
+    t
+  );
+  const ageWithSign = zodiacLabel ? `${current.age} · ${zodiacLabel}` : String(current.age);
 
   const relatedGoals = useMemo(
     () =>
@@ -434,17 +442,11 @@ export default function DiscoverScreen() {
               colors={["transparent", "rgba(15,26,20,0.98)"]}
               style={styles.cardGradient}
             >
-              <View style={styles.insightTags}>
-                {current.insightTags.map((tag) => (
-                  <View key={`${current.id}-${tag.es}`} style={styles.insightTag}>
-                    <Text style={styles.insightTagText}>{t(tag.es, tag.en)}</Text>
-                  </View>
-                ))}
-              </View>
-
-              <Text style={styles.cardName}>
-                {current.name}, {current.age}
-              </Text>
+              {pronounLabel ? (
+                <Text style={styles.cardPronouns}>{pronounLabel}</Text>
+              ) : null}
+              <Text style={styles.cardName}>{current.name}</Text>
+              <Text style={styles.cardAgeSign}>{ageWithSign}</Text>
               <View style={styles.cardRow}>
                 <Feather name="map-pin" size={13} color={Colors.primaryLight} />
                 <Text style={styles.cardLocation}>{current.location}</Text>
@@ -849,27 +851,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 20,
-    paddingTop: 60,
+    paddingTop: 86,
     zIndex: 3,
-  },
-  insightTags: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 12,
-  },
-  insightTag: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    backgroundColor: "rgba(82,183,136,0.2)",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(82,183,136,0.35)",
-  },
-  insightTagText: {
-    fontFamily: "Inter_500Medium",
-    fontSize: 11,
-    color: Colors.primaryLight,
   },
   cardName: {
     fontFamily: "Inter_700Bold",
@@ -877,11 +860,23 @@ const styles = StyleSheet.create({
     color: Colors.text,
     letterSpacing: -0.5,
   },
+  cardPronouns: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.ivoryDim,
+    marginBottom: 4,
+  },
+  cardAgeSign: {
+    marginTop: 4,
+    fontFamily: "Inter_500Medium",
+    fontSize: 14,
+    color: Colors.primaryLight,
+  },
   cardRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 4,
+    marginTop: 6,
   },
   cardLocation: {
     fontFamily: "Inter_400Regular",
@@ -907,13 +902,15 @@ const styles = StyleSheet.create({
   interestChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(82,183,136,0.2)",
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.35)",
   },
   interestChipText: {
     fontFamily: "Inter_500Medium",
     fontSize: 12,
-    color: Colors.text,
+    color: Colors.primaryLight,
   },
   backHeader: {
     paddingHorizontal: 18,
