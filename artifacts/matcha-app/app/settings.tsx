@@ -268,7 +268,7 @@ function PronounsField({
   const options = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
 
   return (
-    <View style={s.field}>
+    <View style={[s.field, open && s.fieldOpen]}>
       <Text style={s.fieldLabel}>{label}</Text>
       <View style={[s.selectWrap, open && s.selectWrapOpen]}>
         <Pressable
@@ -588,6 +588,42 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
       >
+        <Section title={t("Información básica", "Basic info")}>
+          <Field
+            label={t("Nombre completo", "Full name")}
+            value={local.name}
+            onChangeText={(value) => update("name", value)}
+            placeholder={t("Tu nombre", "Your name")}
+          />
+          <Field
+            label={t("Profesión", "Profession")}
+            value={local.profession}
+            onChangeText={(value) => update("profession", value)}
+            placeholder={t("Tu profesión", "Your profession")}
+          />
+          <DateOfBirthField
+            label={t("Fecha de nacimiento", "Date of birth")}
+            value={local.dateOfBirth}
+            onChange={(value) => update("dateOfBirth", value)}
+            cancelLabel={t("Cancelar", "Cancel")}
+            confirmLabel={t("Guardar", "Save")}
+          />
+          <IdentityField
+            label={t("Cómo te identificas", "How you identify")}
+            value={local.genderIdentity}
+            onChange={(value) => update("genderIdentity", value)}
+            placeholder={t("Selecciona una opción", "Select an option")}
+            t={t}
+          />
+          <PronounsField
+            label={t("Pronombres", "Pronouns")}
+            value={local.pronouns}
+            onChange={(value) => update("pronouns", value)}
+            placeholder={t("Selecciona pronombres", "Select pronouns")}
+            language={language}
+          />
+        </Section>
+
         <Section title={t("Cuenta", "Account")}>
           <Field
             label={t("Correo electrónico", "Email")}
@@ -625,42 +661,6 @@ export default function SettingsScreen() {
             value={localHeightUnit}
             onChange={setLocalHeightUnit}
             t={t}
-          />
-        </Section>
-
-        <Section title={t("Información básica", "Basic info")}>
-          <Field
-            label={t("Nombre completo", "Full name")}
-            value={local.name}
-            onChangeText={(value) => update("name", value)}
-            placeholder={t("Tu nombre", "Your name")}
-          />
-          <Field
-            label={t("Profesión", "Profession")}
-            value={local.profession}
-            onChangeText={(value) => update("profession", value)}
-            placeholder={t("Tu profesión", "Your profession")}
-          />
-          <DateOfBirthField
-            label={t("Fecha de nacimiento", "Date of birth")}
-            value={local.dateOfBirth}
-            onChange={(value) => update("dateOfBirth", value)}
-            cancelLabel={t("Cancelar", "Cancel")}
-            confirmLabel={t("Guardar", "Save")}
-          />
-          <IdentityField
-            label={t("Cómo te identificas", "How you identify")}
-            value={local.genderIdentity}
-            onChange={(value) => update("genderIdentity", value)}
-            placeholder={t("Selecciona una opción", "Select an option")}
-            t={t}
-          />
-          <PronounsField
-            label={t("Pronombres", "Pronouns")}
-            value={local.pronouns}
-            onChange={(value) => update("pronouns", value)}
-            placeholder={t("Selecciona pronombres", "Select pronouns")}
-            language={language}
           />
         </Section>
 

@@ -30,7 +30,6 @@ import {
   getChildrenPreferenceLabel,
   getEducationLabel,
   getEthnicityLabel,
-  getGenderIdentityLabel,
   getHairColorLabel,
   getPhysicalActivityLabel,
   getPoliticalInterestLabel,
@@ -237,6 +236,12 @@ export default function ProfileScreen() {
     ? t(`${calculatedAge} años`, `${calculatedAge} years`)
     : placeholder;
   const pronounLabel = getPronounLabel(accountProfile.pronouns, language);
+  const ageWithSign = [ageLabel, zodiacLabel].filter(Boolean).join(" · ") || placeholder;
+  const heroMetaParts = [accountProfile.location?.trim(), accountProfile.profession?.trim()].filter(
+    Boolean
+  ) as string[];
+  const heroMetaIcon = accountProfile.location?.trim() ? "map-pin" : "briefcase";
+  const previewInterests = accountProfile.interests.slice(0, 3);
   const heightUnitLabel = heightUnit === "imperial" ? "in" : "cm";
   const heightMax = getHeightLimit(heightUnit);
   const heightOutOfRange = isHeightOutOfRange(accountProfile.height, heightUnit);
@@ -533,30 +538,26 @@ export default function ProfileScreen() {
             ) : null}
             {showValue(accountProfile.name)}
           </Text>
-          <Text style={styles.emailText}>
-            {showValue(accountProfile.email)}
-          </Text>
-          {accountProfile.location ? (
-            <View style={styles.locationRow}>
-              <Feather name="map-pin" size={13} color={Colors.primaryLight} />
-              <Text style={styles.locationText}>{accountProfile.location}</Text>
+          <Text style={styles.heroAgeText}>{ageWithSign}</Text>
+          {heroMetaParts.length ? (
+            <View style={styles.heroMetaRow}>
+              <Feather
+                name={heroMetaIcon}
+                size={13}
+                color={Colors.primaryLight}
+              />
+              <Text style={styles.heroMetaText}>{heroMetaParts.join(" · ")}</Text>
             </View>
           ) : null}
-
-          <View style={styles.quickStats}>
-            <View style={styles.quickChip}>
-              <Feather name="calendar" size={14} color={Colors.primaryLight} />
-              <Text style={styles.quickChipText}>
-                {[ageLabel, zodiacLabel].filter(Boolean).join(" · ") || placeholder}
-              </Text>
+          {previewInterests.length ? (
+            <View style={styles.heroInterestsRow}>
+              {previewInterests.map((interest) => (
+                <View key={interest} style={styles.heroInterestChip}>
+                  <Text style={styles.heroInterestChipText}>{interest}</Text>
+                </View>
+              ))}
             </View>
-            <View style={styles.quickChip}>
-              <Feather name="user" size={14} color={Colors.accent} />
-              <Text style={styles.quickChipText}>
-                {getGenderIdentityLabel(accountProfile.genderIdentity, t) || placeholder}
-              </Text>
-            </View>
-          </View>
+          ) : null}
         </View>
 
         <View style={styles.section}>
@@ -991,45 +992,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.textSecondary,
   },
-  emailText: {
+  heroAgeText: {
     marginTop: 4,
-    fontFamily: "Inter_400Regular",
+    fontFamily: "Inter_500Medium",
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: Colors.primaryLight,
   },
-  locationRow: {
-    marginTop: 8,
+  heroMetaRow: {
+    marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
-  locationText: {
-    fontFamily: "Inter_500Medium",
+  heroMetaText: {
+    fontFamily: "Inter_400Regular",
     fontSize: 13,
-    color: Colors.primaryLight,
+    color: Colors.textSecondary,
   },
-  quickStats: {
+  heroInterestsRow: {
     marginTop: 16,
     flexDirection: "row",
-    gap: 10,
+    gap: 8,
     flexWrap: "wrap",
     justifyContent: "center",
   },
-  quickChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+  heroInterestChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 999,
-    backgroundColor: Colors.surface,
+    backgroundColor: "rgba(82,183,136,0.2)",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(82,183,136,0.35)",
   },
-  quickChipText: {
+  heroInterestChipText: {
     fontFamily: "Inter_500Medium",
-    fontSize: 13,
-    color: Colors.text,
+    fontSize: 12,
+    color: Colors.primaryLight,
   },
   section: {
     marginTop: 26,
