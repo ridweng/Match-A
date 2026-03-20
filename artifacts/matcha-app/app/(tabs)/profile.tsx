@@ -532,32 +532,32 @@ export default function ProfileScreen() {
             )}
           </Pressable>
 
-          <Text style={styles.nameText}>
+          <View style={styles.heroContent}>
             {pronounLabel ? (
-              <Text style={styles.namePrefixText}>{pronounLabel} </Text>
+              <Text style={styles.heroPronounText}>{pronounLabel}</Text>
             ) : null}
-            {showValue(accountProfile.name)}
-          </Text>
-          <Text style={styles.heroAgeText}>{ageWithSign}</Text>
-          {heroMetaParts.length ? (
-            <View style={styles.heroMetaRow}>
-              <Feather
-                name={heroMetaIcon}
-                size={13}
-                color={Colors.primaryLight}
-              />
-              <Text style={styles.heroMetaText}>{heroMetaParts.join(" · ")}</Text>
-            </View>
-          ) : null}
-          {previewInterests.length ? (
-            <View style={styles.heroInterestsRow}>
-              {previewInterests.map((interest) => (
-                <View key={interest} style={styles.heroInterestChip}>
-                  <Text style={styles.heroInterestChipText}>{interest}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
+            <Text style={styles.nameText}>{showValue(accountProfile.name)}</Text>
+            <Text style={styles.heroAgeText}>{ageWithSign}</Text>
+            {heroMetaParts.length ? (
+              <View style={styles.heroMetaRow}>
+                <Feather
+                  name={heroMetaIcon}
+                  size={13}
+                  color={Colors.primaryLight}
+                />
+                <Text style={styles.heroMetaText}>{heroMetaParts.join(" · ")}</Text>
+              </View>
+            ) : null}
+            {previewInterests.length ? (
+              <View style={styles.heroInterestsRow}>
+                {previewInterests.map((interest) => (
+                  <View key={interest} style={styles.heroInterestChip}>
+                    <Text style={styles.heroInterestChipText}>{interest}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -961,7 +961,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
     borderColor: Colors.border,
-    alignItems: "center",
+    alignItems: "stretch",
   },
   mainPhotoWrap: {
     width: 126,
@@ -969,6 +969,7 @@ const styles = StyleSheet.create({
     borderRadius: 63,
     overflow: "hidden",
     marginBottom: 16,
+    alignSelf: "center",
   },
   mainPhoto: {
     width: "100%",
@@ -981,40 +982,48 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  heroContent: {
+    width: "100%",
+    alignItems: "flex-start",
+  },
+  heroPronounText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.textSecondary,
+    textAlign: "left",
+  },
   nameText: {
     fontFamily: "Inter_700Bold",
     fontSize: 24,
     color: Colors.text,
-    textAlign: "center",
-  },
-  namePrefixText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 14,
-    color: Colors.textSecondary,
+    textAlign: "left",
   },
   heroAgeText: {
     marginTop: 4,
     fontFamily: "Inter_500Medium",
     fontSize: 14,
     color: Colors.primaryLight,
+    textAlign: "left",
   },
   heroMetaRow: {
     marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    justifyContent: "flex-start",
   },
   heroMetaText: {
     fontFamily: "Inter_400Regular",
     fontSize: 13,
     color: Colors.textSecondary,
+    textAlign: "left",
   },
   heroInterestsRow: {
     marginTop: 16,
     flexDirection: "row",
     gap: 8,
     flexWrap: "wrap",
-    justifyContent: "center",
+    justifyContent: "flex-start",
   },
   heroInterestChip: {
     paddingHorizontal: 10,
