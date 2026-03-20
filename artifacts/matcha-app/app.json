@@ -17,7 +17,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.matcha.app",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely."
+        "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely.",
+        "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile."
       }
     },
     "android": {
@@ -36,6 +37,12 @@
       "expo-router",
       "expo-font",
       "expo-local-authentication",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "MatchA uses your location to show your current city on your profile."
+        }
+      ],
       [
         "expo-splash-screen",
         {

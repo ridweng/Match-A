@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 import * as LocalAuthentication from "expo-local-authentication";
 import React, {
   createContext,
@@ -7,7 +8,7 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 
 import {
   type AuthUser,
@@ -45,6 +46,7 @@ export type UserProfile = {
   name: string;
   age: string;
   dateOfBirth: string;
+  location: string;
   genderIdentity: string;
   pronouns: string;
   relationshipGoals: string;
@@ -153,6 +155,7 @@ const DEFAULT_PROFILE: UserProfile = {
   name: "",
   age: "",
   dateOfBirth: "",
+  location: "",
   genderIdentity: "",
   pronouns: "",
   relationshipGoals: "",
@@ -284,6 +287,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [language]
   );
 
+  const refreshProfileLocation = useCallback(async () => {
+    if (Platform.OS === "web") {
+      return;
+    }
+
+    try {
+      let permission = await Location.getForegroundPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain) {
+        permission = await Location.requestForegroundPermissionsAsync();
+      }
+
+      if (!permission.granted) {
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const [place] = await Location.reverseGeocodeAsync({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+
+      if (!place) {
+        return;
+      }
+
+      const city =
+        place.city ||
+        place.subregion ||
+        place.district ||
+        place.region ||
+        "";
+      const country = place.country || "";
+      const nextLocation = [city, country].filter(Boolean).join(", ");
+
+      if (!nextLocation) {
+        return;
+      }
+
+      setProfile((prev) => {
+        if (prev.location === nextLocation) {
+          return prev;
+        }
+        const updated = normalizeStoredProfile({ ...prev, location: nextLocation });
+        AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    } catch {}
+  }, []);
+
   const setLanguage = useCallback((lang: "es" | "en") => {
     setLanguageState(lang);
     AsyncStorage.setItem("language", lang).catch(() => {});
@@ -385,6 +439,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           try {
             const session = await refreshSession(storedToken);
             await applySession(session);
+            refreshProfileLocation().catch(() => {});
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
             }
@@ -399,7 +454,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthStatus("unauthenticated");
       }
     })();
-  }, [applySession]);
+  }, [applySession, refreshProfileLocation]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      return;
+    }
+
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        refreshProfileLocation().catch(() => {});
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [refreshProfileLocation]);
 
   const saveSettings = useCallback(
     async (input: {

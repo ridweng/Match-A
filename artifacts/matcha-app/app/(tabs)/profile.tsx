@@ -255,6 +255,7 @@ export default function ProfileScreen() {
   const selectedLanguageLabels = spokenLanguages.map((value) =>
     getSpokenLanguageLabel(value, language)
   );
+
   const filteredLanguages = React.useMemo(() => {
     const query = languageSearch.trim().toLowerCase();
     if (!query) {
@@ -535,6 +536,12 @@ export default function ProfileScreen() {
           <Text style={styles.emailText}>
             {showValue(accountProfile.email)}
           </Text>
+          {accountProfile.location ? (
+            <View style={styles.locationRow}>
+              <Feather name="map-pin" size={13} color={Colors.primaryLight} />
+              <Text style={styles.locationText}>{accountProfile.location}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.quickStats}>
             <View style={styles.quickChip}>
@@ -989,6 +996,17 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 14,
     color: Colors.textSecondary,
+  },
+  locationRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  locationText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.primaryLight,
   },
   quickStats: {
     marginTop: 16,
