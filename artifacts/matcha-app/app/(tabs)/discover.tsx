@@ -140,6 +140,7 @@ export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const { t, likeProfile, goals, language } = useApp();
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const [swipeState, setSwipeState] = useState<SwipeState>("idle");
   const [showInsight, setShowInsight] = useState(false);
   const [lastLikedProfile, setLastLikedProfile] = useState<DiscoverProfile | null>(null);
@@ -186,6 +187,10 @@ export default function DiscoverScreen() {
   const current = discoverProfiles[currentIndex];
   const next = discoverProfiles[(currentIndex + 1) % discoverProfiles.length];
   const nextNext = discoverProfiles[(currentIndex + 2) % discoverProfiles.length];
+  const currentImages = current.images;
+  const currentImage =
+    currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
+    currentImages[0];
   const pronounLabel = getPronounLabel(current.pronouns, language);
   const zodiacLabel = getZodiacSignLabel(
     getZodiacSignFromIsoDate(current.dateOfBirth),
@@ -208,6 +213,10 @@ export default function DiscoverScreen() {
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+
+  React.useEffect(() => {
+    setActivePhotoIndex(0);
+  }, [currentIndex]);
 
   const resetPosition = () => {
     Animated.spring(position, {
@@ -237,9 +246,29 @@ export default function DiscoverScreen() {
   const resetCardState = () => {
     setSwipeState("idle");
     position.setValue({ x: 0, y: 0 });
+    setActivePhotoIndex(0);
     setIsInfoVisible(false);
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
+
+  const stepPhoto = (direction: "prev" | "next") => {
+    if (currentImages.length <= 1) {
+      return;
+    }
+
+    setActivePhotoIndex((prev) => {
+      const nextIndex =
+        direction === "next"
+          ? Math.min(prev + 1, currentImages.length - 1)
+          : Math.max(prev - 1, 0);
+
+      if (nextIndex !== prev) {
+        Haptics.selectionAsync().catch(() => {});
+      }
+
+      return nextIndex;
+    });
   };
 
   const swipeRight = () => {
@@ -361,7 +390,7 @@ export default function DiscoverScreen() {
       <View style={styles.cardStack}>
         <View style={[styles.cardBase, styles.cardThird]}>
           <Image
-            source={{ uri: nextNext.imageUrl }}
+            source={{ uri: nextNext.images[0] }}
             style={styles.cardImage}
             resizeMode="cover"
           />
@@ -369,7 +398,7 @@ export default function DiscoverScreen() {
 
         <View style={[styles.cardBase, styles.cardSecond]}>
           <Image
-            source={{ uri: next.imageUrl }}
+            source={{ uri: next.images[0] }}
             style={styles.cardImage}
             resizeMode="cover"
           />
@@ -405,10 +434,21 @@ export default function DiscoverScreen() {
             ]}
           >
             <Image
-              source={{ uri: current.imageUrl }}
+              source={{ uri: currentImage }}
               style={styles.cardImage}
               resizeMode="cover"
             />
+
+            <View style={styles.photoTapLayer} pointerEvents="box-none">
+              <Pressable
+                onPress={() => stepPhoto("prev")}
+                style={styles.photoTapZone}
+              />
+              <Pressable
+                onPress={() => stepPhoto("next")}
+                style={styles.photoTapZone}
+              />
+            </View>
 
             <Animated.View style={[styles.likeOverlay, { opacity: likeOpacity }]}>
               <LinearGradient
@@ -463,6 +503,20 @@ export default function DiscoverScreen() {
                   </View>
                 ))}
               </View>
+
+              {currentImages.length > 1 ? (
+                <View style={styles.photoDotsRow}>
+                  {currentImages.map((_, index) => (
+                    <View
+                      key={`${current.id}-photo-dot-${index}`}
+                      style={[
+                        styles.photoDot,
+                        index === activePhotoIndex && styles.photoDotActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              ) : null}
             </LinearGradient>
           </Animated.View>
 
@@ -806,6 +860,18 @@ const styles = StyleSheet.create({
     height: "100%",
     position: "absolute",
   },
+  photoTapLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 172,
+    zIndex: 1,
+    flexDirection: "row",
+  },
+  photoTapZone: {
+    flex: 1,
+  },
   likeOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 2,
@@ -911,6 +977,22 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     fontSize: 12,
     color: Colors.primaryLight,
+  },
+  photoDotsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 14,
+  },
+  photoDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "rgba(245,243,238,0.28)",
+  },
+  photoDotActive: {
+    width: 18,
+    backgroundColor: Colors.text,
   },
   backHeader: {
     paddingHorizontal: 18,

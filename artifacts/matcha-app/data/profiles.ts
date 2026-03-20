@@ -3,6 +3,45 @@ type LocalizedText = {
   en: string;
 };
 
+const FEMALE_DISCOVERY_IMAGES = [
+  "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=600&q=80",
+  "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
+  "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=600&q=80",
+  "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&q=80",
+  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80",
+  "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=600&q=80",
+  "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&q=80",
+  "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80",
+  "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+] as const;
+
+const MALE_DISCOVERY_IMAGES = [
+  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+  "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+  "https://images.unsplash.com/photo-1506277886164-e25aa3f4ef7f?w=600&q=80",
+  "https://images.unsplash.com/photo-1504257432389-52343af06ae3?w=600&q=80",
+  "https://images.unsplash.com/photo-1504593811423-6dd665756598?w=600&q=80",
+  "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=600&q=80",
+  "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&q=80",
+  "https://images.unsplash.com/photo-1463453091185-61582044d556?w=600&q=80",
+  "https://images.unsplash.com/photo-1507591064344-4c6ce005b128?w=600&q=80",
+  "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=600&q=80",
+] as const;
+
+const NON_BINARY_DISCOVERY_IMAGES = [
+  "https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=600&q=80",
+  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80",
+  "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&q=80",
+  "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80",
+  "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+  "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
+  "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=600&q=80",
+  "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=600&q=80",
+  "https://images.unsplash.com/photo-1521119989659-a83eee488004?w=600&q=80",
+] as const;
+
 export type DiscoverProfile = {
   id: string;
   name: string;
@@ -37,7 +76,7 @@ export type DiscoverProfile = {
     hairColor: string;
     ethnicity: string;
   };
-  imageUrl: string;
+  images: string[];
   insightTags: LocalizedText[];
   goalFeedback: {
     goalId: string;
@@ -86,8 +125,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[0],
+      FEMALE_DISCOVERY_IMAGES[1],
+      FEMALE_DISCOVERY_IMAGES[5],
+      FEMALE_DISCOVERY_IMAGES[7],
+    ],
     insightTags: [
       { es: "Activa", en: "Active" },
       { es: "Culta", en: "Cultured" },
@@ -150,8 +193,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "blonde",
       ethnicity: "mediterranean",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[1],
+      FEMALE_DISCOVERY_IMAGES[3],
+      FEMALE_DISCOVERY_IMAGES[8],
+    ],
     insightTags: [
       { es: "Creativa", en: "Creative" },
       { es: "Espontánea", en: "Spontaneous" },
@@ -214,8 +260,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "mestizo",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=600&q=80",
+    images: [FEMALE_DISCOVERY_IMAGES[2], FEMALE_DISCOVERY_IMAGES[5]],
     insightTags: [
       { es: "Empática", en: "Empathetic" },
       { es: "Intelectual", en: "Intellectual" },
@@ -278,8 +323,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[3],
+      FEMALE_DISCOVERY_IMAGES[0],
+      FEMALE_DISCOVERY_IMAGES[6],
+      FEMALE_DISCOVERY_IMAGES[9],
+    ],
     insightTags: [
       { es: "Apasionada", en: "Passionate" },
       { es: "Artística", en: "Artistic" },
@@ -342,8 +391,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "mixed",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[0],
+      NON_BINARY_DISCOVERY_IMAGES[2],
+      NON_BINARY_DISCOVERY_IMAGES[6],
+    ],
     insightTags: [
       { es: "Inteligente", en: "Smart" },
       { es: "Activa", en: "Active" },
@@ -406,8 +458,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "brown",
       ethnicity: "mediterranean",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[4],
+      FEMALE_DISCOVERY_IMAGES[1],
+      FEMALE_DISCOVERY_IMAGES[7],
+    ],
     insightTags: [
       { es: "Serena", en: "Calm" },
       { es: "Curiosa", en: "Curious" },
@@ -470,8 +525,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "fantasy_colored",
       ethnicity: "north_african",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[5],
+      FEMALE_DISCOVERY_IMAGES[2],
+      FEMALE_DISCOVERY_IMAGES[8],
+      FEMALE_DISCOVERY_IMAGES[0],
+    ],
     insightTags: [
       { es: "Espontánea", en: "Spontaneous" },
       { es: "Musical", en: "Musical" },
@@ -534,8 +593,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "salt_and_pepper",
       ethnicity: "european",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=600&q=80",
+    images: [FEMALE_DISCOVERY_IMAGES[6], FEMALE_DISCOVERY_IMAGES[3]],
     insightTags: [
       { es: "Dulce", en: "Sweet" },
       { es: "Creativa", en: "Creative" },
@@ -598,8 +656,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "middle_eastern",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[7],
+      FEMALE_DISCOVERY_IMAGES[4],
+      FEMALE_DISCOVERY_IMAGES[9],
+    ],
     insightTags: [
       { es: "Ingeniosa", en: "Witty" },
       { es: "Activa", en: "Active" },
@@ -662,8 +723,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "shaved_head",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80",
+    images: [
+      FEMALE_DISCOVERY_IMAGES[8],
+      FEMALE_DISCOVERY_IMAGES[1],
+      FEMALE_DISCOVERY_IMAGES[5],
+      FEMALE_DISCOVERY_IMAGES[2],
+    ],
     insightTags: [
       { es: "Franca", en: "Straightforward" },
       { es: "Fuerte", en: "Strong" },
@@ -726,8 +791,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "light_brown",
       ethnicity: "hispanic",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+    images: [FEMALE_DISCOVERY_IMAGES[9], FEMALE_DISCOVERY_IMAGES[0]],
     insightTags: [
       { es: "Cariñosa", en: "Affectionate" },
       { es: "Sociable", en: "Sociable" },
@@ -790,8 +854,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "mediterranean",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[0],
+      MALE_DISCOVERY_IMAGES[2],
+      MALE_DISCOVERY_IMAGES[5],
+    ],
     insightTags: [
       { es: "Estable", en: "Stable" },
       { es: "Activo", en: "Active" },
@@ -854,8 +921,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "european",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[1],
+      MALE_DISCOVERY_IMAGES[4],
+      MALE_DISCOVERY_IMAGES[6],
+      MALE_DISCOVERY_IMAGES[9],
+    ],
     insightTags: [
       { es: "Creativo", en: "Creative" },
       { es: "Directo", en: "Direct" },
@@ -918,8 +989,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "graying",
       ethnicity: "mestizo",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1506277886164-e25aa3f4ef7f?w=600&q=80",
+    images: [MALE_DISCOVERY_IMAGES[2], MALE_DISCOVERY_IMAGES[0]],
     insightTags: [
       { es: "Calmo", en: "Calm" },
       { es: "Maduro", en: "Mature" },
@@ -982,8 +1052,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "north_african",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1504257432389-52343af06ae3?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[3],
+      MALE_DISCOVERY_IMAGES[1],
+      MALE_DISCOVERY_IMAGES[5],
+    ],
     insightTags: [
       { es: "Elegante", en: "Elegant" },
       { es: "Observador", en: "Observant" },
@@ -1046,8 +1119,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "light_brown",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1504593811423-6dd665756598?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[4],
+      MALE_DISCOVERY_IMAGES[6],
+      MALE_DISCOVERY_IMAGES[9],
+      MALE_DISCOVERY_IMAGES[0],
+    ],
     insightTags: [
       { es: "Divertido", en: "Fun" },
       { es: "Musical", en: "Musical" },
@@ -1110,8 +1187,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "salt_and_pepper",
       ethnicity: "mixed",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=600&q=80",
+    images: [MALE_DISCOVERY_IMAGES[5], MALE_DISCOVERY_IMAGES[2]],
     insightTags: [
       { es: "Reflexivo", en: "Reflective" },
       { es: "Culto", en: "Cultured" },
@@ -1174,8 +1250,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "brown",
       ethnicity: "european",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[6],
+      MALE_DISCOVERY_IMAGES[3],
+      MALE_DISCOVERY_IMAGES[1],
+    ],
     insightTags: [
       { es: "Geek", en: "Geeky" },
       { es: "Tierno", en: "Sweet" },
@@ -1238,8 +1317,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "north_african",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1504593811423-6dd665756598?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[7],
+      MALE_DISCOVERY_IMAGES[0],
+      MALE_DISCOVERY_IMAGES[4],
+    ],
     insightTags: [
       { es: "Leal", en: "Loyal" },
       { es: "Protector", en: "Protective" },
@@ -1302,8 +1384,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+    images: [
+      MALE_DISCOVERY_IMAGES[8],
+      MALE_DISCOVERY_IMAGES[5],
+      MALE_DISCOVERY_IMAGES[9],
+      MALE_DISCOVERY_IMAGES[1],
+    ],
     insightTags: [
       { es: "Calmado", en: "Calm" },
       { es: "Amable", en: "Kind" },
@@ -1366,8 +1452,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "mestizo",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=600&q=80",
+    images: [MALE_DISCOVERY_IMAGES[9], MALE_DISCOVERY_IMAGES[6]],
     insightTags: [
       { es: "Creativo", en: "Creative" },
       { es: "Sociable", en: "Sociable" },
@@ -1430,8 +1515,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "mixed",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[1],
+      NON_BINARY_DISCOVERY_IMAGES[3],
+      NON_BINARY_DISCOVERY_IMAGES[8],
+    ],
     insightTags: [
       { es: "Observadore", en: "Observant" },
       { es: "Curiose", en: "Curious" },
@@ -1494,8 +1582,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "fantasy_colored",
       ethnicity: "mediterranean",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600&q=80",
+    images: [NON_BINARY_DISCOVERY_IMAGES[2], NON_BINARY_DISCOVERY_IMAGES[0]],
     insightTags: [
       { es: "Creative", en: "Creative" },
       { es: "Dulce", en: "Sweet" },
@@ -1558,8 +1645,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "gray",
       ethnicity: "european",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[3],
+      NON_BINARY_DISCOVERY_IMAGES[6],
+      NON_BINARY_DISCOVERY_IMAGES[9],
+      NON_BINARY_DISCOVERY_IMAGES[4],
+    ],
     insightTags: [
       { es: "Paciencie", en: "Patient" },
       { es: "Creative", en: "Creative" },
@@ -1622,8 +1713,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "multicolored",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[4],
+      NON_BINARY_DISCOVERY_IMAGES[7],
+      NON_BINARY_DISCOVERY_IMAGES[2],
+    ],
     insightTags: [
       { es: "Magnéticx", en: "Magnetic" },
       { es: "Nocturnx", en: "Night owl" },
@@ -1686,8 +1780,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "caucasian",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600&q=80",
+    images: [NON_BINARY_DISCOVERY_IMAGES[5], NON_BINARY_DISCOVERY_IMAGES[1]],
     insightTags: [
       { es: "Protectorx", en: "Protective" },
       { es: "Serenx", en: "Steady" },
@@ -1750,8 +1843,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "black",
       ethnicity: "mixed",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[6],
+      NON_BINARY_DISCOVERY_IMAGES[3],
+      NON_BINARY_DISCOVERY_IMAGES[0],
+    ],
     insightTags: [
       { es: "Leal", en: "Loyal" },
       { es: "Irónique", en: "Wry" },
@@ -1814,8 +1910,12 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "gray_haired",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[7],
+      NON_BINARY_DISCOVERY_IMAGES[5],
+      NON_BINARY_DISCOVERY_IMAGES[8],
+      NON_BINARY_DISCOVERY_IMAGES[1],
+    ],
     insightTags: [
       { es: "Sabie", en: "Wise" },
       { es: "Cálide", en: "Warm" },
@@ -1878,8 +1978,7 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "highlights",
       ethnicity: "european",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=600&q=80",
+    images: [NON_BINARY_DISCOVERY_IMAGES[8], NON_BINARY_DISCOVERY_IMAGES[2]],
     insightTags: [
       { es: "Magnéticx", en: "Magnetic" },
       { es: "Estilose", en: "Stylish" },
@@ -1942,8 +2041,11 @@ export const discoverProfiles: DiscoverProfile[] = [
       hairColor: "dark_brown",
       ethnicity: "latino_latin_american",
     },
-    imageUrl:
-      "https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=600&q=80",
+    images: [
+      NON_BINARY_DISCOVERY_IMAGES[9],
+      NON_BINARY_DISCOVERY_IMAGES[4],
+      NON_BINARY_DISCOVERY_IMAGES[6],
+    ],
     insightTags: [
       { es: "Culte", en: "Cultured" },
       { es: "Curiose", en: "Curious" },
