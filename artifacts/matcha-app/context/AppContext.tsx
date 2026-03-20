@@ -47,6 +47,7 @@ export type UserProfile = {
   age: string;
   dateOfBirth: string;
   location: string;
+  profession: string;
   genderIdentity: string;
   pronouns: string;
   relationshipGoals: string;
@@ -156,6 +157,7 @@ const DEFAULT_PROFILE: UserProfile = {
   age: "",
   dateOfBirth: "",
   location: "",
+  profession: "",
   genderIdentity: "",
   pronouns: "",
   relationshipGoals: "",
@@ -224,6 +226,7 @@ type AppContextType = {
   saveSettings: (input: {
     name: string;
     dateOfBirth: string;
+    profession: string;
     genderIdentity: string;
     pronouns: string;
     language: "es" | "en";
@@ -402,6 +405,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         name: session.user.name || prev.name,
         dateOfBirth: session.user.dateOfBirth || prev.dateOfBirth,
+        profession: session.user.profession || prev.profession,
       }));
       setAuthStatus("authenticated");
       await hydrateServerSettings(session.accessToken);
@@ -476,6 +480,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (input: {
       name: string;
       dateOfBirth: string;
+      profession: string;
       genderIdentity: string;
       pronouns: string;
       language: "es" | "en";
@@ -488,6 +493,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const me = await updateMe(accessToken, {
             name: input.name,
             dateOfBirth: input.dateOfBirth,
+            profession: input.profession,
           });
           await updateSettings(accessToken, {
             language: input.language,
@@ -511,6 +517,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ...prev,
             name: input.name,
             dateOfBirth: input.dateOfBirth,
+            profession: input.profession,
             genderIdentity: input.genderIdentity,
             pronouns: input.pronouns,
           });
@@ -537,6 +544,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         email: "demo@matcha.app",
         name: "Alejandro",
         dateOfBirth: "1995-06-15",
+        profession: "Demo User",
         emailVerified: true,
       },
       needsProfileCompletion: false,
@@ -639,6 +647,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ...profile,
           name: data.name,
           dateOfBirth: data.dateOfBirth,
+          profession: profile.profession,
         });
         setProfile(updated);
         await AsyncStorage.setItem("profile", JSON.stringify(updated));

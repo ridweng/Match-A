@@ -40,6 +40,7 @@ const verifySchema = z.object({
 const updateProfileSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  profession: z.string().trim().max(120).optional(),
 });
 
 const updateSettingsSchema = z.object({
@@ -187,6 +188,7 @@ function sanitizeUser(user) {
     email: user.email,
     name: user.name,
     dateOfBirth: user.dateOfBirth,
+    profession: user.profession || "",
     emailVerified: Boolean(user.emailVerified),
   };
 }

@@ -348,6 +348,7 @@ export default function SettingsScreen() {
     age: accountProfile.age,
     dateOfBirth: accountProfile.dateOfBirth,
     location: accountProfile.location,
+    profession: accountProfile.profession,
     genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
     pronouns: normalizePronouns(accountProfile.pronouns),
     relationshipGoals: accountProfile.relationshipGoals,
@@ -378,6 +379,7 @@ export default function SettingsScreen() {
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
       location: accountProfile.location,
+      profession: accountProfile.profession,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       pronouns: normalizePronouns(accountProfile.pronouns),
       relationshipGoals: accountProfile.relationshipGoals,
@@ -411,6 +413,7 @@ export default function SettingsScreen() {
       age: accountProfile.age,
       dateOfBirth: accountProfile.dateOfBirth,
       location: accountProfile.location,
+      profession: accountProfile.profession,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       pronouns: normalizePronouns(accountProfile.pronouns),
       relationshipGoals: accountProfile.relationshipGoals,
@@ -451,6 +454,7 @@ export default function SettingsScreen() {
     const saved = await saveSettings({
       name: local.name,
       dateOfBirth: local.dateOfBirth,
+      profession: local.profession,
       genderIdentity: local.genderIdentity,
       pronouns: local.pronouns,
       language: localLanguage,
@@ -630,6 +634,12 @@ export default function SettingsScreen() {
             value={local.name}
             onChangeText={(value) => update("name", value)}
             placeholder={t("Tu nombre", "Your name")}
+          />
+          <Field
+            label={t("Profesión", "Profession")}
+            value={local.profession}
+            onChangeText={(value) => update("profession", value)}
+            placeholder={t("Tu profesión", "Your profession")}
           />
           <DateOfBirthField
             label={t("Fecha de nacimiento", "Date of birth")}

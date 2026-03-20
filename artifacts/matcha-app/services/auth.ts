@@ -9,6 +9,7 @@ export type AuthUser = {
   email: string | null;
   name: string;
   dateOfBirth: string | null;
+  profession: string | null;
   emailVerified: boolean;
 };
 
@@ -52,6 +53,7 @@ const DEMO_USER: AuthUser = {
   email: DEMO_EMAIL,
   name: "Test User",
   dateOfBirth: "2000-01-01",
+  profession: "Demo User",
   emailVerified: true,
 };
 const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
@@ -222,11 +224,12 @@ export async function getMe(accessToken: string) {
 
 export async function updateMe(
   accessToken: string,
-  payload: { name?: string; dateOfBirth?: string }
+  payload: { name?: string; dateOfBirth?: string; profession?: string }
 ) {
   if (isDemoToken(accessToken)) {
     if (typeof payload.name === "string") DEMO_USER.name = payload.name;
     if (typeof payload.dateOfBirth === "string") DEMO_USER.dateOfBirth = payload.dateOfBirth;
+    if (typeof payload.profession === "string") DEMO_USER.profession = payload.profession;
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
