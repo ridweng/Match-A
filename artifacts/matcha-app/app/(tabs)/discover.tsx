@@ -20,13 +20,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 import {
-  GENDER_IDENTITIES,
   getAlcoholUseLabel,
   getBodyTypeLabel,
   getChildrenPreferenceLabel,
   getEducationLabel,
   getEthnicityLabel,
-  getGenderIdentityLabel,
   getHairColorLabel,
   getPhysicalActivityLabel,
   getPoliticalInterestLabel,
@@ -49,8 +47,11 @@ const IS_WEB = Platform.OS === "web";
 
 type SwipeState = "idle" | "like" | "dislike";
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
+type BaseGender = "male" | "female" | "non_binary" | "fluid";
+type TherianMode = "exclude" | "include" | "only";
 type DiscoveryFilters = {
-  genderIdentity: string | null;
+  selectedGenders: BaseGender[];
+  therianMode: TherianMode;
   ageMin: number;
   ageMax: number;
 };
@@ -70,6 +71,14 @@ const LANGUAGE_FLAG_CODES: Record<string, string> = {
   catalan: "ad",
   galician: "es",
   basque: "es",
+};
+
+const BASE_GENDERS: BaseGender[] = ["male", "female", "non_binary", "fluid"];
+const THERIAN_BY_BASE: Record<BaseGender, string> = {
+  male: "therian_male",
+  female: "therian_female",
+  non_binary: "therian_non_binary",
+  fluid: "therian_fluid",
 };
 
 function AboutRow({
@@ -152,80 +161,62 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function normalizeSelectedGenders(values: BaseGender[]) {
+  return BASE_GENDERS.filter((value) => values.includes(value));
+}
+
 function filtersEqual(a: DiscoveryFilters, b: DiscoveryFilters) {
   return (
-    a.genderIdentity === b.genderIdentity &&
+    a.therianMode === b.therianMode &&
+    a.selectedGenders.length === b.selectedGenders.length &&
+    a.selectedGenders.every((value, index) => value === b.selectedGenders[index]) &&
     a.ageMin === b.ageMin &&
     a.ageMax === b.ageMax
   );
 }
 
-function FilterSelect({
+function FilterCheckboxRow({
   label,
-  value,
-  options,
-  placeholder,
-  onChange,
+  selected,
+  onPress,
+  compact = false,
 }: {
   label: string;
-  value: string | null;
-  options: Array<{ value: string | null; label: string }>;
-  placeholder: string;
-  onChange: (value: string | null) => void;
+  selected: boolean;
+  onPress: () => void;
+  compact?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <View style={[styles.filterField, open && styles.filterFieldOpen]}>
-      <Text style={styles.filterLabel}>{label}</Text>
-      <View style={[styles.filterSelectWrap, open && styles.filterSelectWrapOpen]}>
-        <Pressable
-          onPress={() => setOpen((current) => !current)}
-          style={styles.filterSelectField}
-        >
-          <Text style={styles.filterSelectValue}>
-            {options.find((option) => option.value === value)?.label || placeholder}
-          </Text>
-          <Feather
-            name={open ? "chevron-up" : "chevron-down"}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {open ? (
-          <View style={styles.filterDropdown}>
-            {options.map((option) => {
-              const selected = option.value === value;
-              return (
-                <Pressable
-                  key={option.value ?? "__all__"}
-                  onPress={() => {
-                    onChange(option.value);
-                    setOpen(false);
-                  }}
-                  style={[
-                    styles.filterDropdownOption,
-                    selected && styles.filterDropdownOptionActive,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.filterDropdownOptionText,
-                      selected && styles.filterDropdownOptionTextActive,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                  {selected ? (
-                    <Feather name="check" size={14} color={Colors.primaryLight} />
-                  ) : null}
-                </Pressable>
-              );
-            })}
-          </View>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.filterCheckboxRow,
+        compact && styles.filterCheckboxRowCompact,
+        selected && styles.filterCheckboxRowSelected,
+        pressed && { opacity: 0.82 },
+      ]}
+    >
+      <View
+        style={[
+          styles.filterCheckboxBox,
+          compact && styles.filterCheckboxBoxCompact,
+          selected && styles.filterCheckboxBoxSelected,
+        ]}
+      >
+        {selected ? (
+          <Feather name="check" size={13} color={Colors.ivory} />
         ) : null}
       </View>
-    </View>
+      <Text
+        style={[
+          styles.filterCheckboxLabel,
+          compact && styles.filterCheckboxLabelCompact,
+          selected && styles.filterCheckboxLabelSelected,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -365,7 +356,8 @@ export default function DiscoverScreen() {
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
   const defaultFilters = useMemo<DiscoveryFilters>(
     () => ({
-      genderIdentity: null,
+      selectedGenders: [],
+      therianMode: "exclude",
       ageMin: 18,
       ageMax: 40,
     }),
@@ -424,12 +416,20 @@ export default function DiscoverScreen() {
   const filteredProfiles = useMemo(
     () =>
       discoverProfiles.filter((profile) => {
-        if (
-          appliedFilters.genderIdentity &&
-          profile.genderIdentity !== appliedFilters.genderIdentity
-        ) {
+        const activeBaseGenders = appliedFilters.selectedGenders.length
+          ? appliedFilters.selectedGenders
+          : BASE_GENDERS;
+        const allowedIdentities =
+          appliedFilters.therianMode === "only"
+            ? activeBaseGenders.map((value) => THERIAN_BY_BASE[value])
+            : appliedFilters.therianMode === "include"
+              ? activeBaseGenders.flatMap((value) => [value, THERIAN_BY_BASE[value]])
+              : activeBaseGenders;
+
+        if (!allowedIdentities.includes(profile.genderIdentity)) {
           return false;
         }
+
         return (
           profile.age >= appliedFilters.ageMin &&
           profile.age <= appliedFilters.ageMax
@@ -466,16 +466,12 @@ export default function DiscoverScreen() {
     : "";
   const hasActiveFilters = !filtersEqual(appliedFilters, defaultFilters);
   const canApplyFilters = !filtersEqual(draftFilters, appliedFilters);
-  const filterOptions = useMemo(
+  const baseGenderOptions = useMemo(
     () => [
-      {
-        value: null,
-        label: t("Todas las identidades", "All identities"),
-      },
-      ...GENDER_IDENTITIES.map((value) => ({
-        value,
-        label: getGenderIdentityLabel(value, t),
-      })),
+      { value: "male" as const, label: t("Hombre", "Male") },
+      { value: "female" as const, label: t("Mujer", "Female") },
+      { value: "non_binary" as const, label: t("No binario", "Non-binary") },
+      { value: "fluid" as const, label: t("Fluidx", "Fluid") },
     ],
     [t]
   );
@@ -565,22 +561,54 @@ export default function DiscoverScreen() {
     });
   };
 
+  const toggleBaseGender = (value: BaseGender) => {
+    setDraftFilters((current) => {
+      const nextSelected = current.selectedGenders.includes(value)
+        ? current.selectedGenders.filter((item) => item !== value)
+        : [...current.selectedGenders, value];
+
+      return {
+        ...current,
+        selectedGenders: normalizeSelectedGenders(nextSelected),
+      };
+    });
+  };
+
+  const toggleTherianMode = (mode: Exclude<TherianMode, "exclude">) => {
+    setDraftFilters((current) => ({
+      ...current,
+      therianMode: current.therianMode === mode ? "exclude" : mode,
+    }));
+  };
+
   const openFilters = () => {
-    setDraftFilters(appliedFilters);
+    setDraftFilters({
+      ...appliedFilters,
+      selectedGenders: [...appliedFilters.selectedGenders],
+    });
     setIsFilterVisible(true);
     Haptics.selectionAsync().catch(() => {});
   };
 
   const applyFilters = () => {
-    setAppliedFilters(draftFilters);
+    setAppliedFilters({
+      ...draftFilters,
+      selectedGenders: [...draftFilters.selectedGenders],
+    });
     setCurrentIndex(0);
     resetCardState();
     setIsFilterVisible(false);
   };
 
   const clearFilters = () => {
-    setDraftFilters(defaultFilters);
-    setAppliedFilters(defaultFilters);
+    setDraftFilters({
+      ...defaultFilters,
+      selectedGenders: [...defaultFilters.selectedGenders],
+    });
+    setAppliedFilters({
+      ...defaultFilters,
+      selectedGenders: [...defaultFilters.selectedGenders],
+    });
     setCurrentIndex(0);
     resetCardState();
     setIsFilterVisible(false);
@@ -1125,15 +1153,33 @@ export default function DiscoverScreen() {
               </Pressable>
             </View>
 
-            <FilterSelect
-              label={t("Interés", "Interest")}
-              value={draftFilters.genderIdentity}
-              options={filterOptions}
-              placeholder={t("Todas las identidades", "All identities")}
-              onChange={(value) =>
-                setDraftFilters((current) => ({ ...current, genderIdentity: value }))
-              }
-            />
+            <View style={styles.filterField}>
+              <Text style={styles.filterLabel}>{t("Interés", "Interest")}</Text>
+              <View style={styles.filterCheckboxGroup}>
+                {baseGenderOptions.map((option) => (
+                  <FilterCheckboxRow
+                    key={option.value}
+                    label={option.label}
+                    selected={draftFilters.selectedGenders.includes(option.value)}
+                    onPress={() => toggleBaseGender(option.value)}
+                  />
+                ))}
+              </View>
+              <View style={styles.filterTherianGroup}>
+                <FilterCheckboxRow
+                  label={t("Incluir Therians", "Include Therians")}
+                  selected={draftFilters.therianMode === "include"}
+                  onPress={() => toggleTherianMode("include")}
+                  compact
+                />
+                <FilterCheckboxRow
+                  label={t("Solo Therians", "Only Therians")}
+                  selected={draftFilters.therianMode === "only"}
+                  onPress={() => toggleTherianMode("only")}
+                  compact
+                />
+              </View>
+            </View>
 
             <AgeRangeFields
               bounds={ageBounds}
@@ -1354,6 +1400,71 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textTransform: "uppercase",
     letterSpacing: 0.7,
+  },
+  filterCheckboxGroup: {
+    gap: 10,
+  },
+  filterTherianGroup: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
+    marginTop: 4,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  filterCheckboxRow: {
+    minHeight: 50,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  filterCheckboxRowSelected: {
+    borderColor: "rgba(90,169,255,0.38)",
+    backgroundColor: Colors.infoOverlay,
+  },
+  filterCheckboxRowCompact: {
+    flex: 1,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  filterCheckboxBox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: "transparent",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterCheckboxBoxSelected: {
+    borderColor: Colors.info,
+    backgroundColor: Colors.info,
+  },
+  filterCheckboxBoxCompact: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+  },
+  filterCheckboxLabel: {
+    flex: 1,
+    fontFamily: "Inter_500Medium",
+    fontSize: 14,
+    color: Colors.text,
+  },
+  filterCheckboxLabelCompact: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  filterCheckboxLabelSelected: {
+    color: Colors.text,
   },
   filterSelectWrap: {
     position: "relative",
