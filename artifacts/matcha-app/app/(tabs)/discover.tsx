@@ -742,7 +742,11 @@ export default function DiscoverScreen() {
               pressed && { opacity: 0.78, transform: [{ scale: 0.96 }] },
             ]}
           >
-            <Feather name="sliders" size={18} color={Colors.textSecondary} />
+            <Feather
+              name="sliders"
+              size={18}
+              color={hasActiveFilters ? Colors.like : Colors.textSecondary}
+            />
           </Pressable>
         </View>
       </View>
@@ -1341,8 +1345,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   filterBtnActive: {
-    borderColor: "rgba(90,169,255,0.35)",
-    backgroundColor: Colors.infoOverlay,
+    borderColor: Colors.like,
+    backgroundColor: "rgba(82, 183, 136, 0.16)",
   },
   filterModalRoot: {
     flex: 1,
@@ -1579,7 +1583,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   filterFooterBtnPrimary: {
-    backgroundColor: Colors.info,
+    backgroundColor: Colors.like,
   },
   filterFooterBtnPrimaryDisabled: {
     backgroundColor: Colors.surface,
