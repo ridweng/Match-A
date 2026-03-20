@@ -253,6 +253,40 @@ function AgeRangeFields({
     setMaxText(String(valueMax));
   }, [valueMax]);
 
+  const handleMinTextChange = React.useCallback(
+    (rawValue: string) => {
+      const digits = rawValue.replace(/\D/g, "");
+      setMinText(digits);
+
+      if (!digits) {
+        return;
+      }
+
+      const parsed = Number(digits);
+      if (parsed >= bounds.min && parsed <= valueMax) {
+        onChange(parsed, valueMax);
+      }
+    },
+    [bounds.min, onChange, valueMax]
+  );
+
+  const handleMaxTextChange = React.useCallback(
+    (rawValue: string) => {
+      const digits = rawValue.replace(/\D/g, "");
+      setMaxText(digits);
+
+      if (!digits) {
+        return;
+      }
+
+      const parsed = Number(digits);
+      if (parsed >= valueMin && parsed <= bounds.max) {
+        onChange(valueMin, parsed);
+      }
+    },
+    [bounds.max, onChange, valueMin]
+  );
+
   const commitMin = React.useCallback(
     (rawValue: string) => {
       const digits = rawValue.replace(/\D/g, "");
@@ -291,7 +325,7 @@ function AgeRangeFields({
           <Text style={styles.ageNumberLabel}>{t("Mínima", "Minimum")}</Text>
           <TextInput
             value={minText}
-            onChangeText={(value) => setMinText(value.replace(/\D/g, ""))}
+            onChangeText={handleMinTextChange}
             onBlur={() => commitMin(minText)}
             onEndEditing={() => commitMin(minText)}
             keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
@@ -306,7 +340,7 @@ function AgeRangeFields({
           <Text style={styles.ageNumberLabel}>{t("Máxima", "Maximum")}</Text>
           <TextInput
             value={maxText}
-            onChangeText={(value) => setMaxText(value.replace(/\D/g, ""))}
+            onChangeText={handleMaxTextChange}
             onBlur={() => commitMax(maxText)}
             onEndEditing={() => commitMax(maxText)}
             keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
