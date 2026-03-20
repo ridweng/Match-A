@@ -42,12 +42,46 @@ const NON_BINARY_DISCOVERY_IMAGES = [
   "https://images.unsplash.com/photo-1521119989659-a83eee488004?w=600&q=80",
 ] as const;
 
+const DISCOVERY_GENDER_IDENTITIES: Record<string, string> = {
+  p1: "female",
+  p2: "female",
+  p3: "female",
+  p4: "female",
+  p5: "non_binary",
+  p6: "female",
+  p7: "female",
+  p8: "female",
+  p9: "female",
+  p10: "female",
+  p11: "therian_female",
+  p12: "male",
+  p13: "male",
+  p14: "male",
+  p15: "male",
+  p16: "male",
+  p17: "male",
+  p18: "male",
+  p19: "therian_male",
+  p20: "male",
+  p21: "male",
+  p22: "non_binary",
+  p23: "non_binary",
+  p24: "fluid",
+  p25: "therian_non_binary",
+  p26: "fluid",
+  p27: "non_binary",
+  p28: "therian_fluid",
+  p29: "therian_non_binary",
+  p30: "non_binary",
+};
+
 export type DiscoverProfile = {
   id: string;
   name: string;
   age: number;
   dateOfBirth: string;
   pronouns: string;
+  genderIdentity: string;
   location: string;
   occupation: LocalizedText;
   attributes: {
@@ -84,7 +118,7 @@ export type DiscoverProfile = {
   }[];
 };
 
-export const discoverProfiles: DiscoverProfile[] = [
+const DISCOVERY_PROFILES_BASE = [
   {
     id: "p1",
     name: "Valentina",
@@ -2069,3 +2103,10 @@ export const discoverProfiles: DiscoverProfile[] = [
     ],
   },
 ];
+
+export const discoverProfiles: DiscoverProfile[] = DISCOVERY_PROFILES_BASE.map(
+  (profile) => ({
+    ...profile,
+    genderIdentity: DISCOVERY_GENDER_IDENTITIES[profile.id] ?? "non_binary",
+  })
+);
