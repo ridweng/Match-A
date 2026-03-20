@@ -46,6 +46,8 @@ const Colors = {
   goldLight: "#D4B896",
 
   success: "#52B788",
+  info: "#5AA9FF",
+  infoOverlay: "rgba(90, 169, 255, 0.18)",
   error: "#E63946",
   warning: "#F4A261",
   muted: "#9BB8A4",

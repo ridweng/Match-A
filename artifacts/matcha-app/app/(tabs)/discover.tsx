@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import React, { useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
@@ -18,6 +18,20 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
+import {
+  getAlcoholUseLabel,
+  getBodyTypeLabel,
+  getChildrenPreferenceLabel,
+  getEducationLabel,
+  getEthnicityLabel,
+  getHairColorLabel,
+  getPhysicalActivityLabel,
+  getPoliticalInterestLabel,
+  getRelationshipGoalLabel,
+  getReligionImportanceLabel,
+  getReligionLabel,
+  getTobaccoUseLabel,
+} from "@/constants/profile-options";
 import { useApp } from "@/context/AppContext";
 import { discoverProfiles, type DiscoverProfile } from "@/data/profiles";
 
@@ -25,8 +39,99 @@ const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
 const CARD_HEIGHT = height * 0.62;
 const SWIPE_THRESHOLD = 80;
+const INFO_SWIPE_THRESHOLD = 82;
 
 type SwipeState = "idle" | "like" | "dislike";
+type FeatherName = React.ComponentProps<typeof Feather>["name"];
+
+const LANGUAGE_FLAG_CODES: Record<string, string> = {
+  spanish: "es",
+  english: "gb",
+  portuguese: "pt",
+  french: "fr",
+  italian: "it",
+  german: "de",
+  dutch: "nl",
+  catalan: "ad",
+  galician: "es",
+  basque: "es",
+};
+
+function AboutRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: FeatherName;
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <View style={styles.infoRow}>
+      <View style={styles.infoRowIconWrap}>
+        <Feather name={icon} size={16} color={Colors.info} />
+      </View>
+      <View style={styles.infoRowBody}>
+        <Text style={styles.infoRowLabel}>{label}</Text>
+        {typeof value === "string" ? (
+          <Text style={styles.infoRowValue}>{value}</Text>
+        ) : (
+          value
+        )}
+      </View>
+    </View>
+  );
+}
+
+function PhysicalRow({
+  icon,
+  label,
+  value,
+}: {
+  icon: FeatherName;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.physicalRow}>
+      <View style={styles.physicalIconWrap}>
+        <Feather name={icon} size={16} color={Colors.primaryLight} />
+      </View>
+      <View style={styles.physicalBody}>
+        <Text style={styles.infoRowLabel}>{label}</Text>
+        <Text style={styles.infoRowValue}>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+function LifestyleTile({
+  icon,
+  label,
+  value,
+}: {
+  icon: FeatherName;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.lifestyleTile}>
+      <View style={styles.lifestyleIconWrap}>
+        <Feather name={icon} size={18} color={Colors.info} />
+      </View>
+      <Text style={styles.lifestyleTileLabel}>{label}</Text>
+      <Text style={styles.lifestyleTileValue}>{value}</Text>
+    </View>
+  );
+}
+
+function getLanguageFlagUri(value: string) {
+  const countryCode = LANGUAGE_FLAG_CODES[value];
+  if (!countryCode) {
+    return null;
+  }
+  return `https://flagcdn.com/w40/${countryCode}.png`;
+}
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
@@ -35,8 +140,12 @@ export default function DiscoverScreen() {
   const [swipeState, setSwipeState] = useState<SwipeState>("idle");
   const [showInsight, setShowInsight] = useState(false);
   const [lastLikedProfile, setLastLikedProfile] = useState<DiscoverProfile | null>(null);
+  const [isInfoVisible, setIsInfoVisible] = useState(false);
 
   const position = useRef(new Animated.ValueXY()).current;
+  const flipAnim = useRef(new Animated.Value(0)).current;
+  const backScrollRef = useRef<ScrollView | null>(null);
+
   const rotate = position.x.interpolate({
     inputRange: [-width / 2, 0, width / 2],
     outputRange: ["-12deg", "0deg", "12deg"],
@@ -52,6 +161,34 @@ export default function DiscoverScreen() {
     outputRange: [1, 0],
     extrapolate: "clamp",
   });
+  const frontRotate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+  const backRotate = flipAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["180deg", "360deg"],
+  });
+
+  const current = discoverProfiles[currentIndex];
+  const next = discoverProfiles[(currentIndex + 1) % discoverProfiles.length];
+  const nextNext = discoverProfiles[(currentIndex + 2) % discoverProfiles.length];
+
+  const relatedGoals = useMemo(
+    () =>
+      lastLikedProfile
+        ? lastLikedProfile.goalFeedback
+            .map((gf) => {
+              const goal = goals.find((g) => g.id === gf.goalId);
+              return goal ? { goal, reason: gf.reason } : null;
+            })
+            .filter(Boolean)
+        : [],
+    [goals, lastLikedProfile]
+  );
+
+  const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
+  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
   const resetPosition = () => {
     Animated.spring(position, {
@@ -60,9 +197,35 @@ export default function DiscoverScreen() {
     }).start();
   };
 
+  const setInfoVisible = (nextVisible: boolean) => {
+    setIsInfoVisible(nextVisible);
+    if (nextVisible) {
+      backScrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+    Animated.spring(flipAnim, {
+      toValue: nextVisible ? 1 : 0,
+      friction: 8,
+      tension: 60,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const toggleInfo = () => {
+    Haptics.selectionAsync().catch(() => {});
+    setInfoVisible(!isInfoVisible);
+  };
+
+  const resetCardState = () => {
+    setSwipeState("idle");
+    position.setValue({ x: 0, y: 0 });
+    setIsInfoVisible(false);
+    flipAnim.setValue(0);
+    backScrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
+
   const swipeRight = () => {
     const profile = discoverProfiles[currentIndex];
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     Animated.timing(position, {
       toValue: { x: width + 100, y: 0 },
       duration: 300,
@@ -71,8 +234,7 @@ export default function DiscoverScreen() {
       likeProfile(profile.id);
       setLastLikedProfile(profile);
       setShowInsight(true);
-      setSwipeState("idle");
-      position.setValue({ x: 0, y: 0 });
+      resetCardState();
       setCurrentIndex((prev) =>
         prev < discoverProfiles.length - 1 ? prev + 1 : 0
       );
@@ -80,57 +242,86 @@ export default function DiscoverScreen() {
   };
 
   const swipeLeft = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Animated.timing(position, {
       toValue: { x: -width - 100, y: 0 },
       duration: 300,
       useNativeDriver: false,
     }).start(() => {
-      setSwipeState("idle");
-      position.setValue({ x: 0, y: 0 });
+      resetCardState();
       setCurrentIndex((prev) =>
         prev < discoverProfiles.length - 1 ? prev + 1 : 0
       );
     });
   };
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gesture) => {
-        position.setValue({ x: gesture.dx, y: gesture.dy });
-        if (gesture.dx > 40) setSwipeState("like");
-        else if (gesture.dx < -40) setSwipeState("dislike");
-        else setSwipeState("idle");
-      },
-      onPanResponderRelease: (_, gesture) => {
-        if (gesture.dx > SWIPE_THRESHOLD) {
-          swipeRight();
-        } else if (gesture.dx < -SWIPE_THRESHOLD) {
-          swipeLeft();
-        } else {
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) => {
+          const horizontalIntent =
+            Math.abs(gesture.dx) > 12 &&
+            Math.abs(gesture.dx) > Math.abs(gesture.dy);
+          const upwardInfoIntent =
+            !isInfoVisible &&
+            gesture.dy < -12 &&
+            Math.abs(gesture.dy) > Math.abs(gesture.dx);
+          return horizontalIntent || upwardInfoIntent;
+        },
+        onPanResponderMove: (_, gesture) => {
+          const horizontalIntent = Math.abs(gesture.dx) >= Math.abs(gesture.dy);
+          if (horizontalIntent) {
+            position.setValue({ x: gesture.dx, y: gesture.dy * 0.18 });
+            if (gesture.dx > 40) setSwipeState("like");
+            else if (gesture.dx < -40) setSwipeState("dislike");
+            else setSwipeState("idle");
+            return;
+          }
+
+          if (!isInfoVisible && gesture.dy < 0) {
+            position.setValue({ x: 0, y: gesture.dy * 0.4 });
+            setSwipeState("idle");
+          }
+        },
+        onPanResponderRelease: (_, gesture) => {
+          const horizontalIntent = Math.abs(gesture.dx) >= Math.abs(gesture.dy);
+          if (horizontalIntent) {
+            if (gesture.dx > SWIPE_THRESHOLD) {
+              swipeRight();
+            } else if (gesture.dx < -SWIPE_THRESHOLD) {
+              swipeLeft();
+            } else {
+              resetPosition();
+              setSwipeState("idle");
+            }
+            return;
+          }
+
+          if (
+            !isInfoVisible &&
+            gesture.dy < -INFO_SWIPE_THRESHOLD &&
+            Math.abs(gesture.dy) > Math.abs(gesture.dx)
+          ) {
+            Haptics.selectionAsync().catch(() => {});
+            Animated.spring(position, {
+              toValue: { x: 0, y: 0 },
+              useNativeDriver: false,
+            }).start();
+            setInfoVisible(true);
+            return;
+          }
+
           resetPosition();
           setSwipeState("idle");
-        }
-      },
-    })
-  ).current;
-
-  const current = discoverProfiles[currentIndex];
-  const next = discoverProfiles[(currentIndex + 1) % discoverProfiles.length];
-  const nextNext = discoverProfiles[(currentIndex + 2) % discoverProfiles.length];
-
-  const relatedGoals = lastLikedProfile
-    ? lastLikedProfile.goalFeedback
-        .map((gf) => {
-          const goal = goals.find((g) => g.id === gf.goalId);
-          return goal ? { goal, reason: gf.reason } : null;
-        })
-        .filter(Boolean)
-    : [];
-
-  const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
-  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+        },
+        onPanResponderTerminate: () => {
+          resetPosition();
+          setSwipeState("idle");
+        },
+      }),
+    [isInfoVisible]
+  );
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -169,7 +360,7 @@ export default function DiscoverScreen() {
           {...panResponder.panHandlers}
           style={[
             styles.cardBase,
-            styles.cardFront,
+            styles.cardInteractive,
             {
               transform: [
                 { translateX: position.x },
@@ -179,70 +370,227 @@ export default function DiscoverScreen() {
             },
           ]}
         >
-          <Image
-            source={{ uri: current.imageUrl }}
-            style={styles.cardImage}
-            resizeMode="cover"
-          />
-
-          <Animated.View style={[styles.likeOverlay, { opacity: likeOpacity }]}>
-            <LinearGradient
-              colors={["transparent", Colors.likeOverlay]}
-              style={StyleSheet.absoluteFillObject}
+          <Animated.View
+            pointerEvents={isInfoVisible ? "none" : "auto"}
+            style={[
+              styles.cardFace,
+              styles.cardFaceFront,
+              {
+                transform: [{ perspective: 1200 }, { rotateY: frontRotate }],
+              },
+            ]}
+          >
+            <Image
+              source={{ uri: current.imageUrl }}
+              style={styles.cardImage}
+              resizeMode="cover"
             />
-            <View style={styles.stampContainer}>
-              <View style={styles.likeStamp}>
-                <Feather name="heart" size={28} color="#fff" />
-                <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
+
+            <Animated.View style={[styles.likeOverlay, { opacity: likeOpacity }]}>
+              <LinearGradient
+                colors={["transparent", Colors.likeOverlay]}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View style={styles.stampContainer}>
+                <View style={styles.likeStamp}>
+                  <Feather name="heart" size={28} color="#fff" />
+                  <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
+                </View>
               </View>
-            </View>
+            </Animated.View>
+
+            <Animated.View
+              style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}
+            >
+              <LinearGradient
+                colors={["transparent", Colors.dislikeOverlay]}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View style={styles.stampContainer}>
+                <View style={styles.dislikeStamp}>
+                  <Feather name="x" size={28} color="#fff" />
+                  <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
+                </View>
+              </View>
+            </Animated.View>
+
+            <LinearGradient
+              colors={["transparent", "rgba(15,26,20,0.98)"]}
+              style={styles.cardGradient}
+            >
+              <View style={styles.insightTags}>
+                {current.insightTags.map((tag) => (
+                  <View key={`${current.id}-${tag.es}`} style={styles.insightTag}>
+                    <Text style={styles.insightTagText}>{t(tag.es, tag.en)}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <Text style={styles.cardName}>
+                {current.name}, {current.age}
+              </Text>
+              <View style={styles.cardRow}>
+                <Feather name="map-pin" size={13} color={Colors.primaryLight} />
+                <Text style={styles.cardLocation}>{current.location}</Text>
+                <Text style={styles.cardDot}>·</Text>
+                <Text style={styles.cardOccupation}>
+                  {t(current.occupation.es, current.occupation.en)}
+                </Text>
+              </View>
+
+              <View style={styles.interestsRow}>
+                {current.attributes.interests.slice(0, 3).map((interest) => (
+                  <View key={`${current.id}-${interest}`} style={styles.interestChip}>
+                    <Text style={styles.interestChipText}>{interest}</Text>
+                  </View>
+                ))}
+              </View>
+            </LinearGradient>
           </Animated.View>
 
           <Animated.View
-            style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}
+            pointerEvents={isInfoVisible ? "auto" : "none"}
+            style={[
+              styles.cardFace,
+              styles.cardFaceBack,
+              {
+                transform: [{ perspective: 1200 }, { rotateY: backRotate }],
+              },
+            ]}
           >
-            <LinearGradient
-              colors={["transparent", Colors.dislikeOverlay]}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <View style={styles.stampContainer}>
-              <View style={styles.dislikeStamp}>
-                <Feather name="x" size={28} color="#fff" />
-                <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
+            <View style={styles.backHeader}>
+              <View style={styles.backInfoBadge}>
+                <Feather name="info" size={14} color={Colors.info} />
               </View>
+              <Text style={styles.backName}>
+                {current.name}, {current.age}
+              </Text>
+              <Text style={styles.backMeta}>
+                {current.location} · {t(current.occupation.es, current.occupation.en)}
+              </Text>
             </View>
+
+            <ScrollView
+              ref={backScrollRef}
+              style={styles.backScroll}
+              contentContainerStyle={styles.backScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.backSection}>
+                <Text style={styles.backSectionTitle}>{t("Sobre mí", "About me")}</Text>
+                <AboutRow
+                  icon="message-circle"
+                  label={t("Sobre mí", "About me")}
+                  value={t(current.about.bio.es, current.about.bio.en)}
+                />
+                <AboutRow
+                  icon="heart"
+                  label={t("Metas de tu relación", "Relationship goals")}
+                  value={getRelationshipGoalLabel(current.about.relationshipGoals, t)}
+                />
+                <AboutRow
+                  icon="book-open"
+                  label={t("Educación", "Education")}
+                  value={getEducationLabel(current.about.education, t)}
+                />
+                <AboutRow
+                  icon="users"
+                  label={t("Hijxs", "Children")}
+                  value={getChildrenPreferenceLabel(current.about.childrenPreference, t)}
+                />
+                <AboutRow
+                  icon="globe"
+                  label={t("Idiomas", "Languages")}
+                  value={
+                    <View style={styles.flagImageRow}>
+                      {current.about.languagesSpoken.map((value) => {
+                        const uri = getLanguageFlagUri(value);
+                        return uri ? (
+                          <Image
+                            key={`${current.id}-${value}`}
+                            source={{ uri }}
+                            style={styles.flagImage}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View
+                            key={`${current.id}-${value}`}
+                            style={styles.flagFallback}
+                          >
+                            <Feather name="globe" size={14} color={Colors.info} />
+                          </View>
+                        );
+                      })}
+                    </View>
+                  }
+                />
+              </View>
+
+              <View style={styles.backSection}>
+                <Text style={styles.backSectionTitle}>
+                  {t("Estilo de vida", "Life Style")}
+                </Text>
+                <View style={styles.lifestyleGrid}>
+                  <LifestyleTile
+                    icon="activity"
+                    label={t("Actividad física", "Activity")}
+                    value={getPhysicalActivityLabel(current.lifestyle.physicalActivity, t)}
+                  />
+                  <LifestyleTile
+                    icon="coffee"
+                    label={t("Bebida", "Drink")}
+                    value={getAlcoholUseLabel(current.lifestyle.alcoholUse, t)}
+                  />
+                  <LifestyleTile
+                    icon="wind"
+                    label={t("Tabaco", "Smoke")}
+                    value={getTobaccoUseLabel(current.lifestyle.tobaccoUse, t)}
+                  />
+                  <LifestyleTile
+                    icon="flag"
+                    label={t("Política", "Politics")}
+                    value={getPoliticalInterestLabel(current.lifestyle.politicalInterest, t)}
+                  />
+                  <LifestyleTile
+                    icon="star"
+                    label={t("Religión", "Religion")}
+                    value={getReligionImportanceLabel(current.lifestyle.religionImportance, t)}
+                  />
+                  <LifestyleTile
+                    icon="moon"
+                    label={t("Creencia", "Belief")}
+                    value={getReligionLabel(current.lifestyle.religion, t)}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.backSection}>
+                <Text style={styles.backSectionTitle}>
+                  {t("Atributos físicos", "Physical attributes")}
+                </Text>
+                <PhysicalRow
+                  icon="user"
+                  label={t("Tipo de cuerpo", "Body type")}
+                  value={getBodyTypeLabel(current.physical.bodyType, t)}
+                />
+                <PhysicalRow
+                  icon="maximize-2"
+                  label={t("Altura", "Height")}
+                  value={current.physical.height}
+                />
+                <PhysicalRow
+                  icon="feather"
+                  label={t("Color de cabello", "Hair color")}
+                  value={getHairColorLabel(current.physical.hairColor, t)}
+                />
+                <PhysicalRow
+                  icon="map"
+                  label={t("Etnia", "Ethnicity")}
+                  value={getEthnicityLabel(current.physical.ethnicity, t)}
+                />
+              </View>
+            </ScrollView>
           </Animated.View>
-
-          <LinearGradient
-            colors={["transparent", "rgba(15,26,20,0.98)"]}
-            style={styles.cardGradient}
-          >
-            <View style={styles.insightTags}>
-              {current.insightTags.map((tag) => (
-                <View key={tag} style={styles.insightTag}>
-                  <Text style={styles.insightTagText}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-
-            <Text style={styles.cardName}>
-              {current.name}, {current.age}
-            </Text>
-            <View style={styles.cardRow}>
-              <Feather name="map-pin" size={13} color={Colors.primaryLight} />
-              <Text style={styles.cardLocation}>{current.location}</Text>
-              <Text style={styles.cardDot}>·</Text>
-              <Text style={styles.cardOccupation}>{current.occupation}</Text>
-            </View>
-
-            <View style={styles.interestsRow}>
-              {current.attributes.interests.slice(0, 3).map((i) => (
-                <View key={i} style={styles.interestChip}>
-                  <Text style={styles.interestChipText}>{i}</Text>
-                </View>
-              ))}
-            </View>
-          </LinearGradient>
         </Animated.View>
       </View>
 
@@ -259,12 +607,15 @@ export default function DiscoverScreen() {
         </Pressable>
 
         <Pressable
+          onPress={toggleInfo}
           style={({ pressed }) => [
             styles.actionBtnSm,
-            { opacity: pressed ? 0.7 : 1 },
+            styles.infoBtn,
+            isInfoVisible && styles.infoBtnActive,
+            { opacity: pressed ? 0.75 : 1, transform: [{ scale: pressed ? 0.95 : 1 }] },
           ]}
         >
-          <Feather name="star" size={20} color={Colors.accent} />
+          <Feather name="info" size={20} color={Colors.info} />
         </Pressable>
 
         <Pressable
@@ -308,19 +659,17 @@ export default function DiscoverScreen() {
               style={{ maxHeight: 260 }}
               showsVerticalScrollIndicator={false}
             >
-              {relatedGoals.map((item: any, i: number) => (
-                <View key={i} style={styles.insightItem}>
+              {relatedGoals.map((item: any, index: number) => (
+                <View key={index} style={styles.insightItem}>
                   <View style={styles.insightItemLeft}>
-                    <Feather
-                      name="target"
-                      size={16}
-                      color={Colors.primaryLight}
-                    />
+                    <Feather name="target" size={16} color={Colors.primaryLight} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.insightGoalTitle}>
                         {t(item.goal.titleEs, item.goal.titleEn)}
                       </Text>
-                      <Text style={styles.insightReason}>{item.reason}</Text>
+                      <Text style={styles.insightReason}>
+                        {t(item.reason.es, item.reason.en)}
+                      </Text>
                     </View>
                   </View>
                   <View style={styles.insightProgress}>
@@ -399,7 +748,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     backgroundColor: Colors.backgroundCard,
   },
-  cardFront: {
+  cardInteractive: {
     zIndex: 3,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
@@ -416,6 +765,18 @@ const styles = StyleSheet.create({
     zIndex: 1,
     transform: [{ scale: 0.9 }, { translateY: 32 }],
     opacity: 0.6,
+  },
+  cardFace: {
+    ...StyleSheet.absoluteFillObject,
+    backfaceVisibility: "hidden",
+  },
+  cardFaceFront: {
+    backgroundColor: Colors.backgroundCard,
+  },
+  cardFaceBack: {
+    backgroundColor: Colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   cardImage: {
     width: "100%",
@@ -533,6 +894,176 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.text,
   },
+  backHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  backInfoBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  backName: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 22,
+    color: Colors.text,
+    letterSpacing: -0.4,
+  },
+  backMeta: {
+    marginTop: 4,
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  backScroll: {
+    flex: 1,
+  },
+  backScrollContent: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 20,
+    gap: 20,
+  },
+  backSection: {
+    gap: 12,
+  },
+  backSectionTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 16,
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  infoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  infoRowIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  infoRowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  infoRowLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 11,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  infoRowValue: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: Colors.text,
+    lineHeight: 20,
+  },
+  flagImageRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+    paddingTop: 2,
+  },
+  flagImage: {
+    width: 26,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderLight,
+    backgroundColor: Colors.backgroundElevated,
+  },
+  flagFallback: {
+    width: 26,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lifestyleGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  lifestyleTile: {
+    width: "31%",
+    minHeight: 118,
+    borderRadius: 16,
+    backgroundColor: Colors.backgroundElevated,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  lifestyleIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  lifestyleTileLabel: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 10,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  lifestyleTileValue: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.text,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+  physicalRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  physicalIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "rgba(82,183,136,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  physicalBody: {
+    flex: 1,
+    gap: 2,
+  },
   actions: {
     flexDirection: "row",
     justifyContent: "center",
@@ -563,9 +1094,16 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
-    borderColor: Colors.border,
     alignItems: "center",
     justifyContent: "center",
+  },
+  infoBtn: {
+    borderColor: "rgba(90,169,255,0.38)",
+    backgroundColor: Colors.infoOverlay,
+  },
+  infoBtnActive: {
+    borderColor: Colors.info,
+    backgroundColor: "rgba(90,169,255,0.24)",
   },
   modalOverlay: {
     flex: 1,
