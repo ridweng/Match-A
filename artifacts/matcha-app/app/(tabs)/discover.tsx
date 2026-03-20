@@ -861,12 +861,8 @@ const styles = StyleSheet.create({
     position: "absolute",
   },
   photoTapLayer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 172,
-    zIndex: 1,
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 4,
     flexDirection: "row",
   },
   photoTapZone: {
@@ -874,11 +870,11 @@ const styles = StyleSheet.create({
   },
   likeOverlay: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
+    zIndex: 5,
   },
   dislikeOverlay: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 2,
+    zIndex: 5,
   },
   stampContainer: {
     position: "absolute",
