@@ -1,37 +1,15 @@
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
-import { Icon, Label, NativeTabs } from "expo-router/unstable-native-tabs";
 import { SymbolView } from "expo-symbols";
 import React from "react";
-import { Platform, StyleSheet, View, useColorScheme } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 
-function NativeTabLayout() {
-  const { t } = useApp();
-  return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="discover">
-        <Icon sf={{ default: "rectangle.stack", selected: "rectangle.stack.fill" }} />
-        <Label>{t("Descubrir", "Discover")}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="goals">
-        <Icon sf={{ default: "target", selected: "target" }} />
-        <Label>{t("Mis Metas", "My Goals")}</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="profile">
-        <Icon sf={{ default: "person", selected: "person.fill" }} />
-        <Label>{t("Perfil", "Profile")}</Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
-  );
-}
-
-function ClassicTabLayout() {
+export default function TabLayout() {
   const { t } = useApp();
   const insets = useSafeAreaInsets();
   const isIOS = Platform.OS === "ios";
@@ -109,13 +87,12 @@ function ClassicTabLayout() {
             ),
         }}
       />
+      <Tabs.Screen
+        name="index"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
   );
-}
-
-export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
-  }
-  return <ClassicTabLayout />;
 }
