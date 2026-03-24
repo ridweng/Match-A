@@ -30,11 +30,21 @@ import {
 
 export type { AuthUser };
 
+export type GoalCategory =
+  | "physical"
+  | "personality"
+  | "family"
+  | "expectations"
+  | "language"
+  | "studies";
+
 export type Goal = {
   id: string;
   titleEs: string;
   titleEn: string;
-  category: "fisica" | "personalidad" | "habitos" | "social";
+  category: GoalCategory;
+  order: number;
+  completed: boolean;
   progress: number;
   nextActionEs: string;
   nextActionEn: string;
@@ -84,13 +94,24 @@ type AuthStatus =
 
 type BiometricResult = { ok: boolean; code?: string };
 
+const GOAL_CATEGORIES: GoalCategory[] = [
+  "physical",
+  "personality",
+  "family",
+  "expectations",
+  "language",
+  "studies",
+];
+
 const DEFAULT_GOALS: Goal[] = [
   {
     id: "1",
     titleEs: "Resistencia cardiovascular",
     titleEn: "Cardiovascular endurance",
-    category: "fisica",
-    progress: 68,
+    category: "physical",
+    order: 0,
+    completed: false,
+    progress: 0,
     nextActionEs: "Corre 20 min hoy sin parar",
     nextActionEn: "Run 20 min today without stopping",
     impactEs: "Más energía y mejor postura",
@@ -100,8 +121,10 @@ const DEFAULT_GOALS: Goal[] = [
     id: "2",
     titleEs: "Confianza social",
     titleEn: "Social confidence",
-    category: "social",
-    progress: 42,
+    category: "personality",
+    order: 0,
+    completed: false,
+    progress: 0,
     nextActionEs: "Inicia una conversación con un extraño",
     nextActionEn: "Start a conversation with a stranger",
     impactEs: "Más atractivo en interacciones sociales",
@@ -109,21 +132,25 @@ const DEFAULT_GOALS: Goal[] = [
   },
   {
     id: "3",
-    titleEs: "Higiene y cuidado personal",
-    titleEn: "Hygiene and grooming",
-    category: "habitos",
-    progress: 85,
-    nextActionEs: "Hidrata tu piel antes de dormir",
-    nextActionEn: "Moisturize your skin before sleep",
-    impactEs: "Primera impresión significativamente mejor",
-    impactEn: "Significantly better first impression",
+    titleEs: "Cuidado personal consistente",
+    titleEn: "Consistent grooming routine",
+    category: "physical",
+    order: 2,
+    completed: true,
+    progress: 0,
+    nextActionEs: "Mantén un ritual simple de autocuidado esta semana",
+    nextActionEn: "Keep a simple self-care ritual this week",
+    impactEs: "Refuerza tu presencia y seguridad personal",
+    impactEn: "Reinforces your presence and self-confidence",
   },
   {
     id: "4",
     titleEs: "Inteligencia emocional",
     titleEn: "Emotional intelligence",
-    category: "personalidad",
-    progress: 55,
+    category: "personality",
+    order: 2,
+    completed: true,
+    progress: 0,
     nextActionEs: "Escucha activa en tu próxima conversación",
     nextActionEn: "Active listening in your next conversation",
     impactEs: "Conexiones más profundas y auténticas",
@@ -133,8 +160,10 @@ const DEFAULT_GOALS: Goal[] = [
     id: "5",
     titleEs: "Postura corporal",
     titleEn: "Body posture",
-    category: "fisica",
-    progress: 30,
+    category: "physical",
+    order: 1,
+    completed: true,
+    progress: 0,
     nextActionEs: "10 min de ejercicios de postura ahora",
     nextActionEn: "10 min posture exercises right now",
     impactEs: "Proyectas más confianza y presencia",
@@ -144,12 +173,170 @@ const DEFAULT_GOALS: Goal[] = [
     id: "6",
     titleEs: "Habilidades de conversación",
     titleEn: "Conversation skills",
-    category: "social",
-    progress: 60,
+    category: "language",
+    order: 0,
+    completed: false,
+    progress: 0,
     nextActionEs: "Aprende 3 preguntas abiertas interesantes",
     nextActionEn: "Learn 3 interesting open-ended questions",
     impactEs: "Conversaciones más atractivas y fluidas",
     impactEn: "More engaging and fluid conversations",
+  },
+  {
+    id: "7",
+    titleEs: "Límites personales claros",
+    titleEn: "Clear personal boundaries",
+    category: "personality",
+    order: 1,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Define una situación donde quieras responder con más calma",
+    nextActionEn: "Define one situation where you want to respond more calmly",
+    impactEs: "Te ayuda a sentir más control y coherencia",
+    impactEn: "Helps you feel more in control and aligned",
+  },
+  {
+    id: "8",
+    titleEs: "Visión familiar clara",
+    titleEn: "Clear family vision",
+    category: "family",
+    order: 0,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Escribe qué significa familia para ti hoy",
+    nextActionEn: "Write down what family means to you today",
+    impactEs: "Aclara tus prioridades a largo plazo",
+    impactEn: "Clarifies your long-term priorities",
+  },
+  {
+    id: "9",
+    titleEs: "Conversación sobre hijxs",
+    titleEn: "Children conversation",
+    category: "family",
+    order: 1,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Prepara cómo hablarías de este tema con honestidad",
+    nextActionEn: "Prepare how you would talk about this topic honestly",
+    impactEs: "Reduce fricciones futuras y alinea expectativas",
+    impactEn: "Reduces future friction and aligns expectations",
+  },
+  {
+    id: "10",
+    titleEs: "Ritmo de estabilidad",
+    titleEn: "Pace of stability",
+    category: "family",
+    order: 2,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Piensa qué tipo de rutina compartida te hace sentir en paz",
+    nextActionEn: "Think about what kind of shared routine gives you peace",
+    impactEs: "Te acerca a vínculos más sostenibles",
+    impactEn: "Moves you toward more sustainable bonds",
+  },
+  {
+    id: "11",
+    titleEs: "Claridad romántica",
+    titleEn: "Relationship clarity",
+    category: "expectations",
+    order: 0,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Resume en una frase lo que buscas construir",
+    nextActionEn: "Summarize in one sentence what you want to build",
+    impactEs: "Hace tu intención más visible y coherente",
+    impactEn: "Makes your intention more visible and consistent",
+  },
+  {
+    id: "12",
+    titleEs: "No negociables sanos",
+    titleEn: "Healthy non-negotiables",
+    category: "expectations",
+    order: 2,
+    completed: true,
+    progress: 0,
+    nextActionEs: "Anota los tres valores que no quieres comprometer",
+    nextActionEn: "Write down the three values you do not want to compromise",
+    impactEs: "Refuerza decisiones más conscientes",
+    impactEn: "Supports more intentional decisions",
+  },
+  {
+    id: "13",
+    titleEs: "Ritmo consciente",
+    titleEn: "Intentional pacing",
+    category: "expectations",
+    order: 1,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Define el ritmo que se siente sano para ti al conocer a alguien",
+    nextActionEn: "Define the pace that feels healthy for you when meeting someone",
+    impactEs: "Genera más control emocional y claridad",
+    impactEn: "Creates more emotional control and clarity",
+  },
+  {
+    id: "14",
+    titleEs: "Presentación natural",
+    titleEn: "Natural self-introduction",
+    category: "language",
+    order: 2,
+    completed: true,
+    progress: 0,
+    nextActionEs: "Practica una introducción breve que suene auténtica",
+    nextActionEn: "Practice a short introduction that sounds authentic",
+    impactEs: "Te hace sonar más seguro desde el inicio",
+    impactEn: "Makes you sound more confident from the start",
+  },
+  {
+    id: "15",
+    titleEs: "Escucha activa verbal",
+    titleEn: "Verbal active listening",
+    category: "language",
+    order: 1,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Prueba una frase de validación en tu próxima charla",
+    nextActionEn: "Try one validation phrase in your next conversation",
+    impactEs: "Aumenta conexión y reciprocidad",
+    impactEn: "Improves connection and reciprocity",
+  },
+  {
+    id: "16",
+    titleEs: "Historia profesional clara",
+    titleEn: "Clear learning story",
+    category: "studies",
+    order: 2,
+    completed: true,
+    progress: 0,
+    nextActionEs: "Resume tu recorrido de estudio o aprendizaje en dos líneas",
+    nextActionEn: "Summarize your study or learning path in two lines",
+    impactEs: "Hace tu perfil más nítido y memorable",
+    impactEn: "Makes your profile sharper and more memorable",
+  },
+  {
+    id: "17",
+    titleEs: "Plan de crecimiento",
+    titleEn: "Growth plan",
+    category: "studies",
+    order: 0,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Elige una habilidad que quieras reforzar este mes",
+    nextActionEn: "Choose one skill you want to strengthen this month",
+    impactEs: "Transmite ambición tranquila y dirección",
+    impactEn: "Signals calm ambition and direction",
+  },
+  {
+    id: "18",
+    titleEs: "Mostrar tu especialidad",
+    titleEn: "Show your expertise",
+    category: "studies",
+    order: 1,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Piensa cómo explicarías tu fortaleza principal con claridad",
+    nextActionEn: "Think about how you would explain your main strength clearly",
+    impactEs: "Te ayuda a destacar con naturalidad",
+    impactEn: "Helps you stand out naturally",
   },
 ];
 
@@ -189,6 +376,53 @@ function normalizeStoredProfile(input: Partial<UserProfile> | null | undefined):
     photos: Array.isArray(input?.photos) ? input.photos : [],
     languagesSpoken: Array.isArray(input?.languagesSpoken) ? input.languagesSpoken : [],
   };
+}
+
+function recalculateGoalProgress(goals: Goal[]): Goal[] {
+  const progressByCategory = new Map<GoalCategory, number>();
+
+  GOAL_CATEGORIES.forEach((category) => {
+    const categoryGoals = goals.filter((goal) => goal.category === category);
+    const completedCount = categoryGoals.filter((goal) => goal.completed).length;
+    const progress = categoryGoals.length
+      ? Math.round((completedCount / categoryGoals.length) * 100)
+      : 0;
+    progressByCategory.set(category, progress);
+  });
+
+  return goals.map((goal) => ({
+    ...goal,
+    progress: progressByCategory.get(goal.category) || 0,
+  }));
+}
+
+function normalizeStoredGoals(input: Partial<Goal>[] | null | undefined): Goal[] {
+  const savedGoals = Array.isArray(input) ? input : [];
+  const savedGoalsById = new Map(
+    savedGoals.map((goal) => [String(goal.id), goal] as const)
+  );
+
+  const merged = DEFAULT_GOALS.map((goal) => {
+    const saved = savedGoalsById.get(goal.id);
+    return {
+      ...goal,
+      order: typeof saved?.order === "number" ? saved.order : goal.order,
+      completed:
+        typeof saved?.completed === "boolean" ? saved.completed : goal.completed,
+    };
+  });
+
+  const ordered = GOAL_CATEGORIES.flatMap((category) =>
+    merged
+      .filter((goal) => goal.category === category)
+      .sort((a, b) => a.order - b.order)
+      .map((goal, index) => ({
+        ...goal,
+        order: index,
+      }))
+  );
+
+  return recalculateGoalProgress(ordered);
 }
 
 type AppContextType = {
@@ -237,7 +471,12 @@ type AppContextType = {
   }) => Promise<boolean>;
   t: (es: string, en: string) => string;
   goals: Goal[];
-  updateGoalProgress: (id: string, progress: number) => void;
+  completeGoalTask: (id: string) => void;
+  reorderGoalTasks: (
+    category: GoalCategory,
+    fromIndex: number,
+    toIndex: number
+  ) => void;
   likedProfiles: string[];
   likeProfile: (profileId: string) => void;
   profile: UserProfile;
@@ -266,7 +505,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const [heightUnit, setHeightUnitState] = useState<HeightUnit>("metric");
-  const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
+  const [goals, setGoals] = useState<Goal[]>(() =>
+    normalizeStoredGoals(DEFAULT_GOALS)
+  );
   const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [authBusy, setAuthBusy] = useState(false);
@@ -435,7 +676,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (savedHeightUnit === "metric" || savedHeightUnit === "imperial") {
           setHeightUnitState(savedHeightUnit);
         }
-        if (savedGoals) setGoals(JSON.parse(savedGoals));
+        if (savedGoals) setGoals(normalizeStoredGoals(JSON.parse(savedGoals)));
         if (savedProfile) {
           const p = JSON.parse(savedProfile);
           setProfile(normalizeStoredProfile(p));
@@ -728,13 +969,81 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const updateGoalProgress = useCallback((id: string, progress: number) => {
+  const completeGoalTask = useCallback((id: string) => {
     setGoals((prev) => {
-      const updated = prev.map((g) => (g.id === id ? { ...g, progress } : g));
+      const targetGoal = prev.find((goal) => goal.id === id);
+      if (!targetGoal || targetGoal.completed) {
+        return prev;
+      }
+
+      const categoryGoals = prev
+        .filter((goal) => goal.category === targetGoal.category)
+        .sort((a, b) => a.order - b.order);
+      const remainingActive = categoryGoals.filter(
+        (goal) => !goal.completed && goal.id !== id
+      );
+      const completedGoals = categoryGoals.filter(
+        (goal) => goal.completed && goal.id !== id
+      );
+      const completedTarget = {
+        ...targetGoal,
+        completed: true,
+      };
+
+      const reorderedCategory = [
+        ...remainingActive,
+        ...completedGoals,
+        completedTarget,
+      ].map((goal, index) => ({
+        ...goal,
+        order: index,
+      }));
+
+      const otherGoals = prev.filter((goal) => goal.category !== targetGoal.category);
+      const updated = normalizeStoredGoals([...otherGoals, ...reorderedCategory]);
       AsyncStorage.setItem("goals", JSON.stringify(updated)).catch(() => {});
       return updated;
     });
   }, []);
+
+  const reorderGoalTasks = useCallback(
+    (category: GoalCategory, fromIndex: number, toIndex: number) => {
+      setGoals((prev) => {
+        const categoryGoals = prev
+          .filter((goal) => goal.category === category)
+          .sort((a, b) => a.order - b.order);
+        const activeGoals = categoryGoals.filter((goal) => !goal.completed);
+        const completedGoals = categoryGoals.filter((goal) => goal.completed);
+
+        if (
+          fromIndex < 0 ||
+          toIndex < 0 ||
+          fromIndex >= activeGoals.length ||
+          toIndex >= activeGoals.length ||
+          fromIndex === toIndex
+        ) {
+          return prev;
+        }
+
+        const reorderedActive = [...activeGoals];
+        const [moved] = reorderedActive.splice(fromIndex, 1);
+        reorderedActive.splice(toIndex, 0, moved);
+
+        const normalizedCategory = [...reorderedActive, ...completedGoals].map(
+          (goal, index) => ({
+            ...goal,
+            order: index,
+          })
+        );
+
+        const otherGoals = prev.filter((goal) => goal.category !== category);
+        const updated = normalizeStoredGoals([...otherGoals, ...normalizedCategory]);
+        AsyncStorage.setItem("goals", JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    },
+    []
+  );
 
   const likeProfile = useCallback((profileId: string) => {
     setLikedProfiles((prev) =>
@@ -800,7 +1109,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveSettings,
         t,
         goals,
-        updateGoalProgress,
+        completeGoalTask,
+        reorderGoalTasks,
         likedProfiles,
         likeProfile,
         profile,
