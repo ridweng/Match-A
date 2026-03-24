@@ -114,6 +114,7 @@ class FileStore {
         heightUnit: "metric",
         genderIdentity: "",
         pronouns: "",
+        personality: "",
         createdAt: nowIso(),
         updatedAt: nowIso(),
       };
@@ -124,6 +125,7 @@ class FileStore {
     if (typeof updates.heightUnit === "string") settings.heightUnit = updates.heightUnit;
     if (typeof updates.genderIdentity === "string") settings.genderIdentity = updates.genderIdentity;
     if (typeof updates.pronouns === "string") settings.pronouns = updates.pronouns;
+    if (typeof updates.personality === "string") settings.personality = updates.personality;
     settings.updatedAt = nowIso();
     await this.save();
     return settings;
@@ -344,10 +346,16 @@ class MysqlStore {
         height_unit VARCHAR(16) NOT NULL DEFAULT 'metric',
         gender_identity VARCHAR(64) NOT NULL DEFAULT '',
         pronouns VARCHAR(64) NOT NULL DEFAULT '',
+        personality VARCHAR(64) NOT NULL DEFAULT '',
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         CONSTRAINT fk_user_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       )
+    `);
+
+    await this.connection.query(`
+      ALTER TABLE user_settings
+      ADD COLUMN IF NOT EXISTS personality VARCHAR(64) NOT NULL DEFAULT ''
     `);
   }
 
@@ -440,6 +448,7 @@ class MysqlStore {
       heightUnit: row.height_unit,
       genderIdentity: row.gender_identity,
       pronouns: row.pronouns,
+      personality: row.personality || "",
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
     };
@@ -449,13 +458,14 @@ class MysqlStore {
     const existing = await this.findUserSettings(userId);
     if (!existing) {
       await this.connection.query(
-        "INSERT INTO user_settings (user_id, language, height_unit, gender_identity, pronouns, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO user_settings (user_id, language, height_unit, gender_identity, pronouns, personality, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
           userId,
           updates.language || "es",
           updates.heightUnit || "metric",
           updates.genderIdentity || "",
           updates.pronouns || "",
+          updates.personality || "",
           new Date(),
           new Date(),
         ]
@@ -464,7 +474,7 @@ class MysqlStore {
     }
 
     await this.connection.query(
-      "UPDATE user_settings SET language = ?, height_unit = ?, gender_identity = ?, pronouns = ?, updated_at = ? WHERE user_id = ?",
+      "UPDATE user_settings SET language = ?, height_unit = ?, gender_identity = ?, pronouns = ?, personality = ?, updated_at = ? WHERE user_id = ?",
       [
         typeof updates.language === "string" ? updates.language : existing.language,
         typeof updates.heightUnit === "string" ? updates.heightUnit : existing.heightUnit,
@@ -472,6 +482,9 @@ class MysqlStore {
           ? updates.genderIdentity
           : existing.genderIdentity,
         typeof updates.pronouns === "string" ? updates.pronouns : existing.pronouns,
+        typeof updates.personality === "string"
+          ? updates.personality
+          : existing.personality,
         new Date(),
         userId,
       ]

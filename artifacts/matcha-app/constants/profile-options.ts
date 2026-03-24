@@ -168,6 +168,41 @@ export const SPANISH_PRONOUNS: PronounValue[] = ["he", "she", "elle", "ellx"];
 
 export const ENGLISH_PRONOUNS: PronounValue[] = ["he", "she", "they"];
 
+export type PersonalityValue =
+  | "introverted"
+  | "extroverted"
+  | "ambiverted"
+  | "analytical"
+  | "intuitive"
+  | "emotional"
+  | "rational"
+  | "creative"
+  | "pragmatic"
+  | "reflective"
+  | "impulsive"
+  | "observant"
+  | "curious"
+  | "methodical"
+  | "spontaneous";
+
+export const PERSONALITY_TRAITS: PersonalityValue[] = [
+  "introverted",
+  "extroverted",
+  "ambiverted",
+  "analytical",
+  "intuitive",
+  "emotional",
+  "rational",
+  "creative",
+  "pragmatic",
+  "reflective",
+  "impulsive",
+  "observant",
+  "curious",
+  "methodical",
+  "spontaneous",
+];
+
 export type RelationshipGoalValue =
   | "stable_relationship"
   | "nothing_serious"
@@ -980,6 +1015,64 @@ export function normalizePronouns(value: string | null | undefined): string {
   }
 }
 
+export function normalizePersonality(value: string | null | undefined): string {
+  const normalized = value?.trim().toLowerCase();
+
+  switch (normalized) {
+    case "introvertido":
+    case "introverted":
+      return "introverted";
+    case "extrovertido":
+    case "extroverted":
+      return "extroverted";
+    case "ambivertido":
+    case "ambiverted":
+      return "ambiverted";
+    case "analítico":
+    case "analitico":
+    case "analytical":
+      return "analytical";
+    case "intuitivo":
+    case "intuitive":
+      return "intuitive";
+    case "emocional":
+    case "emotional":
+      return "emotional";
+    case "racional":
+    case "rational":
+      return "rational";
+    case "creativo":
+    case "creative":
+      return "creative";
+    case "pragmático":
+    case "pragmatico":
+    case "pragmatic":
+      return "pragmatic";
+    case "reflexivo":
+    case "reflective":
+      return "reflective";
+    case "impulsivo":
+    case "impulsive":
+      return "impulsive";
+    case "observador":
+    case "observant":
+      return "observant";
+    case "curioso":
+    case "curious":
+      return "curious";
+    case "metódico":
+    case "metodico":
+    case "methodical":
+      return "methodical";
+    case "espontáneo":
+    case "espontaneo":
+    case "spontaneous":
+      return "spontaneous";
+    default:
+      return value?.trim() || "";
+  }
+}
+
 export function getPronounLabel(
   value: string | null | undefined,
   language: "es" | "en"
@@ -995,6 +1088,46 @@ export function getPronounLabel(
       return language === "es" ? "Elle" : "They / Them / Theirs";
     case "ellx":
       return language === "es" ? "Ellx" : "They / Them / Theirs";
+    default:
+      return value?.trim() || "";
+  }
+}
+
+export function getPersonalityLabel(
+  value: string | null | undefined,
+  t: Translator
+) {
+  switch (normalizePersonality(value)) {
+    case "introverted":
+      return t("Introvertido", "Introverted");
+    case "extroverted":
+      return t("Extrovertido", "Extroverted");
+    case "ambiverted":
+      return t("Ambivertido", "Ambiverted");
+    case "analytical":
+      return t("Analítico", "Analytical");
+    case "intuitive":
+      return t("Intuitivo", "Intuitive");
+    case "emotional":
+      return t("Emocional", "Emotional");
+    case "rational":
+      return t("Racional", "Rational");
+    case "creative":
+      return t("Creativo", "Creative");
+    case "pragmatic":
+      return t("Pragmático", "Pragmatic");
+    case "reflective":
+      return t("Reflexivo", "Reflective");
+    case "impulsive":
+      return t("Impulsivo", "Impulsive");
+    case "observant":
+      return t("Observador", "Observant");
+    case "curious":
+      return t("Curioso", "Curious");
+    case "methodical":
+      return t("Metódico", "Methodical");
+    case "spontaneous":
+      return t("Espontáneo", "Spontaneous");
     default:
       return value?.trim() || "";
   }

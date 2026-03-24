@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -12,45 +12,117 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
-import { useApp, type Goal } from "@/context/AppContext";
+import {
+  getBodyTypeLabel,
+  getChildrenPreferenceLabel,
+  getEducationLabel,
+  getHairColorLabel,
+  getPersonalityLabel,
+  getRelationshipGoalLabel,
+  getSpokenLanguageLabel,
+} from "@/constants/profile-options";
+import { useApp } from "@/context/AppContext";
+import { discoverProfiles } from "@/data/profiles";
 
-type Category = "todas" | "fisica" | "personalidad" | "habitos" | "social";
+type GoalsFilter = "all" | "physical" | "personality" | "family" | "expectations" | "language" | "studies";
+type RealGoalsCategory = Exclude<GoalsFilter, "all">;
+type FeatherName = React.ComponentProps<typeof Feather>["name"];
 
-const categoryConfig: Record<
-  Category,
-  { labelEs: string; labelEn: string; icon: string; color: string }
-> = {
-  todas: {
+type CategoryDescriptor = {
+  key: GoalsFilter;
+  labelEs: string;
+  labelEn: string;
+  icon: FeatherName;
+  color: string;
+  summaryEs: string;
+  summaryEn: string;
+};
+
+type CategoryInsight = {
+  key: RealGoalsCategory;
+  label: string;
+  summary: string;
+  icon: FeatherName;
+  color: string;
+  userValue: string;
+  popularValue: string;
+  hasUserValue: boolean;
+};
+
+const CATEGORY_CONFIG: Record<GoalsFilter, CategoryDescriptor> = {
+  all: {
+    key: "all",
     labelEs: "Todas",
     labelEn: "All",
     icon: "grid",
     color: Colors.primaryLight,
+    summaryEs: "Ver todas las categorías",
+    summaryEn: "See every category",
   },
-  fisica: {
+  physical: {
+    key: "physical",
     labelEs: "Físicas",
     labelEn: "Physical",
     icon: "activity",
     color: "#74C0FC",
+    summaryEs: "Cuerpo y presencia",
+    summaryEn: "Body and presence",
   },
-  personalidad: {
+  personality: {
+    key: "personality",
     labelEs: "Personalidad",
     labelEn: "Personality",
-    icon: "heart",
+    icon: "smile",
     color: Colors.accent,
+    summaryEs: "Tu energía personal",
+    summaryEn: "Your personal energy",
   },
-  habitos: {
-    labelEs: "Hábitos",
-    labelEn: "Habits",
-    icon: "repeat",
-    color: "#63E6BE",
-  },
-  social: {
-    labelEs: "Social",
-    labelEn: "Social",
+  family: {
+    key: "family",
+    labelEs: "Familia",
+    labelEn: "Family",
     icon: "users",
+    color: "#FFB86B",
+    summaryEs: "Planes familiares",
+    summaryEn: "Family plans",
+  },
+  expectations: {
+    key: "expectations",
+    labelEs: "Expectativas",
+    labelEn: "Expectations",
+    icon: "target",
+    color: "#B794F4",
+    summaryEs: "Lo que buscas construir",
+    summaryEn: "What you want to build",
+  },
+  language: {
+    key: "language",
+    labelEs: "Idioma",
+    labelEn: "Language",
+    icon: "globe",
+    color: "#63E6BE",
+    summaryEs: "Cómo te comunicas",
+    summaryEn: "How you connect",
+  },
+  studies: {
+    key: "studies",
+    labelEs: "Estudios",
+    labelEn: "Studies",
+    icon: "book-open",
     color: "#FF8787",
+    summaryEs: "Tu formación",
+    summaryEn: "Your educational background",
   },
 };
+
+const REAL_CATEGORIES: RealGoalsCategory[] = [
+  "physical",
+  "personality",
+  "family",
+  "expectations",
+  "language",
+  "studies",
+];
 
 function ProgressBar({ progress, color }: { progress: number; color: string }) {
   return (
@@ -58,76 +130,144 @@ function ProgressBar({ progress, color }: { progress: number; color: string }) {
       <View
         style={[
           styles.progressFill,
-          { width: `${progress}%` as any, backgroundColor: color },
+          { width: `${progress}%` as const, backgroundColor: color },
         ]}
       />
     </View>
   );
 }
 
-function GoalCard({ goal }: { goal: Goal }) {
-  const { t } = useApp();
-  const catCfg = categoryConfig[goal.category] ?? categoryConfig.todas;
+function buildAverageMap(values: string[]) {
+  const filtered = values.map((value) => value?.trim()).filter(Boolean) as string[];
+  const counts = new Map<string, number>();
 
-  const getProgressColor = (p: number) => {
-    if (p >= 70) return Colors.success;
-    if (p >= 40) return Colors.accent;
-    return "#74C0FC";
-  };
+  for (const value of filtered) {
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
 
+  const total = filtered.length || 1;
+  const averages = new Map<string, number>();
+  counts.forEach((count, key) => {
+    averages.set(key, count / total);
+  });
+
+  return averages;
+}
+
+function getCombinedTopValues(allValues: string[], likedValues: string[], limit = 1) {
+  const allAverage = buildAverageMap(allValues);
+  const interactionAverage = likedValues.length
+    ? buildAverageMap(likedValues)
+    : allAverage;
+
+  const keys = new Set([
+    ...Array.from(allAverage.keys()),
+    ...Array.from(interactionAverage.keys()),
+  ]);
+
+  return Array.from(keys)
+    .map((key) => ({
+      key,
+      score: ((allAverage.get(key) || 0) + (interactionAverage.get(key) || 0)) / 2,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((item) => item.key);
+}
+
+function formatPreviewList(
+  values: string[],
+  emptyLabel: string,
+  maxVisible = 2
+) {
+  const filtered = values.filter(Boolean);
+  if (!filtered.length) {
+    return emptyLabel;
+  }
+  if (filtered.length <= maxVisible) {
+    return filtered.join(", ");
+  }
+  return `${filtered.slice(0, maxVisible).join(", ")} +${filtered.length - maxVisible}`;
+}
+
+function toTitleCase(value: string) {
+  if (!value.trim()) return value;
+  return value
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function CategoryCard({
+  item,
+  selected,
+  onPress,
+  t,
+  compact,
+}: {
+  item: CategoryInsight;
+  selected: boolean;
+  onPress: () => void;
+  t: (es: string, en: string) => string;
+  compact: boolean;
+}) {
   return (
     <Pressable
+      onPress={onPress}
       style={({ pressed }) => [
-        styles.goalCard,
-        { opacity: pressed ? 0.92 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] },
+        styles.categoryCard,
+        compact ? styles.categoryCardHalf : styles.categoryCardFull,
+        selected && styles.categoryCardSelected,
+        pressed && { opacity: 0.92, transform: [{ scale: 0.987 }] },
       ]}
     >
-      <View style={styles.goalCardTop}>
-        <View style={styles.goalCardLeft}>
-          <View
+      <LinearGradient
+        colors={[`${item.color}1f`, "rgba(28,43,31,0.94)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View style={styles.categoryCardTop}>
+        <View
+          style={[
+            styles.categoryIconWrap,
+            { backgroundColor: `${item.color}20` },
+          ]}
+        >
+          <Feather name={item.icon} size={16} color={item.color} />
+        </View>
+        <View
+          style={[
+            styles.categoryStatusPill,
+            item.hasUserValue
+              ? styles.categoryStatusPillReady
+              : styles.categoryStatusPillPending,
+          ]}
+        >
+          <Text
             style={[
-              styles.categoryIcon,
-              { backgroundColor: `${catCfg.color}18` },
+              styles.categoryStatusText,
+              item.hasUserValue
+                ? styles.categoryStatusTextReady
+                : styles.categoryStatusTextPending,
             ]}
           >
-            <Feather
-              name={catCfg.icon as any}
-              size={16}
-              color={catCfg.color}
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.categoryLabel}>
-              {t(catCfg.labelEs, catCfg.labelEn)}
-            </Text>
-            <Text style={styles.goalTitle}>
-              {t(goal.titleEs, goal.titleEn)}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.progressBadge}>
-          <Text style={styles.progressBadgeText}>{goal.progress}%</Text>
+            {item.hasUserValue ? t("Listo", "Ready") : t("Pendiente", "Pending")}
+          </Text>
         </View>
       </View>
 
-      <ProgressBar
-        progress={goal.progress}
-        color={getProgressColor(goal.progress)}
-      />
+      <Text style={styles.categoryCardTitle}>{item.label}</Text>
+      <Text style={styles.categoryCardSummary}>{item.summary}</Text>
 
-      <View style={styles.goalCardBottom}>
-        <View style={styles.nextAction}>
-          <Feather name="chevron-right" size={14} color={Colors.primaryLight} />
-          <Text style={styles.nextActionText} numberOfLines={2}>
-            {t(goal.nextActionEs, goal.nextActionEn)}
-          </Text>
-        </View>
-        <View style={styles.impactRow}>
-          <Feather name="trending-up" size={12} color={Colors.accent} />
-          <Text style={styles.impactText}>
-            {t(goal.impactEs, goal.impactEn)}
-          </Text>
-        </View>
+      <View style={styles.categorySignalBlock}>
+        <Text style={styles.categorySignalLabel}>{t("Quién soy yo", "Who I Am")}</Text>
+        <Text style={styles.categorySignalValue}>{item.userValue}</Text>
+      </View>
+
+      <View style={styles.categoryPopularRow}>
+        <Feather name="trending-up" size={13} color={item.color} />
+        <Text style={styles.categoryPopularText}>{item.popularValue}</Text>
       </View>
     </Pressable>
   );
@@ -135,20 +275,147 @@ function GoalCard({ goal }: { goal: Goal }) {
 
 export default function GoalsScreen() {
   const insets = useSafeAreaInsets();
-  const { t, goals, language } = useApp();
-  const [activeCategory, setActiveCategory] = useState<Category>("todas");
-
-  const filtered =
-    activeCategory === "todas"
-      ? goals
-      : goals.filter((g) => g.category === activeCategory);
+  const { t, goals, language, likedProfiles, accountProfile, heightUnit } = useApp();
+  const [activeFilter, setActiveFilter] = useState<GoalsFilter>("all");
 
   const avgProgress = goals.length
-    ? Math.round(goals.reduce((sum, g) => sum + g.progress, 0) / goals.length)
+    ? Math.round(goals.reduce((sum, goal) => sum + goal.progress, 0) / goals.length)
     : 0;
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
-  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 90);
+  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 96);
+  const emptyLabel = t("Sin definir", "Not set");
+
+  const likedDiscoveryProfiles = useMemo(
+    () => discoverProfiles.filter((profile) => likedProfiles.includes(profile.id)),
+    [likedProfiles]
+  );
+
+  const insightLookup = useMemo(() => {
+    const map = new Map<string, { es: string; en: string }>();
+    discoverProfiles.forEach((profile) => {
+      profile.insightTags.forEach((tag) => {
+        map.set(tag.en, tag);
+      });
+    });
+    return map;
+  }, []);
+
+  const categoryInsights = useMemo<CategoryInsight[]>(() => {
+    const profileLabel = {
+      physical: () => {
+        const parts = [
+          getBodyTypeLabel(accountProfile.bodyType, t),
+          accountProfile.height
+            ? `${accountProfile.height} ${heightUnit === "imperial" ? "in" : "cm"}`
+            : "",
+        ].filter(Boolean);
+        return formatPreviewList(parts, emptyLabel, 2);
+      },
+      personality: () =>
+        getPersonalityLabel(accountProfile.personality, t) || emptyLabel,
+      family: () =>
+        getChildrenPreferenceLabel(accountProfile.childrenPreference, t) || emptyLabel,
+      expectations: () =>
+        getRelationshipGoalLabel(accountProfile.relationshipGoals, t) || emptyLabel,
+      language: () =>
+        formatPreviewList(
+          accountProfile.languagesSpoken.map((value) =>
+            getSpokenLanguageLabel(value, language)
+          ),
+          emptyLabel,
+          2
+        ),
+      studies: () => getEducationLabel(accountProfile.education, t) || emptyLabel,
+    } as const;
+
+    const popularLabel = {
+      physical: () => {
+        const topBodyType = getCombinedTopValues(
+          discoverProfiles.map((profile) => profile.physical.bodyType),
+          likedDiscoveryProfiles.map((profile) => profile.physical.bodyType)
+        )[0];
+        const topHairColor = getCombinedTopValues(
+          discoverProfiles.map((profile) => profile.physical.hairColor),
+          likedDiscoveryProfiles.map((profile) => profile.physical.hairColor)
+        )[0];
+        return formatPreviewList(
+          [
+            topBodyType ? getBodyTypeLabel(topBodyType, t) : "",
+            topHairColor ? getHairColorLabel(topHairColor, t) : "",
+          ].filter(Boolean),
+          emptyLabel,
+          2
+        );
+      },
+      personality: () => {
+        const topInsights = getCombinedTopValues(
+          discoverProfiles.flatMap((profile) =>
+            profile.insightTags.map((tag) => tag.en)
+          ),
+          likedDiscoveryProfiles.flatMap((profile) =>
+            profile.insightTags.map((tag) => tag.en)
+          ),
+          2
+        ).map((value) => {
+          const tag = insightLookup.get(value);
+          return tag ? t(tag.es, tag.en) : toTitleCase(value);
+        });
+        return formatPreviewList(topInsights, emptyLabel, 2);
+      },
+      family: () => {
+        const topValue = getCombinedTopValues(
+          discoverProfiles.map((profile) => profile.about.childrenPreference),
+          likedDiscoveryProfiles.map((profile) => profile.about.childrenPreference)
+        )[0];
+        return topValue ? getChildrenPreferenceLabel(topValue, t) : emptyLabel;
+      },
+      expectations: () => {
+        const topValue = getCombinedTopValues(
+          discoverProfiles.map((profile) => profile.about.relationshipGoals),
+          likedDiscoveryProfiles.map((profile) => profile.about.relationshipGoals)
+        )[0];
+        return topValue ? getRelationshipGoalLabel(topValue, t) : emptyLabel;
+      },
+      language: () => {
+        const topValues = getCombinedTopValues(
+          discoverProfiles.flatMap((profile) => profile.about.languagesSpoken),
+          likedDiscoveryProfiles.flatMap((profile) => profile.about.languagesSpoken),
+          2
+        ).map((value) => getSpokenLanguageLabel(value, language));
+        return formatPreviewList(topValues, emptyLabel, 2);
+      },
+      studies: () => {
+        const topValue = getCombinedTopValues(
+          discoverProfiles.map((profile) => profile.about.education),
+          likedDiscoveryProfiles.map((profile) => profile.about.education)
+        )[0];
+        return topValue ? getEducationLabel(topValue, t) : emptyLabel;
+      },
+    } as const;
+
+    return REAL_CATEGORIES.map((key) => ({
+      key,
+      label: t(CATEGORY_CONFIG[key].labelEs, CATEGORY_CONFIG[key].labelEn),
+      summary: t(CATEGORY_CONFIG[key].summaryEs, CATEGORY_CONFIG[key].summaryEn),
+      icon: CATEGORY_CONFIG[key].icon,
+      color: CATEGORY_CONFIG[key].color,
+      userValue: profileLabel[key](),
+      popularValue: popularLabel[key](),
+      hasUserValue: profileLabel[key]() !== emptyLabel,
+    }));
+  }, [accountProfile, emptyLabel, heightUnit, insightLookup, language, likedDiscoveryProfiles, t]);
+
+  const visibleInsights =
+    activeFilter === "all"
+      ? categoryInsights
+      : categoryInsights.filter((item) => item.key === activeFilter);
+
+  const filters = (Object.keys(CATEGORY_CONFIG) as GoalsFilter[]).map((key) => ({
+    key,
+    label: t(CATEGORY_CONFIG[key].labelEs, CATEGORY_CONFIG[key].labelEn),
+    icon: CATEGORY_CONFIG[key].icon,
+  }));
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -157,21 +424,19 @@ export default function GoalsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>{t("Mis Metas", "My Goals")}</Text>
-            <Text style={styles.headerSub}>
-              {t("Tu plan de mejora personal", "Your personal improvement plan")}
-            </Text>
-          </View>
-          <Pressable style={styles.addBtn}>
-            <Feather name="plus" size={20} color={Colors.primaryLight} />
-          </Pressable>
+          <Text style={styles.headerTitle}>{t("Mis Metas", "My Goals")}</Text>
+          <Text style={styles.headerSub}>
+            {t(
+              "Tus señales clave, organizadas con claridad.",
+              "Your key signals, organized with clarity."
+            )}
+          </Text>
         </View>
 
-        <View style={styles.summaryRow}>
+        <View style={styles.summaryWrap}>
           <View style={[styles.summaryCard, { overflow: "hidden" }]}>
             <LinearGradient
-              colors={["rgba(82,183,136,0.15)", "rgba(82,183,136,0.05)"]}
+              colors={["rgba(82,183,136,0.16)", "rgba(82,183,136,0.04)"]}
               style={StyleSheet.absoluteFillObject}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
@@ -184,35 +449,9 @@ export default function GoalsScreen() {
               <View
                 style={[
                   styles.summaryProgressFill,
-                  { width: `${avgProgress}%` as any },
+                  { width: `${avgProgress}%` as const },
                 ]}
               />
-            </View>
-          </View>
-
-          <View style={[styles.summaryCard, { overflow: "hidden" }]}>
-            <LinearGradient
-              colors={["rgba(183,152,110,0.15)", "rgba(183,152,110,0.05)"]}
-              style={StyleSheet.absoluteFillObject}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            />
-            <Text style={[styles.summaryValue, { color: Colors.accent }]}>
-              {goals.length}
-            </Text>
-            <Text style={styles.summaryLabel}>
-              {t("Metas activas", "Active goals")}
-            </Text>
-            <View style={styles.goalsGrid}>
-              {goals.map((g) => (
-                <View
-                  key={g.id}
-                  style={[
-                    styles.goalDot,
-                    g.progress >= 70 && styles.goalDotComplete,
-                  ]}
-                />
-              ))}
             </View>
           </View>
         </View>
@@ -222,47 +461,113 @@ export default function GoalsScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
         >
-          {(Object.keys(categoryConfig) as Category[]).map((cat) => {
-            const cfg = categoryConfig[cat];
-            const isActive = activeCategory === cat;
+          {filters.map((filter) => {
+            const active = activeFilter === filter.key;
             return (
               <Pressable
-                key={cat}
-                onPress={() => setActiveCategory(cat)}
-                style={[styles.filterChip, isActive && styles.filterChipActive]}
+                key={filter.key}
+                onPress={() => setActiveFilter(filter.key)}
+                style={[styles.filterChip, active && styles.filterChipActive]}
               >
                 <Feather
-                  name={cfg.icon as any}
+                  name={filter.icon}
                   size={13}
-                  color={isActive ? Colors.textInverted : Colors.textSecondary}
+                  color={active ? Colors.textInverted : Colors.textSecondary}
                 />
                 <Text
                   style={[
                     styles.filterChipText,
-                    isActive && styles.filterChipTextActive,
+                    active && styles.filterChipTextActive,
                   ]}
                 >
-                  {t(cfg.labelEs, cfg.labelEn)}
+                  {filter.label}
                 </Text>
               </Pressable>
             );
           })}
         </ScrollView>
 
-        <View style={styles.goalsList}>
-          {filtered.map((goal) => (
-            <GoalCard key={goal.id} goal={goal} />
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>{t("Categorías", "Categories")}</Text>
+          <Text style={styles.sectionCopy}>
+            {t(
+              "Tus categorías principales y lo que más destaca en los resultados simulados.",
+              "Your main categories and what stands out most in simulated results."
+            )}
+          </Text>
+        </View>
+
+        <View style={styles.categoryGrid}>
+          {visibleInsights.map((item) => (
+            <CategoryCard
+              key={item.key}
+              item={item}
+              selected={activeFilter === item.key}
+              onPress={() =>
+                setActiveFilter((current) => (current === item.key ? "all" : item.key))
+              }
+              t={t}
+              compact={visibleInsights.length > 1}
+            />
           ))}
         </View>
 
-        <View style={styles.motivational}>
-          <Feather name="award" size={18} color={Colors.accent} />
-          <Text style={styles.motivationalText}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>{t("Comparativa", "Comparison")}</Text>
+          <Text style={styles.sectionCopy}>
             {t(
-              "Cada pequeño avance te acerca a la mejor versión de ti mismo.",
-              "Every small step brings you closer to the best version of yourself."
+              "“Quién soy yo” usa tu perfil. “Atributos populares” combina perfiles simulados y tus likes.",
+              "“Who I Am” uses your profile. “Popular Attributes” blends simulated profiles and your likes."
             )}
           </Text>
+        </View>
+
+        <View style={styles.tableCard}>
+          <LinearGradient
+            colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.01)"]}
+            style={StyleSheet.absoluteFillObject}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+          <View style={[styles.tableRow, styles.tableHeaderRow]}>
+            <Text style={[styles.tableHeaderText, styles.tableCategoryColumn]}>
+              {t("Categoría", "Category")}
+            </Text>
+            <Text style={[styles.tableHeaderText, styles.tableWhoColumn]}>
+              {t("Quién soy yo", "Who I Am")}
+            </Text>
+            <Text style={[styles.tableHeaderText, styles.tablePopularColumn]}>
+              {t("Atributos populares", "Popular Attributes")}
+            </Text>
+          </View>
+
+          {visibleInsights.map((item, index) => (
+            <View
+              key={item.key}
+              style={[
+                styles.tableRow,
+                index < visibleInsights.length - 1 && styles.tableRowBorder,
+              ]}
+            >
+              <View style={[styles.tableCategoryColumn, styles.tableCategoryCell]}>
+                <View
+                  style={[
+                    styles.tableCategoryIcon,
+                    { backgroundColor: `${item.color}20` },
+                  ]}
+                >
+                  <Feather name={item.icon} size={14} color={item.color} />
+                </View>
+                <Text style={styles.tableCategoryText}>{item.label}</Text>
+              </View>
+              <Text style={[styles.tableBodyText, styles.tableWhoColumn]}>
+                {item.userValue}
+              </Text>
+              <Text style={[styles.tableBodyText, styles.tablePopularColumn]}>
+                {item.popularValue}
+              </Text>
+            </View>
+          ))}
         </View>
       </ScrollView>
     </View>
@@ -275,9 +580,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     paddingHorizontal: 20,
     paddingBottom: 20,
   },
@@ -288,76 +590,48 @@ const styles = StyleSheet.create({
     letterSpacing: -0.8,
   },
   headerSub: {
+    marginTop: 4,
     fontFamily: "Inter_400Regular",
     fontSize: 13,
     color: Colors.textSecondary,
-    marginTop: 2,
+    lineHeight: 18,
   },
-  addBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: Colors.backgroundCard,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  summaryRow: {
-    flexDirection: "row",
-    gap: 12,
+  summaryWrap: {
     marginHorizontal: 20,
     marginBottom: 20,
   },
   summaryCard: {
-    flex: 1,
     backgroundColor: Colors.backgroundCard,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: Colors.border,
-    padding: 16,
+    padding: 18,
     gap: 8,
   },
   summaryValue: {
     fontFamily: "Inter_700Bold",
-    fontSize: 28,
+    fontSize: 30,
     color: Colors.primaryLight,
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   summaryLabel: {
     fontFamily: "Inter_400Regular",
     fontSize: 12,
     color: Colors.textSecondary,
-    lineHeight: 16,
   },
   summaryProgress: {
-    height: 4,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: 2,
+    marginTop: 4,
+    height: 5,
+    borderRadius: 999,
     overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
   summaryProgressFill: {
     height: "100%",
-    backgroundColor: Colors.primaryLight,
-    borderRadius: 2,
-  },
-  goalsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 4,
-    marginTop: 4,
-  },
-  goalDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.border,
-  },
-  goalDotComplete: {
+    borderRadius: 999,
     backgroundColor: Colors.primaryLight,
   },
   filterRow: {
-    flexDirection: "row",
     gap: 8,
     paddingHorizontal: 20,
     paddingBottom: 16,
@@ -365,10 +639,10 @@ const styles = StyleSheet.create({
   filterChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 7,
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingVertical: 9,
+    borderRadius: 999,
     backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -385,114 +659,212 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: Colors.textInverted,
   },
-  goalsList: {
+  sectionHeader: {
     paddingHorizontal: 20,
-    gap: 12,
+    marginBottom: 12,
   },
-  goalCard: {
-    backgroundColor: Colors.backgroundCard,
-    borderRadius: 16,
+  sectionTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 18,
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  sectionCopy: {
+    marginTop: 4,
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  categoryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  categoryCard: {
+    minHeight: 174,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: Colors.border,
+    backgroundColor: Colors.backgroundCard,
     padding: 16,
-    gap: 12,
+    overflow: "hidden",
   },
-  goalCardTop: {
+  categoryCardHalf: {
+    width: "48%",
+  },
+  categoryCardFull: {
+    width: "100%",
+  },
+  categoryCardSelected: {
+    borderColor: Colors.primaryLight,
+    shadowColor: Colors.primaryLight,
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 4,
+  },
+  categoryCardTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 14,
   },
-  goalCardLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-  },
-  categoryIcon: {
-    width: 36,
-    height: 36,
+  categoryIconWrap: {
+    width: 34,
+    height: 34,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  categoryLabel: {
+  categoryStatusPill: {
+    minHeight: 26,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  categoryStatusPillReady: {
+    backgroundColor: "rgba(82,183,136,0.14)",
+    borderColor: "rgba(82,183,136,0.28)",
+  },
+  categoryStatusPillPending: {
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderColor: Colors.border,
+  },
+  categoryStatusText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 11,
+  },
+  categoryStatusTextReady: {
+    color: Colors.primaryLight,
+  },
+  categoryStatusTextPending: {
+    color: Colors.textMuted,
+  },
+  categoryCardTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 17,
+    color: Colors.text,
+    letterSpacing: -0.2,
+  },
+  categoryCardSummary: {
+    marginTop: 4,
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  categorySignalBlock: {
+    marginTop: 14,
+    gap: 4,
+  },
+  categorySignalLabel: {
     fontFamily: "Inter_500Medium",
     fontSize: 11,
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
+    color: Colors.textMuted,
     textTransform: "uppercase",
+    letterSpacing: 0.7,
   },
-  goalTitle: {
+  categorySignalValue: {
     fontFamily: "Inter_600SemiBold",
-    fontSize: 14,
-    color: Colors.text,
-    marginTop: 2,
-  },
-  progressBadge: {
-    backgroundColor: Colors.backgroundElevated,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  progressBadgeText: {
-    fontFamily: "Inter_700Bold",
     fontSize: 13,
-    color: Colors.primaryLight,
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  categoryPopularRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 7,
+  },
+  categoryPopularText: {
+    flex: 1,
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  tableCard: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.backgroundCard,
+    overflow: "hidden",
+  },
+  tableHeaderRow: {
+    backgroundColor: "rgba(255,255,255,0.03)",
+  },
+  tableRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  tableRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  tableHeaderText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 11,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  tableBodyText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  tableCategoryColumn: {
+    flex: 0.9,
+  },
+  tableWhoColumn: {
+    flex: 1.2,
+  },
+  tablePopularColumn: {
+    flex: 1.35,
+  },
+  tableCategoryCell: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  tableCategoryIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  tableCategoryText: {
+    flex: 1,
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
+    color: Colors.text,
+    lineHeight: 18,
   },
   progressTrack: {
     height: 4,
     backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: 2,
+    borderRadius: 999,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    borderRadius: 2,
-  },
-  goalCardBottom: {
-    gap: 6,
-  },
-  nextAction: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-  },
-  nextActionText: {
-    flex: 1,
-    fontFamily: "Inter_400Regular",
-    fontSize: 13,
-    color: Colors.text,
-    lineHeight: 18,
-  },
-  impactRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  impactText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 12,
-    color: Colors.textSecondary,
-    flex: 1,
-  },
-  motivational: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginHorizontal: 20,
-    marginTop: 20,
-    padding: 16,
-    backgroundColor: Colors.backgroundCard,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  motivationalText: {
-    flex: 1,
-    fontFamily: "Inter_400Regular",
-    fontSize: 13,
-    color: Colors.textSecondary,
-    lineHeight: 18,
-    fontStyle: "italic",
+    borderRadius: 999,
   },
 });

@@ -39,6 +39,7 @@ export type UserSettingsResponse = {
     heightUnit: "metric" | "imperial";
     genderIdentity: string;
     pronouns: string;
+    personality: string;
   };
 };
 
@@ -61,6 +62,7 @@ const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
   heightUnit: "metric",
   genderIdentity: "",
   pronouns: "",
+  personality: "",
 };
 
 type RequestOptions = {

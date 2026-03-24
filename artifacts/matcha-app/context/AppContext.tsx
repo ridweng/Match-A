@@ -50,6 +50,7 @@ export type UserProfile = {
   profession: string;
   genderIdentity: string;
   pronouns: string;
+  personality: string;
   relationshipGoals: string;
   languagesSpoken: string[];
   education: string;
@@ -160,6 +161,7 @@ const DEFAULT_PROFILE: UserProfile = {
   profession: "",
   genderIdentity: "",
   pronouns: "",
+  personality: "",
   relationshipGoals: "",
   languagesSpoken: [],
   education: "",
@@ -229,6 +231,7 @@ type AppContextType = {
     profession: string;
     genderIdentity: string;
     pronouns: string;
+    personality: string;
     language: "es" | "en";
     heightUnit: HeightUnit;
   }) => Promise<boolean>;
@@ -362,6 +365,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       heightUnit: HeightUnit;
       genderIdentity: string;
       pronouns: string;
+      personality: string;
     }) => {
       setLanguageState(settings.language);
       setHeightUnitState(settings.heightUnit);
@@ -372,6 +376,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ...prev,
           genderIdentity: settings.genderIdentity,
           pronouns: settings.pronouns,
+          personality: settings.personality,
         });
         AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
         return updated;
@@ -405,8 +410,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         name: session.user.name || prev.name,
         dateOfBirth: session.user.dateOfBirth || prev.dateOfBirth,
-        profession: session.user.profession || prev.profession,
-      }));
+      profession: session.user.profession || prev.profession,
+    }));
       setAuthStatus("authenticated");
       await hydrateServerSettings(session.accessToken);
     },
@@ -483,6 +488,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profession: string;
       genderIdentity: string;
       pronouns: string;
+      personality: string;
       language: "es" | "en";
       heightUnit: HeightUnit;
     }) => {
@@ -500,6 +506,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             heightUnit: input.heightUnit,
             genderIdentity: input.genderIdentity,
             pronouns: input.pronouns,
+            personality: input.personality,
           });
           setUser(me.user);
           setNeedsProfileCompletion(me.needsProfileCompletion);
@@ -510,6 +517,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           heightUnit: input.heightUnit,
           genderIdentity: input.genderIdentity,
           pronouns: input.pronouns,
+          personality: input.personality,
         });
 
         setProfile((prev) => {
@@ -520,6 +528,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             profession: input.profession,
             genderIdentity: input.genderIdentity,
             pronouns: input.pronouns,
+            personality: input.personality,
           });
           AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
           return updated;

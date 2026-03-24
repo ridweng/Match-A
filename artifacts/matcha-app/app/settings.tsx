@@ -21,9 +21,12 @@ import {
   ENGLISH_PRONOUNS,
   GENDER_IDENTITIES,
   getGenderIdentityLabel,
+  getPersonalityLabel,
   getPronounLabel,
   normalizeGenderIdentity,
+  normalizePersonality,
   normalizePronouns,
+  PERSONALITY_TRAITS,
   SPANISH_PRONOUNS,
 } from "@/constants/profile-options";
 import { useApp, type HeightUnit, type UserProfile } from "@/context/AppContext";
@@ -315,6 +318,69 @@ function PronounsField({
   );
 }
 
+function PersonalityField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  t,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  t: (es: string, en: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <View style={[s.field, open && s.fieldOpen]}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <View style={[s.selectWrap, open && s.selectWrapOpen]}>
+        <Pressable
+          onPress={() => setOpen((current) => !current)}
+          style={s.selectField}
+        >
+          <Text style={[s.selectValue, !value && s.selectPlaceholder]}>
+            {value ? getPersonalityLabel(value, t) : placeholder}
+          </Text>
+          <Feather
+            name={open ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textSecondary}
+          />
+        </Pressable>
+        {open ? (
+          <View style={s.dropdown}>
+            {PERSONALITY_TRAITS.map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+                style={[s.dropdownOption, value === option && s.dropdownOptionActive]}
+              >
+                <Text
+                  style={[
+                    s.dropdownOptionText,
+                    value === option && s.dropdownOptionTextActive,
+                  ]}
+                >
+                  {getPersonalityLabel(option, t)}
+                </Text>
+                {value === option ? (
+                  <Feather name="check" size={14} color={colors.primaryLight} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function Section({
   title,
   children,
@@ -351,6 +417,7 @@ export default function SettingsScreen() {
     profession: accountProfile.profession,
     genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
     pronouns: normalizePronouns(accountProfile.pronouns),
+    personality: normalizePersonality(accountProfile.personality),
     relationshipGoals: accountProfile.relationshipGoals,
     languagesSpoken: accountProfile.languagesSpoken,
     education: accountProfile.education,
@@ -382,6 +449,7 @@ export default function SettingsScreen() {
       profession: accountProfile.profession,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       pronouns: normalizePronouns(accountProfile.pronouns),
+      personality: normalizePersonality(accountProfile.personality),
       relationshipGoals: accountProfile.relationshipGoals,
       languagesSpoken: accountProfile.languagesSpoken,
       education: accountProfile.education,
@@ -416,6 +484,7 @@ export default function SettingsScreen() {
       profession: accountProfile.profession,
       genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
       pronouns: normalizePronouns(accountProfile.pronouns),
+      personality: normalizePersonality(accountProfile.personality),
       relationshipGoals: accountProfile.relationshipGoals,
       languagesSpoken: accountProfile.languagesSpoken,
       education: accountProfile.education,
@@ -457,6 +526,7 @@ export default function SettingsScreen() {
       profession: local.profession,
       genderIdentity: local.genderIdentity,
       pronouns: local.pronouns,
+      personality: local.personality,
       language: localLanguage,
       heightUnit: localHeightUnit,
     });
@@ -621,6 +691,13 @@ export default function SettingsScreen() {
             onChange={(value) => update("pronouns", value)}
             placeholder={t("Selecciona pronombres", "Select pronouns")}
             language={language}
+          />
+          <PersonalityField
+            label={t("Personalidad", "Personality")}
+            value={local.personality}
+            onChange={(value) => update("personality", value)}
+            placeholder={t("Selecciona una personalidad", "Select a personality")}
+            t={t}
           />
         </Section>
 

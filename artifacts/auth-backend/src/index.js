@@ -48,6 +48,7 @@ const updateSettingsSchema = z.object({
   heightUnit: z.enum(["metric", "imperial"]).optional(),
   genderIdentity: z.string().trim().max(64).optional(),
   pronouns: z.string().trim().max(64).optional(),
+  personality: z.string().trim().max(64).optional(),
 });
 
 const providerSchema = z.enum(["google", "facebook", "apple"]);
@@ -199,6 +200,7 @@ function sanitizeSettings(settings) {
     heightUnit: settings?.heightUnit === "imperial" ? "imperial" : "metric",
     genderIdentity: settings?.genderIdentity || "",
     pronouns: settings?.pronouns || "",
+    personality: settings?.personality || "",
   };
 }
 
