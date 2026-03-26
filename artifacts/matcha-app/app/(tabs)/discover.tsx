@@ -723,10 +723,9 @@ export default function DiscoverScreen() {
             title: message.title,
             body: message.body,
           });
+          setShowInsight(true);
           return;
         }
-
-        setShowInsight(true);
       })();
     });
   };
