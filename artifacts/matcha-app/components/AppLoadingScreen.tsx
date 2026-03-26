@@ -1,11 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import {
-  Animated,
-  Easing,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Animated, Easing, StyleSheet, View } from "react-native";
 
 import Colors from "@/constants/colors";
 
@@ -17,51 +11,65 @@ type Props = {
 export function AppLoadingScreen({ visible, onHidden }: Props) {
   const screenOpacity = useRef(new Animated.Value(1)).current;
   const breathScale = useRef(new Animated.Value(1)).current;
-  const glowOpacity = useRef(new Animated.Value(0.35)).current;
+  const glowOpacity = useRef(new Animated.Value(0.28)).current;
   const rippleScale = useRef(new Animated.Value(1)).current;
-  const rippleOpacity = useRef(new Animated.Value(0.6)).current;
+  const rippleOpacity = useRef(new Animated.Value(0.24)).current;
   const outerRippleScale = useRef(new Animated.Value(1)).current;
-  const outerRippleOpacity = useRef(new Animated.Value(0.3)).current;
+  const outerRippleOpacity = useRef(new Animated.Value(0.12)).current;
   const wordmarkOpacity = useRef(new Animated.Value(0)).current;
   const taglineOpacity = useRef(new Animated.Value(0)).current;
-  const shimmerX = useRef(new Animated.Value(-180)).current;
+  const centerTranslateY = useRef(new Animated.Value(8)).current;
+  const shimmerX = useRef(new Animated.Value(-72)).current;
 
   const breathLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const shimmerLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const rippleLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const outerRippleLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const entryAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const exitAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
-    Animated.sequence([
-      Animated.delay(120),
+    isMountedRef.current = true;
+
+    entryAnimationRef.current = Animated.sequence([
+      Animated.delay(80),
       Animated.parallel([
+        Animated.timing(centerTranslateY, {
+          toValue: 0,
+          duration: 620,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
         Animated.timing(wordmarkOpacity, {
           toValue: 1,
-          duration: 600,
+          duration: 620,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(taglineOpacity, {
           toValue: 1,
-          duration: 900,
-          delay: 200,
+          duration: 820,
+          delay: 140,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
       ]),
-    ]).start();
+    ]);
+    entryAnimationRef.current.start();
 
     breathLoopRef.current = Animated.loop(
       Animated.sequence([
         Animated.parallel([
           Animated.timing(breathScale, {
-            toValue: 1.065,
-            duration: 1800,
+            toValue: 1.045,
+            duration: 2200,
             easing: Easing.inOut(Easing.sin),
             useNativeDriver: true,
           }),
           Animated.timing(glowOpacity, {
-            toValue: 0.75,
-            duration: 1800,
+            toValue: 0.48,
+            duration: 2200,
             easing: Easing.inOut(Easing.sin),
             useNativeDriver: true,
           }),
@@ -69,13 +77,13 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
         Animated.parallel([
           Animated.timing(breathScale, {
             toValue: 1,
-            duration: 1800,
+            duration: 2200,
             easing: Easing.inOut(Easing.sin),
             useNativeDriver: true,
           }),
           Animated.timing(glowOpacity, {
-            toValue: 0.35,
-            duration: 1800,
+            toValue: 0.28,
+            duration: 2200,
             easing: Easing.inOut(Easing.sin),
             useNativeDriver: true,
           }),
@@ -84,58 +92,83 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
     );
     breathLoopRef.current.start();
 
-    const startRipple = () => {
-      rippleScale.setValue(1);
-      rippleOpacity.setValue(0.5);
-      Animated.parallel([
-        Animated.timing(rippleScale, {
-          toValue: 1.7,
-          duration: 2200,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(rippleOpacity, {
-          toValue: 0,
-          duration: 2200,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start(() => setTimeout(startRipple, 400));
-    };
+    rippleLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(rippleScale, {
+            toValue: 1.55,
+            duration: 2200,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(rippleOpacity, {
+            toValue: 0,
+            duration: 2200,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.delay(220),
+        Animated.parallel([
+          Animated.timing(rippleScale, {
+            toValue: 1,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+          Animated.timing(rippleOpacity, {
+            toValue: 0.24,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+    rippleLoopRef.current.start();
 
-    const startOuterRipple = () => {
-      outerRippleScale.setValue(1);
-      outerRippleOpacity.setValue(0.2);
-      Animated.parallel([
-        Animated.timing(outerRippleScale, {
-          toValue: 2.1,
-          duration: 2800,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(outerRippleOpacity, {
-          toValue: 0,
-          duration: 2800,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start(() => setTimeout(startOuterRipple, 200));
-    };
-
-    const r1 = setTimeout(startRipple, 600);
-    const r2 = setTimeout(startOuterRipple, 1000);
+    outerRippleLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(outerRippleScale, {
+            toValue: 1.85,
+            duration: 2800,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(outerRippleOpacity, {
+            toValue: 0,
+            duration: 2800,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.delay(160),
+        Animated.parallel([
+          Animated.timing(outerRippleScale, {
+            toValue: 1,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+          Animated.timing(outerRippleOpacity, {
+            toValue: 0.12,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+    outerRippleLoopRef.current.start();
 
     shimmerLoopRef.current = Animated.loop(
       Animated.sequence([
         Animated.timing(shimmerX, {
-          toValue: 180,
-          duration: 1600,
+          toValue: 72,
+          duration: 1800,
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: true,
         }),
-        Animated.delay(300),
+        Animated.delay(260),
         Animated.timing(shimmerX, {
-          toValue: -180,
+          toValue: -72,
           duration: 0,
           useNativeDriver: true,
         }),
@@ -145,10 +178,13 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
     shimmerLoopRef.current.start();
 
     return () => {
+      isMountedRef.current = false;
+      entryAnimationRef.current?.stop();
+      exitAnimationRef.current?.stop();
       breathLoopRef.current?.stop();
       shimmerLoopRef.current?.stop();
-      clearTimeout(r1);
-      clearTimeout(r2);
+      rippleLoopRef.current?.stop();
+      outerRippleLoopRef.current?.stop();
     };
   }, []);
 
@@ -156,21 +192,42 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
     if (!visible) {
       breathLoopRef.current?.stop();
       shimmerLoopRef.current?.stop();
-      Animated.timing(screenOpacity, {
-        toValue: 0,
-        duration: 420,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start(() => onHidden?.());
+      rippleLoopRef.current?.stop();
+      outerRippleLoopRef.current?.stop();
+      exitAnimationRef.current?.stop();
+      exitAnimationRef.current = Animated.parallel([
+        Animated.timing(screenOpacity, {
+          toValue: 0,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(centerTranslateY, {
+          toValue: -10,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]);
+      exitAnimationRef.current.start(({ finished }) => {
+        if (finished && isMountedRef.current) {
+          onHidden?.();
+        }
+      });
     }
-  }, [visible]);
+  }, [centerTranslateY, onHidden, screenOpacity, visible]);
 
   return (
     <Animated.View
       style={[styles.root, { opacity: screenOpacity }]}
       pointerEvents={visible ? "auto" : "none"}
     >
-      <View style={styles.center}>
+      <Animated.View
+        style={[
+          styles.center,
+          { transform: [{ translateY: centerTranslateY }] },
+        ]}
+      >
         <View style={styles.iconContainer}>
           <Animated.View
             style={[
@@ -217,7 +274,7 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
         <Animated.Text style={[styles.tagline, { opacity: taglineOpacity }]}>
           Mejórate. Atrae.
         </Animated.Text>
-      </View>
+      </Animated.View>
 
       <View style={styles.shimmerTrack}>
         <Animated.View
@@ -246,7 +303,6 @@ const styles = StyleSheet.create({
   },
   center: {
     alignItems: "center",
-    gap: 0,
   },
   iconContainer: {
     width: ICON_SIZE,
@@ -261,14 +317,14 @@ const styles = StyleSheet.create({
     height: OUTER_RIPPLE_SIZE,
     borderRadius: OUTER_RIPPLE_SIZE / 2,
     borderWidth: 1,
-    borderColor: Colors.primaryLight,
+    borderColor: Colors.borderLight,
   },
   ripple: {
     position: "absolute",
     width: RIPPLE_SIZE,
     height: RIPPLE_SIZE,
     borderRadius: RIPPLE_SIZE / 2,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: Colors.primaryLight,
   },
   glow: {
@@ -277,7 +333,6 @@ const styles = StyleSheet.create({
     height: GLOW_SIZE,
     borderRadius: GLOW_SIZE / 2,
     backgroundColor: Colors.primaryLight,
-    opacity: 0.35,
   },
   iconCard: {
     width: ICON_SIZE,
@@ -290,9 +345,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     shadowColor: Colors.primaryLight,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 12,
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 10,
     gap: 4,
   },
   leafRow: {
@@ -340,11 +395,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.5,
     color: Colors.textSecondary,
+    marginTop: 2,
   },
   shimmerTrack: {
     position: "absolute",
     bottom: 52,
-    width: 160,
+    width: 144,
     height: 3,
     borderRadius: 2,
     backgroundColor: Colors.surface,
@@ -355,7 +411,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     top: 0,
-    width: 60,
+    width: 48,
     height: 3,
     borderRadius: 2,
     backgroundColor: Colors.primaryLight,

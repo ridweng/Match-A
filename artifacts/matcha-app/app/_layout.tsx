@@ -8,7 +8,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -29,27 +29,34 @@ function RootLayoutNav() {
   } = useApp();
 
   const [loadingVisible, setLoadingVisible] = useState(true);
-  const [navigated, setNavigated] = useState(false);
+  const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
+    useState(true);
+  const hasNavigatedRef = useRef(false);
 
   useEffect(() => {
     if (authStatus === "loading") return;
 
-    setLoadingVisible(false);
+    if (!hasNavigatedRef.current) {
+      hasNavigatedRef.current = true;
 
-    if (navigated) return;
-    setNavigated(true);
-
-    if (authStatus !== "authenticated") {
-      router.replace("/login" as any);
-    } else if (biometricLockRequired) {
-      router.replace("/biometric-lock" as any);
-    } else if (needsProfileCompletion) {
-      router.replace("/complete-profile" as any);
-    } else if (!hasCompletedOnboarding) {
-      router.replace("/onboarding" as any);
-    } else {
-      router.replace("/(tabs)/discover" as any);
+      if (authStatus !== "authenticated") {
+        router.replace("/login" as any);
+      } else if (biometricLockRequired) {
+        router.replace("/biometric-lock" as any);
+      } else if (needsProfileCompletion) {
+        router.replace("/complete-profile" as any);
+      } else if (!hasCompletedOnboarding) {
+        router.replace("/onboarding" as any);
+      } else {
+        router.replace("/(tabs)/discover" as any);
+      }
     }
+
+    const frame = requestAnimationFrame(() => {
+      setLoadingVisible(false);
+    });
+
+    return () => cancelAnimationFrame(frame);
   }, [
     authStatus,
     biometricLockRequired,
@@ -67,7 +74,12 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" />
       </Stack>
 
-      <AppLoadingScreen visible={loadingVisible} />
+      {shouldRenderLoadingScreen ? (
+        <AppLoadingScreen
+          visible={loadingVisible}
+          onHidden={() => setShouldRenderLoadingScreen(false)}
+        />
+      ) : null}
     </>
   );
 }
@@ -82,7 +94,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
 
