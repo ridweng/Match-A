@@ -4,6 +4,11 @@ import crypto from "node:crypto";
 import mysql from "mysql2/promise";
 
 import { config } from "./config.js";
+import {
+  createEmptyPopularAttributesByCategory,
+  normalizePopularAttributeInput,
+  sanitizePopularAttributesByCategory,
+} from "./popular-attributes.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -39,6 +44,7 @@ class FileStore {
         counters: { user: 1, identity: 1, verification: 1, session: 1 },
         users: [],
         userSettings: [],
+        discoveryPreferences: [],
         identities: [],
         verificationTokens: [],
         sessions: [],
@@ -47,6 +53,9 @@ class FileStore {
     }
     this.data.userSettings = Array.isArray(this.data.userSettings)
       ? this.data.userSettings
+      : [];
+    this.data.discoveryPreferences = Array.isArray(this.data.discoveryPreferences)
+      ? this.data.discoveryPreferences
       : [];
   }
 
@@ -129,6 +138,51 @@ class FileStore {
     settings.updatedAt = nowIso();
     await this.save();
     return settings;
+  }
+
+  async findUserDiscoveryPreferences(userId) {
+    return (
+      this.data.discoveryPreferences.find(
+        (item) => item.userId === Number(userId)
+      ) || null
+    );
+  }
+
+  async upsertUserDiscoveryPreferences(userId, updates) {
+    let preferences = await this.findUserDiscoveryPreferences(userId);
+    if (!preferences) {
+      preferences = {
+        userId: Number(userId),
+        likedProfiles: [],
+        totalLikesCount: 0,
+        popularAttributeModesByCategory: createEmptyPopularAttributesByCategory(),
+        lastNotifiedPopularModeChangeAtLikeCount: 0,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      };
+      this.data.discoveryPreferences.push(preferences);
+    }
+
+    if (Array.isArray(updates.likedProfiles)) {
+      preferences.likedProfiles = updates.likedProfiles.map((item) => ({
+        likedProfileId: String(item.likedProfileId),
+        categoryValues: normalizePopularAttributeInput(item.categoryValues),
+      }));
+    }
+    if (typeof updates.totalLikesCount === "number") {
+      preferences.totalLikesCount = updates.totalLikesCount;
+    }
+    if (updates.popularAttributeModesByCategory) {
+      preferences.popularAttributeModesByCategory =
+        sanitizePopularAttributesByCategory(updates.popularAttributeModesByCategory);
+    }
+    if (typeof updates.lastNotifiedPopularModeChangeAtLikeCount === "number") {
+      preferences.lastNotifiedPopularModeChangeAtLikeCount =
+        updates.lastNotifiedPopularModeChangeAtLikeCount;
+    }
+    preferences.updatedAt = nowIso();
+    await this.save();
+    return preferences;
   }
 
   async verifyUserEmail(userId) {
@@ -357,6 +411,19 @@ class MysqlStore {
       ALTER TABLE user_settings
       ADD COLUMN IF NOT EXISTS personality VARCHAR(64) NOT NULL DEFAULT ''
     `);
+
+    await this.connection.query(`
+      CREATE TABLE IF NOT EXISTS user_discovery_preferences (
+        user_id BIGINT PRIMARY KEY,
+        liked_profiles_json LONGTEXT NOT NULL,
+        popular_attribute_modes_json LONGTEXT NOT NULL,
+        total_likes_count INT NOT NULL DEFAULT 0,
+        last_notified_popular_mode_change_at_like_count INT NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        CONSTRAINT fk_user_discovery_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   mapUser(row) {
@@ -490,6 +557,81 @@ class MysqlStore {
       ]
     );
     return this.findUserSettings(userId);
+  }
+
+  async findUserDiscoveryPreferences(userId) {
+    const [rows] = await this.connection.query(
+      "SELECT * FROM user_discovery_preferences WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      userId: Number(row.user_id),
+      likedProfiles: JSON.parse(row.liked_profiles_json || "[]").map((item) => ({
+        likedProfileId: String(item.likedProfileId),
+        categoryValues: normalizePopularAttributeInput(item.categoryValues),
+      })),
+      popularAttributeModesByCategory: sanitizePopularAttributesByCategory(
+        JSON.parse(row.popular_attribute_modes_json || "{}")
+      ),
+      totalLikesCount: Number(row.total_likes_count) || 0,
+      lastNotifiedPopularModeChangeAtLikeCount:
+        Number(row.last_notified_popular_mode_change_at_like_count) || 0,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    };
+  }
+
+  async upsertUserDiscoveryPreferences(userId, updates) {
+    const existing = await this.findUserDiscoveryPreferences(userId);
+    const likedProfiles = Array.isArray(updates.likedProfiles)
+      ? updates.likedProfiles.map((item) => ({
+          likedProfileId: String(item.likedProfileId),
+          categoryValues: normalizePopularAttributeInput(item.categoryValues),
+        }))
+      : existing?.likedProfiles || [];
+    const popularAttributeModesByCategory = updates.popularAttributeModesByCategory
+      ? sanitizePopularAttributesByCategory(updates.popularAttributeModesByCategory)
+      : existing?.popularAttributeModesByCategory ||
+        createEmptyPopularAttributesByCategory();
+    const totalLikesCount =
+      typeof updates.totalLikesCount === "number"
+        ? updates.totalLikesCount
+        : existing?.totalLikesCount || 0;
+    const lastNotifiedPopularModeChangeAtLikeCount =
+      typeof updates.lastNotifiedPopularModeChangeAtLikeCount === "number"
+        ? updates.lastNotifiedPopularModeChangeAtLikeCount
+        : existing?.lastNotifiedPopularModeChangeAtLikeCount || 0;
+
+    if (!existing) {
+      await this.connection.query(
+        "INSERT INTO user_discovery_preferences (user_id, liked_profiles_json, popular_attribute_modes_json, total_likes_count, last_notified_popular_mode_change_at_like_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+          userId,
+          JSON.stringify(likedProfiles),
+          JSON.stringify(popularAttributeModesByCategory),
+          totalLikesCount,
+          lastNotifiedPopularModeChangeAtLikeCount,
+          new Date(),
+          new Date(),
+        ]
+      );
+      return this.findUserDiscoveryPreferences(userId);
+    }
+
+    await this.connection.query(
+      "UPDATE user_discovery_preferences SET liked_profiles_json = ?, popular_attribute_modes_json = ?, total_likes_count = ?, last_notified_popular_mode_change_at_like_count = ?, updated_at = ? WHERE user_id = ?",
+      [
+        JSON.stringify(likedProfiles),
+        JSON.stringify(popularAttributeModesByCategory),
+        totalLikesCount,
+        lastNotifiedPopularModeChangeAtLikeCount,
+        new Date(),
+        userId,
+      ]
+    );
+    return this.findUserDiscoveryPreferences(userId);
   }
 
   async verifyUserEmail(userId) {

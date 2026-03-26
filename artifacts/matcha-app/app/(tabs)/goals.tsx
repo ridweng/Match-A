@@ -20,7 +20,6 @@ import {
   getBodyTypeLabel,
   getChildrenPreferenceLabel,
   getEducationLabel,
-  getHairColorLabel,
   getPersonalityLabel,
   getRelationshipGoalLabel,
   getSpokenLanguageLabel,
@@ -31,6 +30,7 @@ import {
   useApp,
 } from "@/context/AppContext";
 import { discoverProfiles } from "@/data/profiles";
+import { formatPopularAttributeValue } from "@/utils/popularAttributes";
 
 type GoalsFilter = "all" | GoalCategory;
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
@@ -147,44 +147,6 @@ const REAL_CATEGORIES: GoalCategory[] = [
 
 const ACTIVE_TASK_ROW_HEIGHT = 86;
 
-function buildAverageMap(values: string[]) {
-  const filtered = values.map((value) => value?.trim()).filter(Boolean) as string[];
-  const counts = new Map<string, number>();
-
-  for (const value of filtered) {
-    counts.set(value, (counts.get(value) || 0) + 1);
-  }
-
-  const total = filtered.length || 1;
-  const averages = new Map<string, number>();
-  counts.forEach((count, key) => {
-    averages.set(key, count / total);
-  });
-
-  return averages;
-}
-
-function getCombinedTopValues(allValues: string[], likedValues: string[], limit = 1) {
-  const allAverage = buildAverageMap(allValues);
-  const interactionAverage = likedValues.length
-    ? buildAverageMap(likedValues)
-    : allAverage;
-
-  const keys = new Set([
-    ...Array.from(allAverage.keys()),
-    ...Array.from(interactionAverage.keys()),
-  ]);
-
-  return Array.from(keys)
-    .map((key) => ({
-      key,
-      score: ((allAverage.get(key) || 0) + (interactionAverage.get(key) || 0)) / 2,
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((item) => item.key);
-}
-
 function formatPreviewList(values: string[], emptyLabel: string, maxVisible = 2) {
   const filtered = values.filter(Boolean);
   if (!filtered.length) {
@@ -194,14 +156,6 @@ function formatPreviewList(values: string[], emptyLabel: string, maxVisible = 2)
     return filtered.join(", ");
   }
   return `${filtered.slice(0, maxVisible).join(", ")} +${filtered.length - maxVisible}`;
-}
-
-function toTitleCase(value: string) {
-  if (!value.trim()) return value;
-  return value
-    .split(" ")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 function getGrowthTone(
@@ -648,11 +602,11 @@ export default function GoalsScreen() {
     t,
     goals,
     language,
-    likedProfiles,
     accountProfile,
     heightUnit,
     completeGoalTask,
     reorderGoalTasks,
+    popularAttributesByCategory,
   } = useApp();
   const [activeFilter, setActiveFilter] = useState<GoalsFilter>("all");
   const [expandedCategory, setExpandedCategory] = useState<GoalCategory | null>(null);
@@ -669,11 +623,6 @@ export default function GoalsScreen() {
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 96);
   const emptyLabel = t("Sin definir", "Not set");
-
-  const likedDiscoveryProfiles = useMemo(
-    () => discoverProfiles.filter((profile) => likedProfiles.includes(profile.id)),
-    [likedProfiles]
-  );
 
   const insightLookup = useMemo(() => {
     const map = new Map<string, { es: string; en: string }>();
@@ -724,71 +673,6 @@ export default function GoalsScreen() {
       studies: () => getEducationLabel(accountProfile.education, t) || emptyLabel,
     };
 
-    const popularLabel: Record<GoalCategory, () => string> = {
-      physical: () => {
-        const topBodyType = getCombinedTopValues(
-          discoverProfiles.map((profile) => profile.physical.bodyType),
-          likedDiscoveryProfiles.map((profile) => profile.physical.bodyType)
-        )[0];
-        const topHairColor = getCombinedTopValues(
-          discoverProfiles.map((profile) => profile.physical.hairColor),
-          likedDiscoveryProfiles.map((profile) => profile.physical.hairColor)
-        )[0];
-        return formatPreviewList(
-          [
-            topBodyType ? getBodyTypeLabel(topBodyType, t) : "",
-            topHairColor ? getHairColorLabel(topHairColor, t) : "",
-          ].filter(Boolean),
-          emptyLabel,
-          2
-        );
-      },
-      personality: () => {
-        const topInsights = getCombinedTopValues(
-          discoverProfiles.flatMap((profile) =>
-            profile.insightTags.map((tag) => tag.en)
-          ),
-          likedDiscoveryProfiles.flatMap((profile) =>
-            profile.insightTags.map((tag) => tag.en)
-          ),
-          2
-        ).map((value) => {
-          const tag = insightLookup.get(value);
-          return tag ? t(tag.es, tag.en) : toTitleCase(value);
-        });
-        return formatPreviewList(topInsights, emptyLabel, 2);
-      },
-      family: () => {
-        const topValue = getCombinedTopValues(
-          discoverProfiles.map((profile) => profile.about.childrenPreference),
-          likedDiscoveryProfiles.map((profile) => profile.about.childrenPreference)
-        )[0];
-        return topValue ? getChildrenPreferenceLabel(topValue, t) : emptyLabel;
-      },
-      expectations: () => {
-        const topValue = getCombinedTopValues(
-          discoverProfiles.map((profile) => profile.about.relationshipGoals),
-          likedDiscoveryProfiles.map((profile) => profile.about.relationshipGoals)
-        )[0];
-        return topValue ? getRelationshipGoalLabel(topValue, t) : emptyLabel;
-      },
-      language: () => {
-        const topValues = getCombinedTopValues(
-          discoverProfiles.flatMap((profile) => profile.about.languagesSpoken),
-          likedDiscoveryProfiles.flatMap((profile) => profile.about.languagesSpoken),
-          2
-        ).map((value) => getSpokenLanguageLabel(value, language));
-        return formatPreviewList(topValues, emptyLabel, 2);
-      },
-      studies: () => {
-        const topValue = getCombinedTopValues(
-          discoverProfiles.map((profile) => profile.about.education),
-          likedDiscoveryProfiles.map((profile) => profile.about.education)
-        )[0];
-        return topValue ? getEducationLabel(topValue, t) : emptyLabel;
-      },
-    };
-
     return REAL_CATEGORIES.map((key) => {
       const orderedTasks = goalsByCategory.get(key) || [];
       const activeTasks = orderedTasks.filter((goal) => !goal.completed);
@@ -803,7 +687,16 @@ export default function GoalsScreen() {
         icon: CATEGORY_CONFIG[key].icon,
         color: CATEGORY_CONFIG[key].color,
         userValue: profileLabel[key](),
-        popularValue: popularLabel[key](),
+        popularValue: formatPopularAttributeValue(
+          key,
+          popularAttributesByCategory[key]?.valueKey,
+          {
+            t,
+            language,
+            insightLookup,
+            emptyLabel,
+          }
+        ),
         featuredTask: activeTasks[0] || null,
         activeTasks,
         completedTasks,
@@ -821,7 +714,7 @@ export default function GoalsScreen() {
     heightUnit,
     insightLookup,
     language,
-    likedDiscoveryProfiles,
+    popularAttributesByCategory,
     t,
   ]);
 

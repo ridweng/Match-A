@@ -6,6 +6,13 @@ import { z } from "zod";
 
 import { config, getProviderRedirectUri, isProviderConfigured } from "./config.js";
 import { createStore } from "./db.js";
+import {
+  calculatePopularAttributesFromLikes,
+  createEmptyPopularAttributesByCategory,
+  diffPopularAttributeSnapshots,
+  normalizePopularAttributeInput,
+  sanitizePopularAttributesByCategory,
+} from "./popular-attributes.js";
 
 const app = express();
 
@@ -49,6 +56,18 @@ const updateSettingsSchema = z.object({
   genderIdentity: z.string().trim().max(64).optional(),
   pronouns: z.string().trim().max(64).optional(),
   personality: z.string().trim().max(64).optional(),
+});
+
+const likeDiscoverySchema = z.object({
+  likedProfileId: z.string().trim().min(1).max(64),
+  categoryValues: z.object({
+    physical: z.string().trim().max(120).nullable().optional(),
+    personality: z.string().trim().max(120).nullable().optional(),
+    family: z.string().trim().max(120).nullable().optional(),
+    expectations: z.string().trim().max(120).nullable().optional(),
+    language: z.string().trim().max(120).nullable().optional(),
+    studies: z.string().trim().max(120).nullable().optional(),
+  }),
 });
 
 const providerSchema = z.enum(["google", "facebook", "apple"]);
@@ -201,6 +220,20 @@ function sanitizeSettings(settings) {
     genderIdentity: settings?.genderIdentity || "",
     pronouns: settings?.pronouns || "",
     personality: settings?.personality || "",
+  };
+}
+
+function sanitizeDiscoveryPreferences(preferences) {
+  return {
+    likedProfileIds: Array.isArray(preferences?.likedProfiles)
+      ? preferences.likedProfiles.map((item) => String(item.likedProfileId))
+      : [],
+    popularAttributesByCategory: sanitizePopularAttributesByCategory(
+      preferences?.popularAttributeModesByCategory
+    ),
+    totalLikesCount: Number(preferences?.totalLikesCount) || 0,
+    lastNotifiedPopularModeChangeAtLikeCount:
+      Number(preferences?.lastNotifiedPopularModeChangeAtLikeCount) || 0,
   };
 }
 
@@ -683,6 +716,77 @@ app.patch("/api/auth/settings", authenticate, async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "INVALID_SETTINGS_PAYLOAD", issues: error.flatten() });
+    }
+    console.error(error);
+    return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
+  }
+});
+
+app.get("/api/discovery/preferences", authenticate, async (req, res) => {
+  const preferences = await store.findUserDiscoveryPreferences(req.auth.user.id);
+  return res.json(sanitizeDiscoveryPreferences(preferences));
+});
+
+app.post("/api/discovery/like", authenticate, async (req, res) => {
+  try {
+    const payload = likeDiscoverySchema.parse(req.body);
+    const existing =
+      (await store.findUserDiscoveryPreferences(req.auth.user.id)) || {
+        likedProfiles: [],
+        popularAttributeModesByCategory: createEmptyPopularAttributesByCategory(),
+        totalLikesCount: 0,
+        lastNotifiedPopularModeChangeAtLikeCount: 0,
+      };
+
+    const isDuplicate = existing.likedProfiles.some(
+      (item) => item.likedProfileId === payload.likedProfileId
+    );
+
+    if (isDuplicate) {
+      return res.json({
+        ...sanitizeDiscoveryPreferences(existing),
+        changedCategories: [],
+        shouldShowDiscoveryUpdate: false,
+      });
+    }
+
+    const nextLikedProfiles = [
+      ...existing.likedProfiles,
+      {
+        likedProfileId: payload.likedProfileId,
+        categoryValues: normalizePopularAttributeInput(payload.categoryValues),
+      },
+    ];
+
+    const nextPopularAttributesByCategory =
+      calculatePopularAttributesFromLikes(nextLikedProfiles);
+    const changedCategories = diffPopularAttributeSnapshots(
+      sanitizePopularAttributesByCategory(existing.popularAttributeModesByCategory),
+      nextPopularAttributesByCategory
+    );
+    const totalLikesCount = nextLikedProfiles.length;
+    const shouldShowDiscoveryUpdate =
+      totalLikesCount >= 30 && changedCategories.length > 0;
+
+    const persisted = await store.upsertUserDiscoveryPreferences(req.auth.user.id, {
+      likedProfiles: nextLikedProfiles,
+      popularAttributeModesByCategory: nextPopularAttributesByCategory,
+      totalLikesCount,
+      lastNotifiedPopularModeChangeAtLikeCount: shouldShowDiscoveryUpdate
+        ? totalLikesCount
+        : existing.lastNotifiedPopularModeChangeAtLikeCount || 0,
+    });
+
+    return res.json({
+      ...sanitizeDiscoveryPreferences(persisted),
+      changedCategories,
+      shouldShowDiscoveryUpdate,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res
+        .status(400)
+        .json({ error: "INVALID_DISCOVERY_LIKE_PAYLOAD", issues: error.flatten() });
     }
     console.error(error);
     return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });

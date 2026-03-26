@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
@@ -38,6 +38,7 @@ import {
 import { useApp } from "@/context/AppContext";
 import { discoverProfiles, type DiscoverProfile } from "@/data/profiles";
 import { getZodiacSignFromIsoDate, getZodiacSignLabel } from "@/utils/dateOfBirth";
+import { formatPopularAttributeValue } from "@/utils/popularAttributes";
 
 const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
@@ -59,6 +60,11 @@ type DiscoveryFilters = {
 type AgeBounds = {
   min: number;
   max: number;
+};
+type PopularUpdateBanner = {
+  id: number;
+  title: string;
+  body: string;
 };
 
 const LANGUAGE_FLAG_CODES: Record<string, string> = {
@@ -369,6 +375,7 @@ export default function DiscoverScreen() {
   const [swipeState, setSwipeState] = useState<SwipeState>("idle");
   const [showInsight, setShowInsight] = useState(false);
   const [lastLikedProfile, setLastLikedProfile] = useState<DiscoverProfile | null>(null);
+  const [popularUpdateBanner, setPopularUpdateBanner] = useState<PopularUpdateBanner | null>(null);
   const [isInfoVisible, setIsInfoVisible] = useState(false);
   const [isFilterVisible, setIsFilterVisible] = useState(false);
   const [appliedFilters, setAppliedFilters] = useState<DiscoveryFilters>(
@@ -492,9 +499,81 @@ export default function DiscoverScreen() {
         : [],
     [goals, lastLikedProfile]
   );
+  const insightLookup = useMemo(() => {
+    const map = new Map<string, { es: string; en: string }>();
+    discoverProfiles.forEach((profile) => {
+      profile.insightTags.forEach((tag) => {
+        map.set(tag.en, tag);
+      });
+    });
+    return map;
+  }, []);
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+
+  useEffect(() => {
+    if (!popularUpdateBanner) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setPopularUpdateBanner(null);
+    }, 4200);
+
+    return () => clearTimeout(timeout);
+  }, [popularUpdateBanner]);
+
+  const buildPopularUpdateMessage = useCallback(
+    (
+      changedCategories: {
+        category: "physical" | "personality" | "family" | "expectations" | "language" | "studies";
+        nextValueKey: string;
+      }[]
+    ) => {
+      const visible = changedCategories.slice(0, 2).map((item) => {
+        const categoryLabel =
+          item.category === "physical"
+            ? t("Físicas", "Physical")
+            : item.category === "personality"
+              ? t("Personalidad", "Personality")
+              : item.category === "family"
+                ? t("Familia", "Family")
+                : item.category === "expectations"
+                  ? t("Expectativas", "Expectations")
+                  : item.category === "language"
+                    ? t("Idioma", "Language")
+                    : t("Estudios", "Studies");
+
+        const valueLabel = formatPopularAttributeValue(
+          item.category,
+          item.nextValueKey,
+          {
+            t,
+            language,
+            insightLookup,
+            emptyLabel: t("Sin definir", "Not set"),
+          }
+        );
+
+        return `${categoryLabel}: ${valueLabel}`;
+      });
+
+      const extraCount = changedCategories.length - visible.length;
+
+      return {
+        title: t(
+          "Tus preferencias se están perfilando",
+          "Your preferences are becoming clearer"
+        ),
+        body:
+          extraCount > 0
+            ? `${visible.join(" · ")} +${extraCount}`
+            : visible.join(" · "),
+      };
+    },
+    [insightLookup, language, t]
+  );
 
   React.useEffect(() => {
     setActivePhotoIndex(0);
@@ -629,13 +708,26 @@ export default function DiscoverScreen() {
       duration: 300,
       useNativeDriver: false,
     }).start(() => {
-      likeProfile(profile.id);
-      setLastLikedProfile(profile);
-      setShowInsight(true);
       resetCardState();
       setCurrentIndex((prev) =>
         filteredProfiles.length > 1 ? (prev + 1) % filteredProfiles.length : 0
       );
+      void (async () => {
+        const result = await likeProfile(profile.id);
+        setLastLikedProfile(profile);
+
+        if (result?.shouldShowDiscoveryUpdate && result.changedCategories.length) {
+          const message = buildPopularUpdateMessage(result.changedCategories);
+          setPopularUpdateBanner({
+            id: Date.now(),
+            title: message.title,
+            body: message.body,
+          });
+          return;
+        }
+
+        setShowInsight(true);
+      })();
     });
   };
 
@@ -750,6 +842,24 @@ export default function DiscoverScreen() {
           </Pressable>
         </View>
       </View>
+
+      {popularUpdateBanner ? (
+        <View style={styles.popularUpdateWrap}>
+          <View style={styles.popularUpdateCard}>
+            <View style={styles.popularUpdateIcon}>
+              <Feather name="trending-up" size={15} color={Colors.primaryLight} />
+            </View>
+            <View style={styles.popularUpdateBody}>
+              <Text style={styles.popularUpdateTitle}>
+                {popularUpdateBanner.title}
+              </Text>
+              <Text style={styles.popularUpdateText}>
+                {popularUpdateBanner.body}
+              </Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
 
       {hasProfiles && current ? (
         <>
@@ -1333,6 +1443,45 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: "row",
     gap: 8,
+  },
+  popularUpdateWrap: {
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  popularUpdateCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    backgroundColor: "rgba(82, 183, 136, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(82, 183, 136, 0.22)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  popularUpdateIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "rgba(82, 183, 136, 0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  popularUpdateBody: {
+    flex: 1,
+    gap: 2,
+  },
+  popularUpdateTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
+    color: Colors.text,
+  },
+  popularUpdateText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
   },
   filterBtn: {
     width: 40,

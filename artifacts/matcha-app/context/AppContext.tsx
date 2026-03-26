@@ -12,10 +12,13 @@ import { AppState, Platform } from "react-native";
 
 import {
   type AuthUser,
+  type DiscoveryLikeResponse,
   type ProviderAvailability,
   type AuthProvider,
   fetchProviderAvailability,
+  getDiscoveryPreferences,
   getSettings,
+  likeDiscoveryProfile,
   signIn as authSignIn,
   signUp as authSignUp,
   signOut as authSignOut,
@@ -27,6 +30,12 @@ import {
   toReadableAuthError,
   ApiError,
 } from "@/services/auth";
+import { getDiscoverProfilePopularInput } from "@/data/profiles";
+import {
+  createEmptyPopularAttributesByCategory,
+  type PopularAttributeCategory,
+  type PopularAttributeSnapshot,
+} from "@/utils/popularAttributes";
 
 export type { AuthUser };
 
@@ -477,8 +486,13 @@ type AppContextType = {
     fromIndex: number,
     toIndex: number
   ) => void;
+  popularAttributesByCategory: Record<
+    PopularAttributeCategory,
+    PopularAttributeSnapshot
+  >;
+  totalLikesCount: number;
   likedProfiles: string[];
-  likeProfile: (profileId: string) => void;
+  likeProfile: (profileId: string) => Promise<DiscoveryLikeResponse | null>;
   profile: UserProfile;
   accountProfile: AccountProfile;
   updateProfile: (updates: Partial<UserProfile>) => void;
@@ -509,6 +523,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     normalizeStoredGoals(DEFAULT_GOALS)
   );
   const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
+  const [popularAttributesByCategory, setPopularAttributesByCategory] = useState<
+    Record<PopularAttributeCategory, PopularAttributeSnapshot>
+  >(() => createEmptyPopularAttributesByCategory());
+  const [totalLikesCount, setTotalLikesCount] = useState(0);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -636,6 +654,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [applyServerSettings]
   );
 
+  const hydrateDiscoveryState = useCallback(async (token: string) => {
+    try {
+      const result = await getDiscoveryPreferences(token);
+      setLikedProfiles(result.likedProfileIds);
+      setPopularAttributesByCategory(result.popularAttributesByCategory);
+      setTotalLikesCount(result.totalLikesCount);
+    } catch {
+      setLikedProfiles([]);
+      setPopularAttributesByCategory(createEmptyPopularAttributesByCategory());
+      setTotalLikesCount(0);
+    }
+  }, []);
+
   const applySession = useCallback(
     async (session: {
       accessToken: string;
@@ -655,8 +686,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }));
       setAuthStatus("authenticated");
       await hydrateServerSettings(session.accessToken);
+      await hydrateDiscoveryState(session.accessToken);
     },
-    [hydrateServerSettings]
+    [hydrateDiscoveryState, hydrateServerSettings]
   );
 
   useEffect(() => {
@@ -880,6 +912,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBiometricLockRequired(false);
     setAuthError(null);
     setAuthNotice(null);
+    setLikedProfiles([]);
+    setPopularAttributesByCategory(createEmptyPopularAttributesByCategory());
+    setTotalLikesCount(0);
     await AsyncStorage.removeItem("accessToken");
   }, [accessToken]);
 
@@ -1045,11 +1080,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const likeProfile = useCallback((profileId: string) => {
-    setLikedProfiles((prev) =>
-      prev.includes(profileId) ? prev : [...prev, profileId]
-    );
-  }, []);
+  const likeProfile = useCallback(
+    async (profileId: string) => {
+      if (!accessToken) {
+        return null;
+      }
+
+      const categoryValues = getDiscoverProfilePopularInput(profileId);
+      if (!categoryValues) {
+        return null;
+      }
+
+      try {
+        const result = await likeDiscoveryProfile(accessToken, {
+          likedProfileId: profileId,
+          categoryValues,
+        });
+        setLikedProfiles(result.likedProfileIds);
+        setPopularAttributesByCategory(result.popularAttributesByCategory);
+        setTotalLikesCount(result.totalLikesCount);
+        return result;
+      } catch {
+        return null;
+      }
+    },
+    [accessToken]
+  );
 
   const updateProfile = useCallback((updates: Partial<UserProfile>) => {
     setProfile((prev) => {
@@ -1111,6 +1167,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         goals,
         completeGoalTask,
         reorderGoalTasks,
+        popularAttributesByCategory,
+        totalLikesCount,
         likedProfiles,
         likeProfile,
         profile,

@@ -2,6 +2,17 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
+import { getDiscoverProfilePopularInput } from "@/data/profiles";
+import {
+  calculatePopularAttributesFromLikes,
+  createEmptyPopularAttributesByCategory,
+  diffPopularAttributeSnapshots,
+  type PopularAttributeCategory,
+  type PopularAttributeChange,
+  type PopularAttributeInputByCategory,
+  type PopularAttributeSnapshot,
+} from "@/utils/popularAttributes";
+
 export type AuthProvider = "google" | "facebook" | "apple";
 
 export type AuthUser = {
@@ -45,6 +56,21 @@ export type UserSettingsResponse = {
 
 export type ProviderAvailability = Record<AuthProvider, boolean>;
 
+export type DiscoveryPreferencesResponse = {
+  likedProfileIds: string[];
+  popularAttributesByCategory: Record<
+    PopularAttributeCategory,
+    PopularAttributeSnapshot
+  >;
+  totalLikesCount: number;
+  lastNotifiedPopularModeChangeAtLikeCount: number;
+};
+
+export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
+  changedCategories: PopularAttributeChange[];
+  shouldShowDiscoveryUpdate: boolean;
+};
+
 const DEMO_EMAIL = "test@gmail.com";
 const DEMO_PASSWORD = "test";
 const DEMO_ACCESS_TOKEN = "demo-access-token";
@@ -63,6 +89,12 @@ const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
   genderIdentity: "",
   pronouns: "",
   personality: "",
+};
+const DEMO_DISCOVERY_PREFERENCES: DiscoveryPreferencesResponse = {
+  likedProfileIds: [],
+  popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
+  totalLikesCount: 0,
+  lastNotifiedPopularModeChangeAtLikeCount: 0,
 };
 
 type RequestOptions = {
@@ -272,6 +304,73 @@ export async function verifyEmail(token: string) {
   return request("/api/auth/verify-email", {
     method: "POST",
     body: { token },
+  });
+}
+
+export async function getDiscoveryPreferences(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return DEMO_DISCOVERY_PREFERENCES;
+  }
+  return request<DiscoveryPreferencesResponse>("/api/discovery/preferences", {
+    accessToken,
+  });
+}
+
+export async function likeDiscoveryProfile(
+  accessToken: string,
+  payload: { likedProfileId: string; categoryValues?: PopularAttributeInputByCategory | null }
+) {
+  if (isDemoToken(accessToken)) {
+    const existing = new Set(DEMO_DISCOVERY_PREFERENCES.likedProfileIds);
+    if (existing.has(payload.likedProfileId)) {
+      return {
+        ...DEMO_DISCOVERY_PREFERENCES,
+        changedCategories: [],
+        shouldShowDiscoveryUpdate: false,
+      } satisfies DiscoveryLikeResponse;
+    }
+
+    const categoryValues =
+      payload.categoryValues || getDiscoverProfilePopularInput(payload.likedProfileId);
+    if (!categoryValues) {
+      throw new ApiError("UNKNOWN_DISCOVERY_PROFILE");
+    }
+
+    const previous = DEMO_DISCOVERY_PREFERENCES.popularAttributesByCategory;
+    const nextLikedProfileIds = [
+      ...DEMO_DISCOVERY_PREFERENCES.likedProfileIds,
+      payload.likedProfileId,
+    ];
+    const nextSnapshots = calculatePopularAttributesFromLikes(
+      nextLikedProfileIds.map((likedProfileId) => ({
+        likedProfileId,
+        categoryValues: getDiscoverProfilePopularInput(likedProfileId)!,
+      }))
+    );
+    const changedCategories = diffPopularAttributeSnapshots(previous, nextSnapshots);
+    const totalLikesCount = nextLikedProfileIds.length;
+    const shouldShowDiscoveryUpdate =
+      totalLikesCount >= 30 && changedCategories.length > 0;
+
+    DEMO_DISCOVERY_PREFERENCES.likedProfileIds = nextLikedProfileIds;
+    DEMO_DISCOVERY_PREFERENCES.popularAttributesByCategory = nextSnapshots;
+    DEMO_DISCOVERY_PREFERENCES.totalLikesCount = totalLikesCount;
+    DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount =
+      shouldShowDiscoveryUpdate
+        ? totalLikesCount
+        : DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount;
+
+    return {
+      ...DEMO_DISCOVERY_PREFERENCES,
+      changedCategories,
+      shouldShowDiscoveryUpdate,
+    } satisfies DiscoveryLikeResponse;
+  }
+
+  return request<DiscoveryLikeResponse>("/api/discovery/like", {
+    method: "POST",
+    accessToken,
+    body: payload,
   });
 }
 

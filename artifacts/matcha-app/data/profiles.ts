@@ -1,3 +1,10 @@
+import {
+  calculatePopularAttributesFromLikes,
+  normalizePopularAttributeInput,
+  type PopularAttributeInputByCategory,
+  type PopularAttributesByCategory,
+} from "@/utils/popularAttributes";
+
 type LocalizedText = {
   es: string;
   en: string;
@@ -116,7 +123,44 @@ export type DiscoverProfile = {
     goalId: string;
     reason: LocalizedText;
   }[];
+  likedProfileIds: string[];
+  popularAttributeModesByCategory: PopularAttributesByCategory;
 };
+
+function getPopularAttributeInputFromProfile(profile: {
+  physical: { bodyType: string };
+  about: {
+    relationshipGoals: string;
+    education: string;
+    childrenPreference: string;
+    languagesSpoken: string[];
+  };
+  insightTags: LocalizedText[];
+}): PopularAttributeInputByCategory {
+  return normalizePopularAttributeInput({
+    physical: profile.physical.bodyType,
+    personality: profile.insightTags[0]?.en || null,
+    family: profile.about.childrenPreference,
+    expectations: profile.about.relationshipGoals,
+    language: profile.about.languagesSpoken[0] || null,
+    studies: profile.about.education,
+  });
+}
+
+const SEEDED_LIKE_OFFSETS = [3, 7, 11, 15, 19, 23] as const;
+
+function buildSeededLikedProfileIds(profileIds: string[], index: number) {
+  const unique = new Set<string>();
+
+  for (const offset of SEEDED_LIKE_OFFSETS) {
+    const candidate = profileIds[(index + offset) % profileIds.length];
+    if (candidate && candidate !== profileIds[index]) {
+      unique.add(candidate);
+    }
+  }
+
+  return Array.from(unique);
+}
 
 const DISCOVERY_PROFILES_BASE = [
   {
@@ -2104,9 +2148,42 @@ const DISCOVERY_PROFILES_BASE = [
   },
 ];
 
-export const discoverProfiles: DiscoverProfile[] = DISCOVERY_PROFILES_BASE.map(
-  (profile) => ({
-    ...profile,
-    genderIdentity: DISCOVERY_GENDER_IDENTITIES[profile.id] ?? "non_binary",
-  })
+const DISCOVERY_PROFILES_WITH_GENDER = DISCOVERY_PROFILES_BASE.map((profile) => ({
+  ...profile,
+  genderIdentity: DISCOVERY_GENDER_IDENTITIES[profile.id] ?? "non_binary",
+}));
+
+const DISCOVERY_PROFILE_POPULAR_INPUTS = new Map(
+  DISCOVERY_PROFILES_WITH_GENDER.map((profile) => [
+    profile.id,
+    getPopularAttributeInputFromProfile(profile),
+  ] as const)
 );
+
+const DISCOVERY_PROFILE_IDS = DISCOVERY_PROFILES_WITH_GENDER.map(
+  (profile) => profile.id
+);
+
+export const discoverProfiles: DiscoverProfile[] = DISCOVERY_PROFILES_WITH_GENDER.map(
+  (profile, index) => {
+    const likedProfileIds = buildSeededLikedProfileIds(DISCOVERY_PROFILE_IDS, index);
+    const likedEvents = likedProfileIds.map((likedProfileId) => ({
+      likedProfileId,
+      categoryValues:
+        DISCOVERY_PROFILE_POPULAR_INPUTS.get(likedProfileId) ||
+        normalizePopularAttributeInput(null),
+    }));
+
+    return {
+      ...profile,
+      likedProfileIds,
+      popularAttributeModesByCategory:
+        calculatePopularAttributesFromLikes(likedEvents),
+    };
+  }
+);
+
+export function getDiscoverProfilePopularInput(profileId: string) {
+  const input = DISCOVERY_PROFILE_POPULAR_INPUTS.get(profileId);
+  return input ? { ...input } : null;
+}
