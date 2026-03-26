@@ -1,0 +1,15 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+**/dist
+**/.expo
+**/.next
+**/coverage
+**/.turbo
+**/.cache
+**/ios/Pods
+**/android/.gradle
+**/android/app/build
+**/build
+tmp

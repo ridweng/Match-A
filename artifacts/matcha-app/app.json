@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.matcha.app",
+      "bundleIdentifier": "com.xylo.matcha",
       "infoPlist": {
         "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely.",
         "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile."
@@ -26,7 +26,7 @@
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0F1A14"
       },
-      "package": "com.matcha.app"
+      "package": "com.xylo.matcha"
     },
     "web": {
       "bundler": "metro",
