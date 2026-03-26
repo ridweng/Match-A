@@ -25,6 +25,7 @@ export default function CompleteProfileScreen() {
     authError,
     clearAuthFeedback,
     completeProfile,
+    hasCompletedOnboarding,
     needsProfileCompletion,
     t,
     user,
@@ -40,9 +41,9 @@ export default function CompleteProfileScreen() {
       return;
     }
     if (!needsProfileCompletion) {
-      router.replace("/(tabs)/discover");
+      router.replace(hasCompletedOnboarding ? "/(tabs)/discover" : "/onboarding");
     }
-  }, [authStatus, needsProfileCompletion]);
+  }, [authStatus, hasCompletedOnboarding, needsProfileCompletion]);
 
   const handleSave = async () => {
     clearAuthFeedback();
@@ -70,7 +71,7 @@ export default function CompleteProfileScreen() {
       dateOfBirth,
     });
     if (ok) {
-      router.replace("/(tabs)/discover");
+      router.replace(hasCompletedOnboarding ? "/(tabs)/discover" : "/onboarding");
     }
   };
 

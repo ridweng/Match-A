@@ -172,12 +172,15 @@ async function ensureDefaultAccount() {
     email: "test@gmail.com",
     passwordHash,
     dateOfBirth: "2000-01-01",
+    hasCompletedOnboarding: true,
   });
   await store.verifyUserEmail(user.id);
   console.log("[auth-backend] seeded default account: test@gmail.com / test");
 }
 
 await ensureDefaultAccount();
+
+const ONBOARDING_ROLLOUT_AT = new Date("2026-03-26T00:00:00.000Z").getTime();
 
 function getAge(dateOfBirth) {
   const birth = new Date(dateOfBirth);
@@ -237,6 +240,19 @@ function sanitizeDiscoveryPreferences(preferences) {
   };
 }
 
+function resolveHasCompletedOnboarding(user) {
+  if (user?.hasCompletedOnboarding === true) {
+    return true;
+  }
+
+  const createdAtMs = user?.createdAt ? new Date(user.createdAt).getTime() : NaN;
+  if (Number.isFinite(createdAtMs) && createdAtMs < ONBOARDING_ROLLOUT_AT) {
+    return true;
+  }
+
+  return false;
+}
+
 function authPayload(user, accessToken, refreshToken) {
   const needsProfileCompletion = !user.name || !user.dateOfBirth;
   return {
@@ -245,6 +261,7 @@ function authPayload(user, accessToken, refreshToken) {
     refreshToken,
     user: sanitizeUser(user),
     needsProfileCompletion,
+    hasCompletedOnboarding: resolveHasCompletedOnboarding(user),
   };
 }
 
@@ -673,6 +690,7 @@ app.get("/api/auth/me", authenticate, async (req, res) => {
   return res.json({
     user: sanitizeUser(req.auth.user),
     needsProfileCompletion: !req.auth.user.name || !req.auth.user.dateOfBirth,
+    hasCompletedOnboarding: resolveHasCompletedOnboarding(req.auth.user),
   });
 });
 
@@ -689,11 +707,25 @@ app.patch("/api/auth/me", authenticate, async (req, res) => {
     return res.json({
       user: sanitizeUser(user),
       needsProfileCompletion: !user.name || !user.dateOfBirth,
+      hasCompletedOnboarding: resolveHasCompletedOnboarding(user),
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "INVALID_PROFILE_PAYLOAD", issues: error.flatten() });
     }
+    console.error(error);
+    return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
+  }
+});
+
+app.post("/api/auth/onboarding/complete", authenticate, async (req, res) => {
+  try {
+    const user = await store.completeUserOnboarding(req.auth.user.id);
+    return res.json({
+      status: "ok",
+      hasCompletedOnboarding: resolveHasCompletedOnboarding(user),
+    });
+  } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
   }

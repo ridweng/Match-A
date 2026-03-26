@@ -19,6 +19,7 @@ import {
   getDiscoveryPreferences,
   getSettings,
   likeDiscoveryProfile,
+  completeOnboarding as completeOnboardingRequest,
   signIn as authSignIn,
   signUp as authSignUp,
   signOut as authSignOut,
@@ -458,7 +459,21 @@ type AppContextType = {
   clearAuthFeedback: () => void;
   providerAvailability: ProviderAvailability;
   needsProfileCompletion: boolean;
+  hasCompletedOnboarding: boolean;
   completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<boolean>;
+  saveOnboardingDraft: (data: {
+    genderIdentity: string;
+    pronouns: string;
+    personality: string;
+    relationshipGoals: string;
+    childrenPreference: string;
+    languagesSpoken: string[];
+    education: string;
+    physicalActivity: string;
+    bodyType: string;
+    photos: string[];
+  }) => Promise<boolean>;
+  finishOnboarding: () => Promise<boolean>;
   biometricLockRequired: boolean;
   biometricBusy: boolean;
   biometricsEnabled: boolean;
@@ -534,6 +549,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [verificationPreviewUrl, setVerificationPreviewUrl] = useState<string | null>(null);
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
   const [biometricLockRequired, setBiometricLockRequired] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
@@ -673,10 +689,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshToken?: string;
       user: AuthUser;
       needsProfileCompletion: boolean;
+      hasCompletedOnboarding: boolean;
     }) => {
       setAccessToken(session.accessToken);
       setUser(session.user);
       setNeedsProfileCompletion(session.needsProfileCompletion);
+      setHasCompletedOnboarding(session.hasCompletedOnboarding);
       await AsyncStorage.setItem("accessToken", session.accessToken);
       setProfile((prev) => normalizeStoredProfile({
         ...prev,
@@ -783,6 +801,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           });
           setUser(me.user);
           setNeedsProfileCompletion(me.needsProfileCompletion);
+          setHasCompletedOnboarding(me.hasCompletedOnboarding);
         }
 
         await applyServerSettings({
@@ -830,6 +849,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         emailVerified: true,
       },
       needsProfileCompletion: false,
+      hasCompletedOnboarding: false,
     });
   }, [applySession]);
 
@@ -889,6 +909,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           accessToken: session.accessToken,
           user: session.user,
           needsProfileCompletion: session.needsProfileCompletion,
+          hasCompletedOnboarding: session.hasCompletedOnboarding,
         });
         return true;
       } catch (e: any) {
@@ -910,6 +931,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setAccessToken(null);
     setBiometricLockRequired(false);
+    setHasCompletedOnboarding(false);
     setAuthError(null);
     setAuthNotice(null);
     setLikedProfiles([]);
@@ -927,6 +949,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const result = await updateMe(accessToken, data);
           setUser(result.user);
           setNeedsProfileCompletion(result.needsProfileCompletion);
+          setHasCompletedOnboarding(result.hasCompletedOnboarding);
         }
         const updated = normalizeStoredProfile({
           ...profile,
@@ -947,6 +970,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [profile, accessToken]
   );
+
+  const saveOnboardingDraft = useCallback(
+    async (data: {
+      genderIdentity: string;
+      pronouns: string;
+      personality: string;
+      relationshipGoals: string;
+      childrenPreference: string;
+      languagesSpoken: string[];
+      education: string;
+      physicalActivity: string;
+      bodyType: string;
+      photos: string[];
+    }) => {
+      setAuthBusy(true);
+      setAuthError(null);
+      try {
+        if (accessToken) {
+          await updateSettings(accessToken, {
+            genderIdentity: data.genderIdentity,
+            pronouns: data.pronouns,
+            personality: data.personality,
+          });
+        }
+
+        setProfile((prev) => {
+          const updated = normalizeStoredProfile({
+            ...prev,
+            genderIdentity: data.genderIdentity,
+            pronouns: data.pronouns,
+            personality: data.personality,
+            relationshipGoals: data.relationshipGoals,
+            childrenPreference: data.childrenPreference,
+            languagesSpoken: data.languagesSpoken,
+            education: data.education,
+            physicalActivity: data.physicalActivity,
+            bodyType: data.bodyType,
+            photos: data.photos,
+          });
+          AsyncStorage.setItem("profile", JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+        return true;
+      } catch (e: any) {
+        setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [accessToken]
+  );
+
+  const finishOnboarding = useCallback(async () => {
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      if (accessToken) {
+        const result = await completeOnboardingRequest(accessToken);
+        setHasCompletedOnboarding(result.hasCompletedOnboarding);
+      } else {
+        setHasCompletedOnboarding(true);
+      }
+      return true;
+    } catch (e: any) {
+      setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [accessToken]);
 
   const unlockWithBiometrics = useCallback(async (): Promise<BiometricResult> => {
     if (Platform.OS === "web") {
@@ -1152,7 +1246,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         clearAuthFeedback,
         providerAvailability,
         needsProfileCompletion,
+        hasCompletedOnboarding,
         completeProfile,
+        saveOnboardingDraft,
+        finishOnboarding,
         biometricLockRequired,
         biometricBusy,
         biometricsEnabled,

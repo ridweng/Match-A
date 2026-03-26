@@ -30,6 +30,7 @@ export type AuthSessionResponse = {
   refreshToken: string;
   user: AuthUser;
   needsProfileCompletion: boolean;
+  hasCompletedOnboarding: boolean;
 };
 
 export type SignUpResponse = {
@@ -42,6 +43,12 @@ export type SignUpResponse = {
 export type MeResponse = {
   user: AuthUser;
   needsProfileCompletion: boolean;
+  hasCompletedOnboarding: boolean;
+};
+
+export type CompleteOnboardingResponse = {
+  status: "ok";
+  hasCompletedOnboarding: boolean;
 };
 
 export type UserSettingsResponse = {
@@ -90,6 +97,7 @@ const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
   pronouns: "",
   personality: "",
 };
+let DEMO_HAS_COMPLETED_ONBOARDING = true;
 const DEMO_DISCOVERY_PREFERENCES: DiscoveryPreferencesResponse = {
   likedProfileIds: [],
   popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
@@ -209,6 +217,7 @@ export async function signIn(input: { email: string; password: string }) {
         refreshToken: DEMO_REFRESH_TOKEN,
         user: DEMO_USER,
         needsProfileCompletion: false,
+        hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
       };
     }
   }
@@ -226,6 +235,7 @@ export async function refreshSession(refreshToken: string) {
       refreshToken: DEMO_REFRESH_TOKEN,
       user: DEMO_USER,
       needsProfileCompletion: false,
+      hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
   return request<AuthSessionResponse>("/api/auth/refresh", {
@@ -249,6 +259,7 @@ export async function getMe(accessToken: string) {
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
+      hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
   return request<MeResponse>("/api/auth/me", {
@@ -267,6 +278,7 @@ export async function updateMe(
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
+      hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
   return request<MeResponse>("/api/auth/me", {
@@ -304,6 +316,20 @@ export async function verifyEmail(token: string) {
   return request("/api/auth/verify-email", {
     method: "POST",
     body: { token },
+  });
+}
+
+export async function completeOnboarding(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    DEMO_HAS_COMPLETED_ONBOARDING = true;
+    return {
+      status: "ok" as const,
+      hasCompletedOnboarding: true,
+    };
+  }
+  return request<CompleteOnboardingResponse>("/api/auth/onboarding/complete", {
+    method: "POST",
+    accessToken,
   });
 }
 
@@ -400,6 +426,7 @@ export async function signInWithProvider(
     refreshToken: callback.refreshToken,
     user: me.user,
     needsProfileCompletion: me.needsProfileCompletion,
+    hasCompletedOnboarding: me.hasCompletedOnboarding,
   };
 }
 

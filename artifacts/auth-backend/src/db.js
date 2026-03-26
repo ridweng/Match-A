@@ -22,6 +22,10 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function toBooleanOrNull(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
 async function ensureDir(fileUrlOrPath) {
   const filepath =
     fileUrlOrPath instanceof URL ? fileUrlOrPath.pathname : fileUrlOrPath;
@@ -57,6 +61,12 @@ class FileStore {
     this.data.discoveryPreferences = Array.isArray(this.data.discoveryPreferences)
       ? this.data.discoveryPreferences
       : [];
+    this.data.users = Array.isArray(this.data.users)
+      ? this.data.users.map((user) => ({
+          ...user,
+          hasCompletedOnboarding: toBooleanOrNull(user.hasCompletedOnboarding),
+        }))
+      : [];
   }
 
   async save() {
@@ -88,6 +98,10 @@ class FileStore {
       passwordHash: input.passwordHash,
       dateOfBirth: input.dateOfBirth,
       profession: input.profession || "",
+      hasCompletedOnboarding:
+        typeof input.hasCompletedOnboarding === "boolean"
+          ? input.hasCompletedOnboarding
+          : false,
       emailVerified: false,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -103,6 +117,15 @@ class FileStore {
     if (typeof updates.name === "string") user.name = updates.name;
     if (typeof updates.dateOfBirth === "string") user.dateOfBirth = updates.dateOfBirth;
     if (typeof updates.profession === "string") user.profession = updates.profession;
+    user.updatedAt = nowIso();
+    await this.save();
+    return user;
+  }
+
+  async completeUserOnboarding(userId) {
+    const user = await this.findUserById(userId);
+    if (!user) return null;
+    user.hasCompletedOnboarding = true;
     user.updatedAt = nowIso();
     await this.save();
     return user;
@@ -252,6 +275,7 @@ class FileStore {
         passwordHash: null,
         dateOfBirth: null,
         profession: "",
+        hasCompletedOnboarding: null,
         emailVerified: true,
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -343,6 +367,7 @@ class MysqlStore {
         password_hash VARCHAR(255) NULL,
         date_of_birth DATE NULL,
         profession VARCHAR(120) NOT NULL DEFAULT '',
+        has_completed_onboarding BOOLEAN NULL DEFAULT NULL,
         email_verified BOOLEAN NOT NULL DEFAULT FALSE,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
@@ -352,6 +377,11 @@ class MysqlStore {
     await this.connection.query(`
       ALTER TABLE users
       ADD COLUMN IF NOT EXISTS profession VARCHAR(120) NOT NULL DEFAULT ''
+    `);
+
+    await this.connection.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS has_completed_onboarding BOOLEAN NULL DEFAULT NULL
     `);
 
     await this.connection.query(`
@@ -437,6 +467,10 @@ class MysqlStore {
         ? new Date(row.date_of_birth).toISOString().slice(0, 10)
         : null,
       profession: row.profession || "",
+      hasCompletedOnboarding:
+        row.has_completed_onboarding === null
+          ? null
+          : Boolean(row.has_completed_onboarding),
       emailVerified: Boolean(row.email_verified),
       createdAt: new Date(row.created_at).toISOString(),
       updatedAt: new Date(row.updated_at).toISOString(),
@@ -462,13 +496,16 @@ class MysqlStore {
   async createEmailUser(input) {
     const now = new Date();
     const [result] = await this.connection.query(
-      "INSERT INTO users (email, name, password_hash, date_of_birth, profession, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO users (email, name, password_hash, date_of_birth, profession, has_completed_onboarding, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         normalizeEmail(input.email),
         input.name,
         input.passwordHash,
         input.dateOfBirth,
         input.profession || "",
+        typeof input.hasCompletedOnboarding === "boolean"
+          ? input.hasCompletedOnboarding
+          : false,
         false,
         now,
         now,
@@ -498,6 +535,14 @@ class MysqlStore {
     await this.connection.query(
       `UPDATE users SET ${assignments.join(", ")} WHERE id = ?`,
       values
+    );
+    return this.findUserById(userId);
+  }
+
+  async completeUserOnboarding(userId) {
+    await this.connection.query(
+      "UPDATE users SET has_completed_onboarding = ?, updated_at = ? WHERE id = ?",
+      [true, new Date(), userId]
     );
     return this.findUserById(userId);
   }
@@ -682,8 +727,8 @@ class MysqlStore {
     let user = normalizedEmail ? await this.findUserByEmail(normalizedEmail) : null;
     if (!user) {
       const [result] = await this.connection.query(
-        "INSERT INTO users (email, name, password_hash, date_of_birth, profession, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [normalizedEmail, name || "", null, null, "", true, new Date(), new Date()]
+        "INSERT INTO users (email, name, password_hash, date_of_birth, profession, has_completed_onboarding, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [normalizedEmail, name || "", null, null, "", null, true, new Date(), new Date()]
       );
       user = await this.findUserById(result.insertId);
     } else if (!user.emailVerified) {
