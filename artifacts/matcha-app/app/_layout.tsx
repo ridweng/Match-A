@@ -8,13 +8,12 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
+import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import Colors from "@/constants/colors";
 import { AppProvider, useApp } from "@/context/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -29,10 +28,17 @@ function RootLayoutNav() {
     hasCompletedOnboarding,
   } = useApp();
 
+  const [loadingVisible, setLoadingVisible] = useState(true);
+  const [navigated, setNavigated] = useState(false);
+
   useEffect(() => {
-    if (authStatus === "loading") {
-      return;
-    }
+    if (authStatus === "loading") return;
+
+    setLoadingVisible(false);
+
+    if (navigated) return;
+    setNavigated(true);
+
     if (authStatus !== "authenticated") {
       router.replace("/login" as any);
     } else if (biometricLockRequired) {
@@ -51,29 +57,18 @@ function RootLayoutNav() {
     hasCompletedOnboarding,
   ]);
 
-  if (authStatus === "loading") {
-    return (
-      <View
-        style={{
-          flex: 1,
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: Colors.background,
-        }}
-      >
-        <ActivityIndicator color={Colors.primaryLight} />
-      </View>
-    );
-  }
-
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="login" />
-      <Stack.Screen name="biometric-lock" />
-      <Stack.Screen name="complete-profile" />
-      <Stack.Screen name="onboarding" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="login" />
+        <Stack.Screen name="biometric-lock" />
+        <Stack.Screen name="complete-profile" />
+        <Stack.Screen name="onboarding" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+
+      <AppLoadingScreen visible={loadingVisible} />
+    </>
   );
 }
 
