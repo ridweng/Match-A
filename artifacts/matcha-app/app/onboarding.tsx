@@ -206,6 +206,7 @@ export default function OnboardingScreen() {
         : [getDefaultSpokenLanguageValue(language)];
     })()
   );
+  const [draftLanguages, setDraftLanguages] = useState<string[]>(languagesSpoken);
   const [education, setEducation] = useState(
     normalizeEducation(accountProfile.education)
   );
@@ -242,14 +243,21 @@ export default function OnboardingScreen() {
         .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
     [languagesSpoken]
   );
+  const selectedDraftLanguageOptions = useMemo(
+    () =>
+      draftLanguages
+        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
+        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
+    [draftLanguages]
+  );
   const filteredLanguages = useMemo(() => {
     return SPOKEN_LANGUAGES.filter((item) => {
-      if (languagesSpoken.includes(item.value)) {
+      if (draftLanguages.includes(item.value)) {
         return false;
       }
       return matchesSpokenLanguageSearch(item.value, languageSearch);
     });
-  }, [languageSearch, languagesSpoken]);
+  }, [draftLanguages, languageSearch]);
 
   const isFormComplete =
     Boolean(genderIdentity) &&
@@ -369,8 +377,24 @@ export default function OnboardingScreen() {
     );
   };
 
+  const openLanguagesModal = () => {
+    setDraftLanguages(languagesSpoken);
+    setLanguageSearch("");
+    setLanguagesModalOpen(true);
+  };
+
+  const closeLanguagesModal = () => {
+    setLanguagesModalOpen(false);
+    setLanguageSearch("");
+  };
+
+  const acceptLanguages = () => {
+    setLanguagesSpoken(draftLanguages);
+    closeLanguagesModal();
+  };
+
   const toggleLanguage = (value: string) => {
-    setLanguagesSpoken((current) => {
+    setDraftLanguages((current) => {
       if (current.includes(value)) {
         return current.filter((item) => item !== value);
       }
@@ -555,42 +579,36 @@ export default function OnboardingScreen() {
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>{t("Idiomas", "Languages")}</Text>
           <Pressable
-            onPress={() => setLanguagesModalOpen(true)}
+            onPress={openLanguagesModal}
             style={styles.languagePickerButton}
           >
             <Text
               style={[
                 styles.selectValue,
-                !languagesSpoken.length && styles.placeholderText,
+                !selectedLanguageOptions.length && styles.placeholderText,
               ]}
+              numberOfLines={1}
             >
-              {languagesSpoken.length
-                ? languagesSpoken
-                    .map((value) => getSpokenLanguageLabel(value, language))
-                    .join(", ")
-                : t("Selecciona hasta 7 idiomas", "Select up to 7 languages")}
+              {selectedLanguageOptions.length
+                ? t(
+                    `${selectedLanguageOptions.length} idiomas seleccionados`,
+                    `${selectedLanguageOptions.length} languages selected`
+                  )
+                : t("Selecciona idiomas", "Select languages")}
             </Text>
             <Feather name="chevron-right" size={16} color={Colors.textSecondary} />
           </Pressable>
-          {languagesSpoken.length ? (
+          {selectedLanguageOptions.length ? (
             <View style={styles.languageChipRow}>
-              {languagesSpoken.map((value) => (
-                <Pressable
-                  key={value}
-                  onPress={() => toggleLanguage(value)}
-                  style={({ pressed }) => [
-                    styles.languageChip,
-                    pressed && { opacity: 0.86 },
-                  ]}
-                >
+              {selectedLanguageOptions.map((item) => (
+                <View key={item.value} style={styles.languageChip}>
                   <Text style={styles.languageChipFlag}>
-                    {getSpokenLanguageFlag(value)}
+                    {item.flag || getSpokenLanguageFlag(item.value)}
                   </Text>
                   <Text style={styles.languageChipText}>
-                    {getSpokenLanguageLabel(value, language)}
+                    {getSpokenLanguageLabel(item.value, language)}
                   </Text>
-                  <Feather name="x" size={12} color={Colors.primaryLight} />
-                </Pressable>
+                </View>
               ))}
             </View>
           ) : null}
@@ -735,61 +753,79 @@ export default function OnboardingScreen() {
 
       <Modal
         visible={languagesModalOpen}
-        transparent
         animationType="fade"
-        onRequestClose={() => setLanguagesModalOpen(false)}
+        presentationStyle="overFullScreen"
+        transparent
+        onRequestClose={closeLanguagesModal}
       >
-        <View style={styles.modalBackdrop}>
-          <Pressable
-            style={StyleSheet.absoluteFillObject}
-            onPress={() => setLanguagesModalOpen(false)}
-          />
+        <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : undefined}
             style={styles.modalKeyboardAvoider}
           >
-            <View style={[styles.modalCard, { paddingBottom: bottomPad }]}>
+            <View
+              style={[
+                styles.modalContainer,
+                {
+                  marginTop: insets.top + 16,
+                  marginBottom: insets.bottom + 16,
+                },
+              ]}
+            >
             <View style={styles.modalHeader}>
               <Pressable
-                onPress={() => setLanguagesModalOpen(false)}
-                style={styles.modalHeaderButton}
+                onPress={closeLanguagesModal}
+                style={({ pressed }) => [
+                  styles.modalHeaderBtn,
+                  pressed && { opacity: 0.75 },
+                ]}
               >
                 <Feather name="chevron-left" size={20} color={Colors.text} />
               </Pressable>
-              <View style={styles.modalTitleWrap}>
-                <Text style={styles.modalTitle}>
-                  {t("Idiomas que hablo", "Languages I speak")}
-                </Text>
-                <Text style={styles.modalSub}>
-                  {t(
-                    "Selecciona hasta 7 idiomas que hables para añadirlos a tu perfil.",
-                    "Select up to 7 languages you speak to add them to your profile."
-                  )}
-                </Text>
-              </View>
               <Pressable
-                onPress={() => setLanguagesModalOpen(false)}
-                style={styles.modalHeaderButton}
+                onPress={acceptLanguages}
+                style={({ pressed }) => [
+                  styles.modalAcceptBtn,
+                  pressed && { opacity: 0.82 },
+                ]}
               >
-                <Feather name="check" size={18} color={Colors.primaryLight} />
+                <Text style={styles.modalAcceptText}>{t("Aceptar", "Done")}</Text>
               </Pressable>
             </View>
 
+            <Text style={styles.modalTitle}>
+              {t("Idiomas que hablo", "Languages I speak")}
+            </Text>
+            <Text style={styles.modalDescription}>
+              {t(
+                "Selecciona hasta 7 idiomas que hables para añadirlos a tu perfil.",
+                "Select up to 7 languages you speak to add them to your profile."
+              )}
+            </Text>
+            <Text style={styles.modalCounter}>
+              {draftLanguages.length}/{MAX_SPOKEN_LANGUAGES}{" "}
+              {t("seleccionados", "selected")}
+            </Text>
+
+            <View style={styles.searchField}>
+              <Feather name="search" size={15} color={Colors.textMuted} />
             <TextInput
               value={languageSearch}
               onChangeText={setLanguageSearch}
               placeholder={t("Buscar idioma", "Search language")}
               placeholderTextColor={Colors.textMuted}
               style={styles.searchInput}
+              selectionColor={Colors.primaryLight}
             />
+            </View>
 
-            {selectedLanguageOptions.length ? (
+            {selectedDraftLanguageOptions.length ? (
               <View style={styles.selectedLanguagesBlock}>
                 <Text style={styles.selectedLanguagesLabel}>
                   {t("Seleccionados", "Selected")}
                 </Text>
                 <View style={styles.selectedLanguagesRow}>
-                  {selectedLanguageOptions.map((item) => (
+                  {selectedDraftLanguageOptions.map((item) => (
                     <Pressable
                       key={item.value}
                       onPress={() => toggleLanguage(item.value)}
@@ -812,51 +848,57 @@ export default function OnboardingScreen() {
             ) : null}
 
             <KeyboardAwareScrollViewCompat
-              contentContainerStyle={styles.modalChipsWrap}
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
-              bottomOffset={bottomPad}
+              bottomOffset={insets.bottom + 16}
               extraKeyboardSpace={18}
             >
-              {filteredLanguages.map((item) => {
-                const selected = languagesSpoken.includes(item.value);
-                return (
-                  <Pressable
-                    key={item.value}
-                    onPress={() => toggleLanguage(item.value)}
-                    style={[
-                      styles.modalChip,
-                      selected && styles.modalChipActive,
-                    ]}
-                  >
-                    <Text style={styles.modalChipFlag}>
-                      {item.flag || getSpokenLanguageFlag(item.value)}
-                    </Text>
-                    <Text
+              <View style={styles.modalOptionsWrap}>
+                {filteredLanguages.map((item) => {
+                  const selected = draftLanguages.includes(item.value);
+                  return (
+                    <Pressable
+                      key={item.value}
+                      onPress={() => toggleLanguage(item.value)}
                       style={[
-                        styles.modalChipText,
-                        selected && styles.modalChipTextActive,
+                        styles.modalOption,
+                        selected && styles.modalOptionSelected,
                       ]}
                     >
-                      {language === "es" ? item.es : item.en}
+                      <Text style={styles.modalOptionFlag}>
+                        {item.flag || getSpokenLanguageFlag(item.value)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.modalOptionText,
+                          selected && styles.modalOptionTextSelected,
+                        ]}
+                      >
+                        {getSpokenLanguageLabel(item.value, language)}
+                      </Text>
+                      {selected ? (
+                        <Feather name="check" size={13} color={Colors.primaryLight} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+                {!filteredLanguages.length ? (
+                  <View style={styles.languageEmptyState}>
+                    <Feather name="search" size={18} color={Colors.textMuted} />
+                    <Text style={styles.languageEmptyTitle}>
+                      {t("No encontramos idiomas", "No languages found")}
                     </Text>
-                  </Pressable>
-                );
-              })}
-              {!filteredLanguages.length ? (
-                <View style={styles.languageEmptyState}>
-                  <Feather name="search" size={18} color={Colors.textMuted} />
-                  <Text style={styles.languageEmptyTitle}>
-                    {t("No encontramos idiomas", "No languages found")}
-                  </Text>
-                  <Text style={styles.languageEmptyText}>
-                    {t(
-                      "Prueba con otro nombre o elimina un idioma seleccionado.",
-                      "Try another term or remove one of your selected languages."
-                    )}
-                  </Text>
-                </View>
-              ) : null}
+                    <Text style={styles.languageEmptyText}>
+                      {t(
+                        "Prueba otra búsqueda o elimina uno de los idiomas seleccionados.",
+                        "Try another search or remove one of the selected languages."
+                      )}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
             </KeyboardAwareScrollViewCompat>
           </View>
           </KeyboardAvoidingView>
@@ -1149,30 +1191,34 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
   },
-  modalBackdrop: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(9,16,13,0.72)",
-    justifyContent: "flex-end",
+    backgroundColor: "rgba(6, 12, 10, 0.72)",
+    paddingHorizontal: 16,
+    justifyContent: "center",
   },
   modalKeyboardAvoider: {
-    justifyContent: "flex-end",
+    flex: 1,
+    justifyContent: "center",
   },
-  modalCard: {
-    maxHeight: "86%",
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+  modalContainer: {
+    flex: 1,
+    maxHeight: "88%",
     backgroundColor: Colors.backgroundCard,
+    borderRadius: 28,
     borderWidth: 1,
     borderColor: Colors.border,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   modalHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 18,
   },
-  modalHeaderButton: {
+  modalHeaderBtn: {
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -1182,9 +1228,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  modalTitleWrap: {
-    flex: 1,
-    gap: 4,
+  modalAcceptBtn: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: Colors.primaryLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalAcceptText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: Colors.textInverted,
   },
   modalTitle: {
     fontFamily: "Inter_700Bold",
@@ -1192,22 +1247,36 @@ const styles = StyleSheet.create({
     color: Colors.text,
     letterSpacing: -0.5,
   },
-  modalSub: {
+  modalDescription: {
+    marginTop: 8,
     fontFamily: "Inter_400Regular",
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 21,
     color: Colors.textSecondary,
   },
-  searchInput: {
+  modalCounter: {
     marginTop: 14,
-    minHeight: 52,
-    borderRadius: 16,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.primaryLight,
+  },
+  searchField: {
+    marginTop: 16,
+    minHeight: 46,
+    borderRadius: 14,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 46,
     fontFamily: "Inter_400Regular",
-    fontSize: 15,
+    fontSize: 14,
     color: Colors.text,
   },
   selectedLanguagesBlock: {
@@ -1245,38 +1314,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.primaryLight,
   },
-  modalChipsWrap: {
+  modalScroll: {
+    flex: 1,
+    marginTop: 16,
+  },
+  modalScrollContent: {
+    paddingBottom: 24,
+  },
+  modalOptionsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
-    paddingTop: 16,
-    paddingBottom: 12,
+    gap: 8,
   },
-  modalChip: {
+  modalOption: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    alignSelf: "flex-start",
   },
-  modalChipFlag: {
+  modalOptionFlag: {
     fontSize: 16,
   },
-  modalChipActive: {
-    backgroundColor: "rgba(82,183,136,0.12)",
-    borderColor: "rgba(82,183,136,0.24)",
+  modalOptionSelected: {
+    borderColor: Colors.primaryLight,
+    backgroundColor: "rgba(82,183,136,0.08)",
   },
-  modalChipText: {
-    fontFamily: "Inter_500Medium",
+  modalOptionText: {
+    fontFamily: "Inter_400Regular",
     fontSize: 13,
     color: Colors.text,
   },
-  modalChipTextActive: {
+  modalOptionTextSelected: {
     color: Colors.primaryLight,
+    fontFamily: "Inter_500Medium",
   },
   languageEmptyState: {
     width: "100%",

@@ -37,11 +37,13 @@ import {
   getReligionImportanceLabel,
   getReligionLabel,
   getRelationshipGoalLabel,
+  getSpokenLanguageFlag,
   getSpokenLanguageLabel,
   getTobaccoUseLabel,
   HAIR_COLORS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
+  matchesSpokenLanguageSearch,
   normalizeAlcoholUse,
   normalizeBodyType,
   normalizeChildrenPreference,
@@ -53,6 +55,7 @@ import {
   normalizeReligion,
   normalizeReligionImportance,
   normalizeRelationshipGoal,
+  normalizeSpokenLanguages,
   normalizeTobaccoUse,
   PHYSICAL_ACTIVITY_OPTIONS,
   POLITICAL_INTEREST_OPTIONS,
@@ -249,29 +252,35 @@ export default function ProfileScreen() {
     heightUnit === "imperial"
       ? t("Tu altura en pulgadas", "Your height in inches")
       : t("Tu altura en cm", "Your height in cm");
-  const spokenLanguages = Array.isArray(accountProfile.languagesSpoken)
-    ? accountProfile.languagesSpoken
-    : [];
+  const spokenLanguages = normalizeSpokenLanguages(accountProfile.languagesSpoken);
   const [languagesModalOpen, setLanguagesModalOpen] = React.useState(false);
   const [languageSearch, setLanguageSearch] = React.useState("");
   const [draftLanguages, setDraftLanguages] = React.useState<string[]>(
     spokenLanguages
   );
-  const selectedLanguageLabels = spokenLanguages.map((value) =>
-    getSpokenLanguageLabel(value, language)
+  const selectedLanguageOptions = React.useMemo(
+    () =>
+      spokenLanguages
+        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
+        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
+    [spokenLanguages]
+  );
+  const selectedDraftLanguageOptions = React.useMemo(
+    () =>
+      draftLanguages
+        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
+        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
+    [draftLanguages]
   );
 
   const filteredLanguages = React.useMemo(() => {
-    const query = languageSearch.trim().toLowerCase();
-    if (!query) {
-      return SPOKEN_LANGUAGES;
-    }
-
     return SPOKEN_LANGUAGES.filter((item) => {
-      const haystack = [item.es, item.en, item.value].join(" ").toLowerCase();
-      return haystack.includes(query);
+      if (draftLanguages.includes(item.value)) {
+        return false;
+      }
+      return matchesSpokenLanguageSearch(item.value, languageSearch);
     });
-  }, [languageSearch]);
+  }, [draftLanguages, languageSearch]);
 
   const showValue = (value: string | string[]) => {
     if (Array.isArray(value)) {
@@ -655,24 +664,29 @@ export default function ProfileScreen() {
                 <Text
                   style={[
                     styles.selectValue,
-                    !selectedLanguageLabels.length && styles.selectPlaceholder,
+                    !selectedLanguageOptions.length && styles.selectPlaceholder,
                   ]}
                   numberOfLines={1}
                 >
-                  {selectedLanguageLabels.length
+                  {selectedLanguageOptions.length
                     ? t(
-                        `${selectedLanguageLabels.length} idiomas seleccionados`,
-                        `${selectedLanguageLabels.length} languages selected`
+                        `${selectedLanguageOptions.length} idiomas seleccionados`,
+                        `${selectedLanguageOptions.length} languages selected`
                       )
                     : t("Selecciona idiomas", "Select languages")}
                 </Text>
                 <Feather name="chevron-right" size={16} color={Colors.textSecondary} />
               </Pressable>
-              {selectedLanguageLabels.length ? (
+              {selectedLanguageOptions.length ? (
                 <View style={styles.languageChipsWrap}>
-                  {selectedLanguageLabels.map((label) => (
-                    <View key={label} style={styles.languageChip}>
-                      <Text style={styles.languageChipText}>{label}</Text>
+                  {selectedLanguageOptions.map((item) => (
+                    <View key={item.value} style={styles.languageChip}>
+                      <Text style={styles.languageChipFlag}>
+                        {item.flag || getSpokenLanguageFlag(item.value)}
+                      </Text>
+                      <Text style={styles.languageChipText}>
+                        {getSpokenLanguageLabel(item.value, language)}
+                      </Text>
                     </View>
                   ))}
                 </View>
@@ -882,6 +896,34 @@ export default function ProfileScreen() {
               />
             </View>
 
+            {selectedDraftLanguageOptions.length ? (
+              <View style={styles.selectedLanguagesBlock}>
+                <Text style={styles.selectedLanguagesLabel}>
+                  {t("Seleccionados", "Selected")}
+                </Text>
+                <View style={styles.selectedLanguagesRow}>
+                  {selectedDraftLanguageOptions.map((item) => (
+                    <Pressable
+                      key={item.value}
+                      onPress={() => toggleSpokenLanguage(item.value)}
+                      style={({ pressed }) => [
+                        styles.selectedLanguageChip,
+                        pressed && { opacity: 0.82 },
+                      ]}
+                    >
+                      <Text style={styles.selectedLanguageFlag}>
+                        {item.flag || getSpokenLanguageFlag(item.value)}
+                      </Text>
+                      <Text style={styles.selectedLanguageText}>
+                        {getSpokenLanguageLabel(item.value, language)}
+                      </Text>
+                      <Feather name="x" size={12} color={Colors.primaryLight} />
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             <KeyboardAwareScrollViewCompat
               style={styles.modalScroll}
               contentContainerStyle={styles.modalScrollContent}
@@ -902,6 +944,9 @@ export default function ProfileScreen() {
                         selected && styles.modalOptionSelected,
                       ]}
                     >
+                      <Text style={styles.modalOptionFlag}>
+                        {item.flag || getSpokenLanguageFlag(item.value)}
+                      </Text>
                       <Text
                         style={[
                           styles.modalOptionText,
@@ -916,6 +961,20 @@ export default function ProfileScreen() {
                     </Pressable>
                   );
                 })}
+                {!filteredLanguages.length ? (
+                  <View style={styles.languageEmptyState}>
+                    <Feather name="search" size={18} color={Colors.textMuted} />
+                    <Text style={styles.languageEmptyTitle}>
+                      {t("No encontramos idiomas", "No languages found")}
+                    </Text>
+                    <Text style={styles.languageEmptyText}>
+                      {t(
+                        "Prueba otra búsqueda o elimina uno de los idiomas seleccionados.",
+                        "Try another search or remove one of the selected languages."
+                      )}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             </KeyboardAwareScrollViewCompat>
           </View>
@@ -1206,12 +1265,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   languageChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
     backgroundColor: "rgba(82,183,136,0.12)",
     borderWidth: 1,
     borderColor: Colors.primaryLight,
+  },
+  languageChipFlag: {
+    fontSize: 14,
   },
   languageChipText: {
     fontFamily: "Inter_500Medium",
@@ -1365,6 +1430,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.primaryLight,
   },
+  selectedLanguagesBlock: {
+    marginTop: 14,
+    gap: 10,
+  },
+  selectedLanguagesLabel: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  selectedLanguagesRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  selectedLanguageChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: "rgba(82,183,136,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.24)",
+  },
+  selectedLanguageFlag: {
+    fontSize: 14,
+  },
+  selectedLanguageText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.primaryLight,
+  },
   searchField: {
     marginTop: 16,
     minHeight: 46,
@@ -1409,6 +1509,9 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     gap: 6,
   },
+  modalOptionFlag: {
+    fontSize: 16,
+  },
   modalOptionSelected: {
     borderColor: Colors.primaryLight,
     backgroundColor: "rgba(82,183,136,0.08)",
@@ -1421,5 +1524,29 @@ const styles = StyleSheet.create({
   modalOptionTextSelected: {
     color: Colors.primaryLight,
     fontFamily: "Inter_500Medium",
+  },
+  languageEmptyState: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  languageEmptyTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 15,
+    color: Colors.text,
+  },
+  languageEmptyText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+    textAlign: "center",
   },
 });

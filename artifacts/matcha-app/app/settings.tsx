@@ -403,6 +403,7 @@ export default function SettingsScreen() {
     biometricsEnabled,
     heightUnit,
     language,
+    user,
     logout,
     saveSettings,
     setBiometricsEnabled,
@@ -708,7 +709,7 @@ export default function SettingsScreen() {
         <Section title={t("Cuenta", "Account")}>
           <Field
             label={t("Correo electrónico", "Email")}
-            value={accountProfile.email || t("Sin correo", "No email")}
+            value={user?.email || accountProfile.email || t("Sin correo", "No email")}
           />
           <View style={s.divider} />
           <View style={s.toggleRow}>
