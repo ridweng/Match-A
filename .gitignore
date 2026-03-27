@@ -47,3 +47,11 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local Docker data
+data/*
+!data/.gitkeep
+!data/media/
+!data/media/.gitkeep
+!data/postgres/
+!data/postgres/.gitkeep
