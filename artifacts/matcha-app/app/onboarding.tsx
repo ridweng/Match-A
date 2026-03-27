@@ -29,13 +29,16 @@ import {
   GENDER_IDENTITIES,
   getBodyTypeLabel,
   getChildrenPreferenceLabel,
+  getDefaultSpokenLanguageValue,
   getEducationLabel,
   getGenderIdentityLabel,
   getPersonalityLabel,
   getPhysicalActivityLabel,
   getPronounLabel,
   getRelationshipGoalLabel,
+  getSpokenLanguageFlag,
   getSpokenLanguageLabel,
+  matchesSpokenLanguageSearch,
   normalizeBodyType,
   normalizeChildrenPreference,
   normalizeEducation,
@@ -44,6 +47,7 @@ import {
   normalizePhysicalActivity,
   normalizePronouns,
   normalizeRelationshipGoal,
+  normalizeSpokenLanguages,
   PERSONALITY_TRAITS,
   PHYSICAL_ACTIVITY_OPTIONS,
   RELATIONSHIP_GOALS,
@@ -195,7 +199,12 @@ export default function OnboardingScreen() {
     normalizeChildrenPreference(accountProfile.childrenPreference)
   );
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>(
-    Array.isArray(accountProfile.languagesSpoken) ? accountProfile.languagesSpoken : []
+    (() => {
+      const normalized = normalizeSpokenLanguages(accountProfile.languagesSpoken);
+      return normalized.length
+        ? normalized
+        : [getDefaultSpokenLanguageValue(language)];
+    })()
   );
   const [education, setEducation] = useState(
     normalizeEducation(accountProfile.education)
@@ -226,15 +235,21 @@ export default function OnboardingScreen() {
   const bottomPad = insets.bottom + 24;
   const mainPhoto = photos[0] || "";
   const pronounOptions = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
+  const selectedLanguageOptions = useMemo(
+    () =>
+      languagesSpoken
+        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
+        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
+    [languagesSpoken]
+  );
   const filteredLanguages = useMemo(() => {
-    const query = languageSearch.trim().toLowerCase();
-    if (!query) {
-      return SPOKEN_LANGUAGES;
-    }
-    return SPOKEN_LANGUAGES.filter((item) =>
-      [item.es, item.en, item.value].join(" ").toLowerCase().includes(query)
-    );
-  }, [languageSearch]);
+    return SPOKEN_LANGUAGES.filter((item) => {
+      if (languagesSpoken.includes(item.value)) {
+        return false;
+      }
+      return matchesSpokenLanguageSearch(item.value, languageSearch);
+    });
+  }, [languageSearch, languagesSpoken]);
 
   const isFormComplete =
     Boolean(genderIdentity) &&
@@ -560,11 +575,22 @@ export default function OnboardingScreen() {
           {languagesSpoken.length ? (
             <View style={styles.languageChipRow}>
               {languagesSpoken.map((value) => (
-                <View key={value} style={styles.languageChip}>
+                <Pressable
+                  key={value}
+                  onPress={() => toggleLanguage(value)}
+                  style={({ pressed }) => [
+                    styles.languageChip,
+                    pressed && { opacity: 0.86 },
+                  ]}
+                >
+                  <Text style={styles.languageChipFlag}>
+                    {getSpokenLanguageFlag(value)}
+                  </Text>
                   <Text style={styles.languageChipText}>
                     {getSpokenLanguageLabel(value, language)}
                   </Text>
-                </View>
+                  <Feather name="x" size={12} color={Colors.primaryLight} />
+                </Pressable>
               ))}
             </View>
           ) : null}
@@ -757,6 +783,34 @@ export default function OnboardingScreen() {
               style={styles.searchInput}
             />
 
+            {selectedLanguageOptions.length ? (
+              <View style={styles.selectedLanguagesBlock}>
+                <Text style={styles.selectedLanguagesLabel}>
+                  {t("Seleccionados", "Selected")}
+                </Text>
+                <View style={styles.selectedLanguagesRow}>
+                  {selectedLanguageOptions.map((item) => (
+                    <Pressable
+                      key={item.value}
+                      onPress={() => toggleLanguage(item.value)}
+                      style={({ pressed }) => [
+                        styles.selectedLanguageChip,
+                        pressed && { opacity: 0.82 },
+                      ]}
+                    >
+                      <Text style={styles.selectedLanguageFlag}>
+                        {item.flag || getSpokenLanguageFlag(item.value)}
+                      </Text>
+                      <Text style={styles.selectedLanguageText}>
+                        {language === "es" ? item.es : item.en}
+                      </Text>
+                      <Feather name="x" size={12} color={Colors.primaryLight} />
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             <KeyboardAwareScrollViewCompat
               contentContainerStyle={styles.modalChipsWrap}
               showsVerticalScrollIndicator={false}
@@ -775,6 +829,9 @@ export default function OnboardingScreen() {
                       selected && styles.modalChipActive,
                     ]}
                   >
+                    <Text style={styles.modalChipFlag}>
+                      {item.flag || getSpokenLanguageFlag(item.value)}
+                    </Text>
                     <Text
                       style={[
                         styles.modalChipText,
@@ -786,6 +843,20 @@ export default function OnboardingScreen() {
                   </Pressable>
                 );
               })}
+              {!filteredLanguages.length ? (
+                <View style={styles.languageEmptyState}>
+                  <Feather name="search" size={18} color={Colors.textMuted} />
+                  <Text style={styles.languageEmptyTitle}>
+                    {t("No encontramos idiomas", "No languages found")}
+                  </Text>
+                  <Text style={styles.languageEmptyText}>
+                    {t(
+                      "Prueba con otro nombre o elimina un idioma seleccionado.",
+                      "Try another term or remove one of your selected languages."
+                    )}
+                  </Text>
+                </View>
+              ) : null}
             </KeyboardAwareScrollViewCompat>
           </View>
           </KeyboardAvoidingView>
@@ -1027,12 +1098,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   languageChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: "rgba(82,183,136,0.12)",
     borderWidth: 1,
     borderColor: "rgba(82,183,136,0.2)",
+  },
+  languageChipFlag: {
+    fontSize: 14,
   },
   languageChipText: {
     fontFamily: "Inter_500Medium",
@@ -1133,6 +1210,41 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.text,
   },
+  selectedLanguagesBlock: {
+    marginTop: 14,
+    gap: 10,
+  },
+  selectedLanguagesLabel: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  selectedLanguagesRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  selectedLanguageChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: "rgba(82,183,136,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.24)",
+  },
+  selectedLanguageFlag: {
+    fontSize: 14,
+  },
+  selectedLanguageText: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: Colors.primaryLight,
+  },
   modalChipsWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1141,12 +1253,18 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   modalChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 16,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  modalChipFlag: {
+    fontSize: 16,
   },
   modalChipActive: {
     backgroundColor: "rgba(82,183,136,0.12)",
@@ -1159,5 +1277,29 @@ const styles = StyleSheet.create({
   },
   modalChipTextActive: {
     color: Colors.primaryLight,
+  },
+  languageEmptyState: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 28,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  languageEmptyTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 15,
+    color: Colors.text,
+  },
+  languageEmptyText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+    textAlign: "center",
   },
 });

@@ -388,145 +388,230 @@ export type SpokenLanguageOption = {
   value: string;
   es: string;
   en: string;
+  flag?: string;
 };
 
 export const SPOKEN_LANGUAGES: SpokenLanguageOption[] = [
-  { value: "spanish", es: "Español", en: "Spanish" },
-  { value: "english", es: "Inglés", en: "English" },
-  { value: "portuguese", es: "Portugués", en: "Portuguese" },
-  { value: "french", es: "Francés", en: "French" },
-  { value: "italian", es: "Italiano", en: "Italian" },
-  { value: "german", es: "Alemán", en: "German" },
-  { value: "dutch", es: "Neerlandés", en: "Dutch" },
-  { value: "catalan", es: "Catalán", en: "Catalan" },
-  { value: "galician", es: "Gallego", en: "Galician" },
-  { value: "basque", es: "Euskera / Vasco", en: "Basque" },
-  { value: "romanian", es: "Rumano", en: "Romanian" },
-  { value: "swedish", es: "Sueco", en: "Swedish" },
-  { value: "norwegian", es: "Noruego", en: "Norwegian" },
-  { value: "danish", es: "Danés", en: "Danish" },
-  { value: "finnish", es: "Finlandés", en: "Finnish" },
-  { value: "icelandic", es: "Islandés", en: "Icelandic" },
-  { value: "irish", es: "Irlandés", en: "Irish" },
-  { value: "welsh", es: "Galés", en: "Welsh" },
-  { value: "scottish_gaelic", es: "Escocés gaélico", en: "Scottish Gaelic" },
-  { value: "polish", es: "Polaco", en: "Polish" },
-  { value: "czech", es: "Checo", en: "Czech" },
-  { value: "slovak", es: "Eslovaco", en: "Slovak" },
-  { value: "hungarian", es: "Húngaro", en: "Hungarian" },
-  { value: "slovenian", es: "Esloveno", en: "Slovenian" },
-  { value: "croatian", es: "Croata", en: "Croatian" },
-  { value: "serbian", es: "Serbio", en: "Serbian" },
-  { value: "bosnian", es: "Bosnio", en: "Bosnian" },
-  { value: "montenegrin", es: "Montenegrino", en: "Montenegrin" },
-  { value: "macedonian", es: "Macedonio", en: "Macedonian" },
-  { value: "bulgarian", es: "Búlgaro", en: "Bulgarian" },
-  { value: "albanian", es: "Albanés", en: "Albanian" },
-  { value: "greek", es: "Griego", en: "Greek" },
-  { value: "russian", es: "Ruso", en: "Russian" },
-  { value: "ukrainian", es: "Ucraniano", en: "Ukrainian" },
-  { value: "belarusian", es: "Bielorruso", en: "Belarusian" },
-  { value: "lithuanian", es: "Lituano", en: "Lithuanian" },
-  { value: "latvian", es: "Letón", en: "Latvian" },
-  { value: "estonian", es: "Estonio", en: "Estonian" },
-  { value: "maltese", es: "Maltés", en: "Maltese" },
-  { value: "turkish", es: "Turco", en: "Turkish" },
-  { value: "arabic", es: "Árabe", en: "Arabic" },
-  { value: "hebrew", es: "Hebreo", en: "Hebrew" },
-  { value: "persian_farsi", es: "Persa / Farsi", en: "Persian / Farsi" },
-  { value: "kurdish", es: "Kurdo", en: "Kurdish" },
-  { value: "armenian", es: "Armenio", en: "Armenian" },
-  { value: "georgian", es: "Georgiano", en: "Georgian" },
-  { value: "azerbaijani", es: "Azerbaiyano", en: "Azerbaijani" },
-  { value: "kazakh", es: "Kazajo", en: "Kazakh" },
-  { value: "uzbek", es: "Uzbeko", en: "Uzbek" },
-  { value: "turkmen", es: "Turcomano", en: "Turkmen" },
-  { value: "tajik", es: "Tayiko", en: "Tajik" },
-  { value: "kyrgyz", es: "Kirguís", en: "Kyrgyz" },
-  { value: "pashto", es: "Pastún", en: "Pashto" },
-  { value: "dari", es: "Dari", en: "Dari" },
-  { value: "urdu", es: "Urdu", en: "Urdu" },
-  { value: "hindi", es: "Hindi", en: "Hindi" },
-  { value: "bengali", es: "Bengalí", en: "Bengali" },
-  { value: "punjabi", es: "Panyabí", en: "Punjabi" },
-  { value: "gujarati", es: "Guyaratí", en: "Gujarati" },
-  { value: "marathi", es: "Maratí", en: "Marathi" },
-  { value: "tamil", es: "Tamil", en: "Tamil" },
-  { value: "telugu", es: "Telugu", en: "Telugu" },
-  { value: "kannada", es: "Canarés / Kannada", en: "Kannada" },
-  { value: "malayalam", es: "Malayalam", en: "Malayalam" },
-  { value: "odia", es: "Odia", en: "Odia" },
-  { value: "assamese", es: "Asamés", en: "Assamese" },
-  { value: "nepali", es: "Nepalí", en: "Nepali" },
-  { value: "sinhala", es: "Cingalés", en: "Sinhala" },
-  { value: "burmese", es: "Birmano", en: "Burmese" },
-  { value: "thai", es: "Tailandés", en: "Thai" },
-  { value: "lao", es: "Lao", en: "Lao" },
-  { value: "khmer", es: "Jemer / Camboyano", en: "Khmer" },
-  { value: "vietnamese", es: "Vietnamita", en: "Vietnamese" },
-  { value: "indonesian", es: "Indonesio", en: "Indonesian" },
-  { value: "malay", es: "Malayo", en: "Malay" },
-  { value: "tagalog", es: "Tagalo", en: "Tagalog" },
-  { value: "filipino", es: "Filipino", en: "Filipino" },
-  { value: "cebuano", es: "Cebuano", en: "Cebuano" },
-  { value: "javanese", es: "Javanés", en: "Javanese" },
-  { value: "sundanese", es: "Sundanés", en: "Sundanese" },
-  { value: "mandarin_chinese", es: "Chino mandarín", en: "Mandarin Chinese" },
-  { value: "cantonese", es: "Cantonés", en: "Cantonese" },
-  { value: "hakka", es: "Hakka", en: "Hakka" },
-  { value: "japanese", es: "Japonés", en: "Japanese" },
-  { value: "korean", es: "Coreano", en: "Korean" },
-  { value: "mongolian", es: "Mongol", en: "Mongolian" },
-  { value: "tibetan", es: "Tibetano", en: "Tibetan" },
-  { value: "uyghur", es: "Uigur", en: "Uyghur" },
-  { value: "swahili", es: "Suajili", en: "Swahili" },
-  { value: "amharic", es: "Amhárico", en: "Amharic" },
-  { value: "somali", es: "Somali", en: "Somali" },
-  { value: "oromo", es: "Oromo", en: "Oromo" },
-  { value: "tigrinya", es: "Tigrinya", en: "Tigrinya" },
-  { value: "hausa", es: "Hausa", en: "Hausa" },
-  { value: "yoruba", es: "Yoruba", en: "Yoruba" },
-  { value: "igbo", es: "Igbo", en: "Igbo" },
-  { value: "zulu", es: "Zulú", en: "Zulu" },
-  { value: "xhosa", es: "Xhosa", en: "Xhosa" },
-  { value: "afrikaans", es: "Afrikáans", en: "Afrikaans" },
-  { value: "shona", es: "Shona", en: "Shona" },
-  { value: "kinyarwanda", es: "Kinyarwanda", en: "Kinyarwanda" },
-  { value: "lingala", es: "Lingala", en: "Lingala" },
-  { value: "wolof", es: "Wolof", en: "Wolof" },
-  { value: "malagasy", es: "Malagasy", en: "Malagasy" },
-  { value: "quechua", es: "Quechua", en: "Quechua" },
-  { value: "aymara", es: "Aymara", en: "Aymara" },
-  { value: "guarani", es: "Guaraní", en: "Guarani" },
-  { value: "nahuatl", es: "Náhuatl", en: "Nahuatl" },
-  { value: "mapudungun", es: "Mapudungun", en: "Mapudungun" },
-  { value: "yucatec_maya", es: "Maya yucateco", en: "Yucatec Maya" },
-  { value: "inuktitut", es: "Inuit / Inuktitut", en: "Inuktitut" },
-  { value: "hawaiian", es: "Hawaiano", en: "Hawaiian" },
-  { value: "maori", es: "Maorí", en: "Maori" },
-  { value: "samoan", es: "Samoano", en: "Samoan" },
-  { value: "tongan", es: "Tongano", en: "Tongan" },
-  { value: "fijian", es: "Fiyiano", en: "Fijian" },
-  { value: "haitian_creole", es: "Criollo haitiano", en: "Haitian Creole" },
-  { value: "papiamento", es: "Papiamento", en: "Papiamento" },
-  { value: "luxembourgish", es: "Luxemburgués", en: "Luxembourgish" },
-  { value: "esperanto", es: "Esperanto", en: "Esperanto" },
-  { value: "asl", es: "Lengua de señas americana", en: "American Sign Language" },
-  { value: "bsl", es: "Lengua de señas británica", en: "British Sign Language" },
-  { value: "chilean_sign_language", es: "Lengua de señas chilena", en: "Chilean Sign Language" },
+  { value: "spanish", es: "Español", en: "Spanish", flag: "🇪🇸" },
+  { value: "english", es: "Inglés", en: "English", flag: "🇬🇧" },
+  { value: "portuguese", es: "Portugués", en: "Portuguese", flag: "🇵🇹" },
+  { value: "french", es: "Francés", en: "French", flag: "🇫🇷" },
+  { value: "italian", es: "Italiano", en: "Italian", flag: "🇮🇹" },
+  { value: "german", es: "Alemán", en: "German", flag: "🇩🇪" },
+  { value: "dutch", es: "Neerlandés", en: "Dutch", flag: "🇳🇱" },
+  { value: "catalan", es: "Catalán", en: "Catalan", flag: "🇪🇸" },
+  { value: "galician", es: "Gallego", en: "Galician", flag: "🇪🇸" },
+  { value: "basque", es: "Euskera / Vasco", en: "Basque", flag: "🇪🇸" },
+  { value: "romanian", es: "Rumano", en: "Romanian", flag: "🇷🇴" },
+  { value: "swedish", es: "Sueco", en: "Swedish", flag: "🇸🇪" },
+  { value: "norwegian", es: "Noruego", en: "Norwegian", flag: "🇳🇴" },
+  { value: "danish", es: "Danés", en: "Danish", flag: "🇩🇰" },
+  { value: "finnish", es: "Finlandés", en: "Finnish", flag: "🇫🇮" },
+  { value: "icelandic", es: "Islandés", en: "Icelandic", flag: "🇮🇸" },
+  { value: "irish", es: "Irlandés", en: "Irish", flag: "🇮🇪" },
+  { value: "welsh", es: "Galés", en: "Welsh", flag: "🇬🇧" },
+  { value: "scottish_gaelic", es: "Escocés gaélico", en: "Scottish Gaelic", flag: "🇬🇧" },
+  { value: "polish", es: "Polaco", en: "Polish", flag: "🇵🇱" },
+  { value: "czech", es: "Checo", en: "Czech", flag: "🇨🇿" },
+  { value: "slovak", es: "Eslovaco", en: "Slovak", flag: "🇸🇰" },
+  { value: "hungarian", es: "Húngaro", en: "Hungarian", flag: "🇭🇺" },
+  { value: "slovenian", es: "Esloveno", en: "Slovenian", flag: "🇸🇮" },
+  { value: "croatian", es: "Croata", en: "Croatian", flag: "🇭🇷" },
+  { value: "serbian", es: "Serbio", en: "Serbian", flag: "🇷🇸" },
+  { value: "bosnian", es: "Bosnio", en: "Bosnian", flag: "🇧🇦" },
+  { value: "montenegrin", es: "Montenegrino", en: "Montenegrin", flag: "🇲🇪" },
+  { value: "macedonian", es: "Macedonio", en: "Macedonian", flag: "🇲🇰" },
+  { value: "bulgarian", es: "Búlgaro", en: "Bulgarian", flag: "🇧🇬" },
+  { value: "albanian", es: "Albanés", en: "Albanian", flag: "🇦🇱" },
+  { value: "greek", es: "Griego", en: "Greek", flag: "🇬🇷" },
+  { value: "russian", es: "Ruso", en: "Russian", flag: "🇷🇺" },
+  { value: "ukrainian", es: "Ucraniano", en: "Ukrainian", flag: "🇺🇦" },
+  { value: "belarusian", es: "Bielorruso", en: "Belarusian", flag: "🇧🇾" },
+  { value: "lithuanian", es: "Lituano", en: "Lithuanian", flag: "🇱🇹" },
+  { value: "latvian", es: "Letón", en: "Latvian", flag: "🇱🇻" },
+  { value: "estonian", es: "Estonio", en: "Estonian", flag: "🇪🇪" },
+  { value: "maltese", es: "Maltés", en: "Maltese", flag: "🇲🇹" },
+  { value: "turkish", es: "Turco", en: "Turkish", flag: "🇹🇷" },
+  { value: "arabic", es: "Árabe", en: "Arabic", flag: "🇸🇦" },
+  { value: "hebrew", es: "Hebreo", en: "Hebrew", flag: "🇮🇱" },
+  { value: "persian_farsi", es: "Persa / Farsi", en: "Persian / Farsi", flag: "🇮🇷" },
+  { value: "kurdish", es: "Kurdo", en: "Kurdish", flag: "🇮🇶" },
+  { value: "armenian", es: "Armenio", en: "Armenian", flag: "🇦🇲" },
+  { value: "georgian", es: "Georgiano", en: "Georgian", flag: "🇬🇪" },
+  { value: "azerbaijani", es: "Azerbaiyano", en: "Azerbaijani", flag: "🇦🇿" },
+  { value: "kazakh", es: "Kazajo", en: "Kazakh", flag: "🇰🇿" },
+  { value: "uzbek", es: "Uzbeko", en: "Uzbek", flag: "🇺🇿" },
+  { value: "turkmen", es: "Turcomano", en: "Turkmen", flag: "🇹🇲" },
+  { value: "tajik", es: "Tayiko", en: "Tajik", flag: "🇹🇯" },
+  { value: "kyrgyz", es: "Kirguís", en: "Kyrgyz", flag: "🇰🇬" },
+  { value: "pashto", es: "Pastún", en: "Pashto", flag: "🇦🇫" },
+  { value: "dari", es: "Dari", en: "Dari", flag: "🇦🇫" },
+  { value: "urdu", es: "Urdu", en: "Urdu", flag: "🇵🇰" },
+  { value: "hindi", es: "Hindi", en: "Hindi", flag: "🇮🇳" },
+  { value: "bengali", es: "Bengalí", en: "Bengali", flag: "🇧🇩" },
+  { value: "punjabi", es: "Panyabí", en: "Punjabi", flag: "🇮🇳" },
+  { value: "gujarati", es: "Guyaratí", en: "Gujarati", flag: "🇮🇳" },
+  { value: "marathi", es: "Maratí", en: "Marathi", flag: "🇮🇳" },
+  { value: "tamil", es: "Tamil", en: "Tamil", flag: "🇮🇳" },
+  { value: "telugu", es: "Telugu", en: "Telugu", flag: "🇮🇳" },
+  { value: "kannada", es: "Canarés / Kannada", en: "Kannada", flag: "🇮🇳" },
+  { value: "malayalam", es: "Malayalam", en: "Malayalam", flag: "🇮🇳" },
+  { value: "odia", es: "Odia", en: "Odia", flag: "🇮🇳" },
+  { value: "assamese", es: "Asamés", en: "Assamese", flag: "🇮🇳" },
+  { value: "nepali", es: "Nepalí", en: "Nepali", flag: "🇳🇵" },
+  { value: "sinhala", es: "Cingalés", en: "Sinhala", flag: "🇱🇰" },
+  { value: "burmese", es: "Birmano", en: "Burmese", flag: "🇲🇲" },
+  { value: "thai", es: "Tailandés", en: "Thai", flag: "🇹🇭" },
+  { value: "lao", es: "Lao", en: "Lao", flag: "🇱🇦" },
+  { value: "khmer", es: "Jemer / Camboyano", en: "Khmer", flag: "🇰🇭" },
+  { value: "vietnamese", es: "Vietnamita", en: "Vietnamese", flag: "🇻🇳" },
+  { value: "indonesian", es: "Indonesio", en: "Indonesian", flag: "🇮🇩" },
+  { value: "malay", es: "Malayo", en: "Malay", flag: "🇲🇾" },
+  { value: "tagalog", es: "Tagalo", en: "Tagalog", flag: "🇵🇭" },
+  { value: "filipino", es: "Filipino", en: "Filipino", flag: "🇵🇭" },
+  { value: "cebuano", es: "Cebuano", en: "Cebuano", flag: "🇵🇭" },
+  { value: "javanese", es: "Javanés", en: "Javanese", flag: "🇮🇩" },
+  { value: "sundanese", es: "Sundanés", en: "Sundanese", flag: "🇮🇩" },
+  { value: "mandarin_chinese", es: "Chino mandarín", en: "Mandarin Chinese", flag: "🇨🇳" },
+  { value: "cantonese", es: "Cantonés", en: "Cantonese", flag: "🇭🇰" },
+  { value: "hakka", es: "Hakka", en: "Hakka", flag: "🇹🇼" },
+  { value: "japanese", es: "Japonés", en: "Japanese", flag: "🇯🇵" },
+  { value: "korean", es: "Coreano", en: "Korean", flag: "🇰🇷" },
+  { value: "mongolian", es: "Mongol", en: "Mongolian", flag: "🇲🇳" },
+  { value: "tibetan", es: "Tibetano", en: "Tibetan", flag: "🇨🇳" },
+  { value: "uyghur", es: "Uigur", en: "Uyghur", flag: "🇨🇳" },
+  { value: "swahili", es: "Suajili", en: "Swahili", flag: "🇹🇿" },
+  { value: "amharic", es: "Amhárico", en: "Amharic", flag: "🇪🇹" },
+  { value: "somali", es: "Somali", en: "Somali", flag: "🇸🇴" },
+  { value: "oromo", es: "Oromo", en: "Oromo", flag: "🇪🇹" },
+  { value: "tigrinya", es: "Tigrinya", en: "Tigrinya", flag: "🇪🇷" },
+  { value: "hausa", es: "Hausa", en: "Hausa", flag: "🇳🇬" },
+  { value: "yoruba", es: "Yoruba", en: "Yoruba", flag: "🇳🇬" },
+  { value: "igbo", es: "Igbo", en: "Igbo", flag: "🇳🇬" },
+  { value: "zulu", es: "Zulú", en: "Zulu", flag: "🇿🇦" },
+  { value: "xhosa", es: "Xhosa", en: "Xhosa", flag: "🇿🇦" },
+  { value: "afrikaans", es: "Afrikáans", en: "Afrikaans", flag: "🇿🇦" },
+  { value: "shona", es: "Shona", en: "Shona", flag: "🇿🇼" },
+  { value: "kinyarwanda", es: "Kinyarwanda", en: "Kinyarwanda", flag: "🇷🇼" },
+  { value: "lingala", es: "Lingala", en: "Lingala", flag: "🇨🇩" },
+  { value: "wolof", es: "Wolof", en: "Wolof", flag: "🇸🇳" },
+  { value: "malagasy", es: "Malagasy", en: "Malagasy", flag: "🇲🇬" },
+  { value: "quechua", es: "Quechua", en: "Quechua", flag: "🇵🇪" },
+  { value: "aymara", es: "Aymara", en: "Aymara", flag: "🇧🇴" },
+  { value: "guarani", es: "Guaraní", en: "Guarani", flag: "🇵🇾" },
+  { value: "nahuatl", es: "Náhuatl", en: "Nahuatl", flag: "🇲🇽" },
+  { value: "mapudungun", es: "Mapudungun", en: "Mapudungun", flag: "🇨🇱" },
+  { value: "yucatec_maya", es: "Maya yucateco", en: "Yucatec Maya", flag: "🇲🇽" },
+  { value: "inuktitut", es: "Inuit / Inuktitut", en: "Inuktitut", flag: "🇨🇦" },
+  { value: "hawaiian", es: "Hawaiano", en: "Hawaiian", flag: "🇺🇸" },
+  { value: "maori", es: "Maorí", en: "Maori", flag: "🇳🇿" },
+  { value: "samoan", es: "Samoano", en: "Samoan", flag: "🇼🇸" },
+  { value: "tongan", es: "Tongano", en: "Tongan", flag: "🇹🇴" },
+  { value: "fijian", es: "Fiyiano", en: "Fijian", flag: "🇫🇯" },
+  { value: "haitian_creole", es: "Criollo haitiano", en: "Haitian Creole", flag: "🇭🇹" },
+  { value: "papiamento", es: "Papiamento", en: "Papiamento", flag: "🇨🇼" },
+  { value: "luxembourgish", es: "Luxemburgués", en: "Luxembourgish", flag: "🇱🇺" },
+  { value: "esperanto", es: "Esperanto", en: "Esperanto", flag: "🌍" },
+  { value: "asl", es: "Lengua de señas americana", en: "American Sign Language", flag: "🤟" },
+  { value: "bsl", es: "Lengua de señas británica", en: "British Sign Language", flag: "🤟" },
+  { value: "chilean_sign_language", es: "Lengua de señas chilena", en: "Chilean Sign Language", flag: "🤟" },
 ];
 
 type Translator = (es: string, en: string) => string;
+
+function normalizeLanguageSearchValue(value: string | null | undefined) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+export function getDefaultSpokenLanguageValue(language: "es" | "en") {
+  return language === "es" ? "spanish" : "english";
+}
+
+export function getSpokenLanguageOption(value: string | null | undefined) {
+  const normalized = normalizeLanguageSearchValue(value);
+  if (!normalized) {
+    return null;
+  }
+
+  return (
+    SPOKEN_LANGUAGES.find((item) => {
+      return (
+        normalizeLanguageSearchValue(item.value) === normalized ||
+        normalizeLanguageSearchValue(item.es) === normalized ||
+        normalizeLanguageSearchValue(item.en) === normalized
+      );
+    }) || null
+  );
+}
+
+export function normalizeSpokenLanguageValue(value: string | null | undefined) {
+  return getSpokenLanguageOption(value)?.value || "";
+}
+
+export function normalizeSpokenLanguages(values: string[] | null | undefined) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const next: string[] = [];
+  const seen = new Set<string>();
+
+  values.forEach((value) => {
+    const normalized = normalizeSpokenLanguageValue(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    next.push(normalized);
+  });
+
+  return next;
+}
 
 export function getSpokenLanguageLabel(
   value: string | null | undefined,
   language: "es" | "en"
 ) {
-  const option = SPOKEN_LANGUAGES.find((item) => item.value === value);
+  const option = getSpokenLanguageOption(value);
   if (!option) {
     return value?.trim() || "";
   }
   return language === "es" ? option.es : option.en;
+}
+
+export function getSpokenLanguageFlag(value: string | null | undefined) {
+  return getSpokenLanguageOption(value)?.flag || "🌐";
+}
+
+export function matchesSpokenLanguageSearch(
+  value: string | null | undefined,
+  query: string
+) {
+  const option = getSpokenLanguageOption(value);
+  if (!option) {
+    return false;
+  }
+
+  const normalizedQuery = normalizeLanguageSearchValue(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  const haystack = [
+    option.value,
+    option.es,
+    option.en,
+    option.flag || "",
+  ]
+    .map((item) => normalizeLanguageSearchValue(item))
+    .join(" ");
+
+  return haystack.includes(normalizedQuery);
 }
 
 export function normalizeBodyType(value: string | null | undefined): string {
