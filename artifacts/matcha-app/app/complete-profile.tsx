@@ -3,7 +3,6 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
@@ -78,10 +77,7 @@ export default function CompleteProfileScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <View style={styles.container}>
       <KeyboardAwareScrollViewCompat
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -154,7 +150,7 @@ export default function CompleteProfileScreen() {
           </Pressable>
         </View>
       </KeyboardAwareScrollViewCompat>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

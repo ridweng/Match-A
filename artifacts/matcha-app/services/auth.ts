@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
 import { getDiscoverProfilePopularInput } from "@/data/profiles";
+import type { UserProfilePhoto } from "@/utils/profilePhotos";
 import {
   calculatePopularAttributesFromLikes,
   createEmptyPopularAttributesByCategory,
@@ -15,6 +16,21 @@ import {
 
 export type AuthProvider = "google" | "facebook" | "apple";
 export type AuthCallbackProvider = AuthProvider | "email";
+export type BaseGender = "male" | "female" | "non_binary" | "fluid";
+export type TherianMode = "exclude" | "include" | "only";
+export type DiscoveryFilters = {
+  selectedGenders: BaseGender[];
+  therianMode: TherianMode;
+  ageMin: number;
+  ageMax: number;
+};
+
+export const DEFAULT_DISCOVERY_FILTERS: DiscoveryFilters = {
+  selectedGenders: [],
+  therianMode: "exclude",
+  ageMin: 18,
+  ageMax: 40,
+};
 
 export type AuthUser = {
   id: number;
@@ -77,6 +93,66 @@ export type UserSettingsResponse = {
   };
 };
 
+export type GoalItemResponse = {
+  id: string;
+  titleEs: string;
+  titleEn: string;
+  category:
+    | "physical"
+    | "personality"
+    | "family"
+    | "expectations"
+    | "language"
+    | "studies";
+  order: number;
+  completed: boolean;
+  progress: number;
+  nextActionEs: string;
+  nextActionEn: string;
+  impactEs: string;
+  impactEn: string;
+};
+
+export type ViewerProfileResponse = {
+  name: string;
+  age: string;
+  dateOfBirth: string;
+  location: string;
+  profession: string;
+  genderIdentity: string;
+  pronouns: string;
+  personality: string;
+  relationshipGoals: string;
+  languagesSpoken: string[];
+  education: string;
+  childrenPreference: string;
+  physicalActivity: string;
+  alcoholUse: string;
+  tobaccoUse: string;
+  politicalInterest: string;
+  religionImportance: string;
+  religion: string;
+  bio: string;
+  bodyType: string;
+  height: string;
+  hairColor: string;
+  ethnicity: string;
+  interests: string[];
+  photos: UserProfilePhoto[];
+};
+
+export type ViewerBootstrapResponse = {
+  user: AuthUser;
+  needsProfileCompletion: boolean;
+  hasCompletedOnboarding: boolean;
+  profile: ViewerProfileResponse;
+  settings: UserSettingsResponse["settings"];
+  photos: ProfileMediaItemResponse[];
+  goals: GoalItemResponse[];
+  discovery: DiscoveryPreferencesResponse;
+  syncedAt: string;
+};
+
 export type ProviderAvailability = Record<AuthProvider, boolean>;
 
 export type DiscoveryPreferencesResponse = {
@@ -87,11 +163,27 @@ export type DiscoveryPreferencesResponse = {
   >;
   totalLikesCount: number;
   lastNotifiedPopularModeChangeAtLikeCount: number;
+  filters: DiscoveryFilters;
 };
 
 export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
   changedCategories: PopularAttributeChange[];
   shouldShowDiscoveryUpdate: boolean;
+};
+
+export type ProfileMediaItemResponse = {
+  profileImageId: number;
+  mediaAssetId: number;
+  sortOrder: number;
+  isPrimary: boolean;
+  updatedAt: string;
+  remoteUrl: string;
+  mimeType: string;
+  status: "pending" | "ready" | "deleted";
+};
+
+export type ProfileMediaListResponse = {
+  photos: ProfileMediaItemResponse[];
 };
 
 const DEMO_EMAIL = "test@gmail.com";
@@ -119,12 +211,71 @@ const DEMO_DISCOVERY_PREFERENCES: DiscoveryPreferencesResponse = {
   popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
   totalLikesCount: 0,
   lastNotifiedPopularModeChangeAtLikeCount: 0,
+  filters: {
+    ...DEFAULT_DISCOVERY_FILTERS,
+  },
+};
+const DEMO_GOALS: GoalItemResponse[] = [
+  {
+    id: "1",
+    titleEs: "Resistencia cardiovascular",
+    titleEn: "Cardiovascular endurance",
+    category: "physical",
+    order: 0,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Corre 20 min hoy sin parar",
+    nextActionEn: "Run 20 min today without stopping",
+    impactEs: "Más energía y mejor postura",
+    impactEn: "More energy and better posture",
+  },
+  {
+    id: "2",
+    titleEs: "Confianza social",
+    titleEn: "Social confidence",
+    category: "personality",
+    order: 0,
+    completed: false,
+    progress: 0,
+    nextActionEs: "Inicia una conversación con un extraño",
+    nextActionEn: "Start a conversation with a stranger",
+    impactEs: "Más atractivo en interacciones sociales",
+    impactEn: "More attractive in social interactions",
+  },
+];
+const DEMO_VIEWER_PROFILE: ViewerProfileResponse = {
+  name: DEMO_USER.name,
+  age: "",
+  dateOfBirth: DEMO_USER.dateOfBirth || "",
+  location: "",
+  profession: DEMO_USER.profession || "",
+  genderIdentity: "",
+  pronouns: "",
+  personality: "",
+  relationshipGoals: "",
+  languagesSpoken: [],
+  education: "",
+  childrenPreference: "",
+  physicalActivity: "",
+  alcoholUse: "",
+  tobaccoUse: "",
+  politicalInterest: "",
+  religionImportance: "",
+  religion: "",
+  bio: "",
+  bodyType: "",
+  height: "",
+  hairColor: "",
+  ethnicity: "",
+  interests: [],
+  photos: [],
 };
 
 type RequestOptions = {
   method?: string;
   body?: unknown;
   accessToken?: string | null;
+  headers?: Record<string, string>;
 };
 
 class ApiError extends Error {
@@ -157,15 +308,22 @@ function getBaseUrl() {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
   const response = await fetch(`${getBaseUrl()}${path}`, {
     method: options.method || "GET",
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(options.accessToken
         ? { Authorization: `Bearer ${options.accessToken}` }
         : {}),
+      ...(options.headers || {}),
     },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: options.body
+      ? isFormData
+        ? (options.body as BodyInit)
+        : JSON.stringify(options.body)
+      : undefined,
   });
 
   if (response.status === 204) {
@@ -283,6 +441,61 @@ export async function getMe(accessToken: string) {
   });
 }
 
+export async function getViewerBootstrap(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return {
+      user: DEMO_USER,
+      needsProfileCompletion: false,
+      hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
+      profile: DEMO_VIEWER_PROFILE,
+      settings: DEMO_SETTINGS,
+      photos: [],
+      goals: DEMO_GOALS,
+      discovery: DEMO_DISCOVERY_PREFERENCES,
+      syncedAt: new Date().toISOString(),
+    } satisfies ViewerBootstrapResponse;
+  }
+
+  return request<ViewerBootstrapResponse>("/api/viewer/bootstrap", {
+    accessToken,
+  });
+}
+
+export async function getViewerProfile(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return { profile: DEMO_VIEWER_PROFILE };
+  }
+
+  return request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
+    accessToken,
+  });
+}
+
+export async function updateViewerProfile(
+  accessToken: string,
+  payload: Partial<Omit<ViewerProfileResponse, "age" | "photos">>
+) {
+  if (isDemoToken(accessToken)) {
+    Object.assign(DEMO_VIEWER_PROFILE, payload);
+    if (typeof payload.name === "string") {
+      DEMO_USER.name = payload.name;
+    }
+    if (typeof payload.dateOfBirth === "string") {
+      DEMO_USER.dateOfBirth = payload.dateOfBirth;
+    }
+    if (typeof payload.profession === "string") {
+      DEMO_USER.profession = payload.profession;
+    }
+    return { profile: DEMO_VIEWER_PROFILE };
+  }
+
+  return request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
+    method: "PATCH",
+    accessToken,
+    body: payload,
+  });
+}
+
 export async function updateMe(
   accessToken: string,
   payload: { name?: string; dateOfBirth?: string; profession?: string }
@@ -308,7 +521,7 @@ export async function getSettings(accessToken: string) {
   if (isDemoToken(accessToken)) {
     return { settings: DEMO_SETTINGS };
   }
-  return request<UserSettingsResponse>("/api/auth/settings", {
+  return request<UserSettingsResponse>("/api/me/settings", {
     accessToken,
   });
 }
@@ -321,7 +534,7 @@ export async function updateSettings(
     Object.assign(DEMO_SETTINGS, payload);
     return { settings: DEMO_SETTINGS };
   }
-  return request<UserSettingsResponse>("/api/auth/settings", {
+  return request<UserSettingsResponse>("/api/me/settings", {
     method: "PATCH",
     accessToken,
     body: payload,
@@ -359,11 +572,86 @@ export async function completeOnboarding(accessToken: string) {
   });
 }
 
+function inferMimeType(uri: string) {
+  const lower = uri.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".heic")) return "image/heic";
+  return "image/jpeg";
+}
+
+export async function listProfilePhotos(accessToken: string) {
+  return request<ProfileMediaListResponse>("/api/media/profile-images", {
+    accessToken,
+  });
+}
+
+export async function uploadProfilePhoto(
+  accessToken: string,
+  sortOrder: number,
+  localUri: string
+) {
+  const form = new FormData();
+  form.append("sortOrder", String(sortOrder));
+  form.append("file", {
+    uri: localUri,
+    name: localUri.split("/").pop() || `profile-${sortOrder}.jpg`,
+    type: inferMimeType(localUri),
+  } as any);
+
+  return request<ProfileMediaItemResponse>("/api/media/profile-images", {
+    method: "POST",
+    accessToken,
+    body: form,
+  });
+}
+
+export async function deleteProfilePhoto(
+  accessToken: string,
+  profileImageId: number
+) {
+  return request<void>(`/api/media/profile-images/${profileImageId}`, {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
+export async function deleteAccount(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return { status: "deleted" as const };
+  }
+  return request<{ status: "deleted" }>("/api/auth/me", {
+    method: "DELETE",
+    accessToken,
+  });
+}
+
+export function mergeRemotePhotosWithLocal(
+  existing: UserProfilePhoto[],
+  remotePhotos: ProfileMediaItemResponse[]
+) {
+  const bySort = new Map(existing.map((photo) => [photo.sortOrder, photo] as const));
+  return remotePhotos
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((remote) => {
+      const local = bySort.get(remote.sortOrder);
+      return {
+        localUri: local?.localUri || "",
+        remoteUrl: remote.remoteUrl,
+        mediaAssetId: remote.mediaAssetId,
+        profileImageId: remote.profileImageId,
+        sortOrder: remote.sortOrder,
+        status: remote.status === "pending" ? "pending" : "ready",
+      } satisfies UserProfilePhoto;
+    });
+}
+
 export async function getDiscoveryPreferences(accessToken: string) {
   if (isDemoToken(accessToken)) {
     return DEMO_DISCOVERY_PREFERENCES;
   }
-  return request<DiscoveryPreferencesResponse>("/api/discovery/preferences", {
+  return request<DiscoveryPreferencesResponse>("/api/me/discovery/preferences", {
     accessToken,
   });
 }
@@ -420,6 +708,65 @@ export async function likeDiscoveryProfile(
   }
 
   return request<DiscoveryLikeResponse>("/api/discovery/like", {
+    method: "POST",
+    accessToken,
+    body: payload,
+  });
+}
+
+export async function updateDiscoveryPreferences(
+  accessToken: string,
+  filters: DiscoveryFilters
+) {
+  if (isDemoToken(accessToken)) {
+    DEMO_DISCOVERY_PREFERENCES.filters = filters;
+    return DEMO_DISCOVERY_PREFERENCES;
+  }
+
+  return request<DiscoveryPreferencesResponse>("/api/me/discovery/preferences", {
+    method: "PATCH",
+    accessToken,
+    body: { filters },
+  });
+}
+
+export async function getGoals(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    return { goals: DEMO_GOALS };
+  }
+
+  return request<{ goals: GoalItemResponse[] }>("/api/me/goals", {
+    accessToken,
+  });
+}
+
+export async function completeGoal(accessToken: string, goalKey: string) {
+  if (isDemoToken(accessToken)) {
+    const nextGoals = DEMO_GOALS.map((goal) =>
+      goal.id === goalKey ? { ...goal, completed: true } : goal
+    );
+    return { goals: nextGoals };
+  }
+
+  return request<{ goals: GoalItemResponse[] }>(`/api/me/goals/${goalKey}`, {
+    method: "PATCH",
+    accessToken,
+    body: { completed: true },
+  });
+}
+
+export async function reorderGoals(
+  accessToken: string,
+  payload: {
+    category: GoalItemResponse["category"];
+    orderedGoalKeys: string[];
+  }
+) {
+  if (isDemoToken(accessToken)) {
+    return { goals: DEMO_GOALS };
+  }
+
+  return request<{ goals: GoalItemResponse[] }>("/api/me/goals/reorder", {
     method: "POST",
     accessToken,
     body: payload,

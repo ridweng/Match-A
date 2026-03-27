@@ -7,7 +7,6 @@ import {
   Alert,
   Animated,
   Image,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -27,6 +26,7 @@ import {
   EDUCATION_LEVELS,
   ENGLISH_PRONOUNS,
   GENDER_IDENTITIES,
+  MAX_PROFILE_PHOTOS,
   getBodyTypeLabel,
   getChildrenPreferenceLabel,
   getDefaultSpokenLanguageValue,
@@ -57,8 +57,12 @@ import {
 import { useApp } from "@/context/AppContext";
 import {
   deleteStoredProfilePhoto,
+  getProfilePhotoBySortOrder,
+  getProfilePhotoDisplayUri,
   isStoredProfilePhoto,
+  normalizeStoredProfilePhotos,
   saveProfilePhotoLocally,
+  type UserProfilePhoto,
 } from "@/utils/profilePhotos";
 
 const TOTAL_STEPS = 3;
@@ -179,6 +183,7 @@ export default function OnboardingScreen() {
     language,
     needsProfileCompletion,
     saveOnboardingDraft,
+    setProfilePhoto,
     t,
   } = useApp();
 
@@ -187,36 +192,23 @@ export default function OnboardingScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const [languagesModalOpen, setLanguagesModalOpen] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
-  const [genderIdentity, setGenderIdentity] = useState(
-    normalizeGenderIdentity(accountProfile.genderIdentity)
-  );
-  const [pronouns, setPronouns] = useState(normalizePronouns(accountProfile.pronouns));
-  const [photos, setPhotos] = useState<string[]>(accountProfile.photos || []);
-  const [relationshipGoals, setRelationshipGoals] = useState(
-    normalizeRelationshipGoal(accountProfile.relationshipGoals)
-  );
-  const [childrenPreference, setChildrenPreference] = useState(
-    normalizeChildrenPreference(accountProfile.childrenPreference)
-  );
+  const [genderIdentity, setGenderIdentity] = useState("");
+  const [pronouns, setPronouns] = useState("");
+  const [photos, setPhotos] = useState<UserProfilePhoto[]>(accountProfile.photos || []);
+  const [relationshipGoals, setRelationshipGoals] = useState("");
+  const [childrenPreference, setChildrenPreference] = useState("");
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>(
-    (() => {
-      const normalized = normalizeSpokenLanguages(accountProfile.languagesSpoken);
-      return normalized.length
-        ? normalized
-        : [getDefaultSpokenLanguageValue(language)];
-    })()
+    [getDefaultSpokenLanguageValue(language)]
   );
   const [draftLanguages, setDraftLanguages] = useState<string[]>(languagesSpoken);
-  const [education, setEducation] = useState(
-    normalizeEducation(accountProfile.education)
-  );
-  const [physicalActivity, setPhysicalActivity] = useState(
-    normalizePhysicalActivity(accountProfile.physicalActivity)
-  );
-  const [bodyType, setBodyType] = useState(normalizeBodyType(accountProfile.bodyType));
-  const [personality, setPersonality] = useState(
-    normalizePersonality(accountProfile.personality)
-  );
+  const [education, setEducation] = useState("");
+  const [physicalActivity, setPhysicalActivity] = useState("");
+  const [bodyType, setBodyType] = useState("");
+  const [personality, setPersonality] = useState("");
+
+  React.useEffect(() => {
+    setPhotos(accountProfile.photos || []);
+  }, [accountProfile.photos]);
 
   React.useEffect(() => {
     if (authStatus !== "authenticated") {
@@ -234,7 +226,11 @@ export default function OnboardingScreen() {
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + 24;
-  const mainPhoto = photos[0] || "";
+  const getPhotoForSlot = React.useCallback(
+    (index: number) => getProfilePhotoBySortOrder(photos, index),
+    [photos]
+  );
+  const mainPhoto = getProfilePhotoDisplayUri(getPhotoForSlot(0));
   const pronounOptions = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
   const selectedLanguageOptions = useMemo(
     () =>
@@ -287,20 +283,29 @@ export default function OnboardingScreen() {
     setStep(nextStep);
   };
 
-  const savePickedPhoto = async (sourceUri: string) => {
-    const targetUri = await saveProfilePhotoLocally(0, sourceUri);
-    const previous = photos[0];
-    if (previous && previous !== targetUri && isStoredProfilePhoto(previous)) {
-      deleteStoredProfilePhoto(previous).catch(() => {});
+  const savePickedPhoto = async (index: number, sourceUri: string) => {
+    const targetUri = await saveProfilePhotoLocally(index, sourceUri);
+    const previous = getPhotoForSlot(index);
+    if (
+      previous?.localUri &&
+      previous.localUri !== targetUri &&
+      isStoredProfilePhoto(previous.localUri)
+    ) {
+      deleteStoredProfilePhoto(previous.localUri).catch(() => {});
     }
+    const syncedPhoto = await setProfilePhoto(index, targetUri);
     setPhotos((current) => {
-      const next = [...current];
-      next[0] = targetUri;
-      return next.filter(Boolean);
+      const next = normalizeStoredProfilePhotos(current).filter(
+        (photo) => photo.sortOrder !== index
+      );
+      if (syncedPhoto) {
+        next.push(syncedPhoto);
+      }
+      return next.sort((a, b) => a.sortOrder - b.sortOrder);
     });
   };
 
-  const requestAndPickPhoto = async () => {
+  const requestAndPickPhoto = async (index: number) => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert(
@@ -321,11 +326,11 @@ export default function OnboardingScreen() {
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
-      await savePickedPhoto(result.assets[0].uri);
+      await savePickedPhoto(index, result.assets[0].uri);
     }
   };
 
-  const requestAndCapturePhoto = async () => {
+  const requestAndCapturePhoto = async (index: number) => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       Alert.alert(
@@ -345,13 +350,15 @@ export default function OnboardingScreen() {
     });
 
     if (!result.canceled && result.assets?.[0]?.uri) {
-      await savePickedPhoto(result.assets[0].uri);
+      await savePickedPhoto(index, result.assets[0].uri);
     }
   };
 
-  const openPhotoPicker = () => {
+  const openPhotoPicker = (index: number) => {
     Alert.alert(
-      t("Tu foto", "Your photo"),
+      index === 0
+        ? t("Tu foto principal", "Your main photo")
+        : t("Tu foto", "Your photo"),
       t(
         "Elige una foto de tu galería o toma una nueva.",
         "Choose a photo from your library or take a new one."
@@ -364,13 +371,13 @@ export default function OnboardingScreen() {
         {
           text: t("Fotos", "Library"),
           onPress: () => {
-            requestAndPickPhoto().catch(() => {});
+            requestAndPickPhoto(index).catch(() => {});
           },
         },
         {
           text: t("Cámara", "Camera"),
           onPress: () => {
-            requestAndCapturePhoto().catch(() => {});
+            requestAndCapturePhoto(index).catch(() => {});
           },
         },
       ]
@@ -520,30 +527,61 @@ export default function OnboardingScreen() {
 
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>
-            {t("Añade una foto", "Add a photo")}
+            {t("Añade tus fotos", "Add your photos")}
           </Text>
-          <Pressable
-            onPress={openPhotoPicker}
-            style={({ pressed }) => [
-              styles.photoCard,
-              pressed && { opacity: 0.9 },
-              !mainPhoto && styles.photoCardEmpty,
-            ]}
-          >
-            {mainPhoto ? (
-              <Image source={{ uri: mainPhoto }} style={styles.photoPreview} />
-            ) : (
-              <View style={styles.photoPlaceholder}>
-                <Feather name="camera" size={26} color={Colors.primaryLight} />
-                <Text style={styles.photoPlaceholderTitle}>
-                  {t("Muéstranos cómo te ves", "Show us how you look")}
-                </Text>
-                <Text style={styles.photoPlaceholderSub}>
-                  {t("Necesitamos al menos una foto", "We need at least one photo")}
-                </Text>
-              </View>
-            )}
-          </Pressable>
+          <View style={styles.photoGrid}>
+            {Array.from({ length: MAX_PROFILE_PHOTOS }).map((_, index) => {
+              const photo = getPhotoForSlot(index);
+              const photoUri = getProfilePhotoDisplayUri(photo);
+              const isMain = index === 0;
+
+              return (
+                <Pressable
+                  key={index}
+                  onPress={() => openPhotoPicker(index)}
+                  style={({ pressed }) => [
+                    styles.photoSlot,
+                    isMain && styles.photoSlotMain,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                >
+                  {photoUri ? (
+                    <Image source={{ uri: photoUri }} style={styles.photoSlotImage} />
+                  ) : (
+                    <View
+                      style={[
+                        styles.photoSlotPlaceholder,
+                        isMain && styles.photoSlotPlaceholderMain,
+                      ]}
+                    >
+                      <Feather
+                        name={isMain ? "camera" : "plus"}
+                        size={isMain ? 22 : 16}
+                        color={isMain ? Colors.primaryLight : Colors.textMuted}
+                      />
+                      {isMain ? (
+                        <>
+                          <Text style={styles.photoPlaceholderTitle}>
+                            {t("Foto principal", "Main photo")}
+                          </Text>
+                          <Text style={styles.photoPlaceholderSub}>
+                            {t("Necesitamos al menos una foto", "We need at least one photo")}
+                          </Text>
+                        </>
+                      ) : null}
+                    </View>
+                  )}
+                  {isMain ? (
+                    <View style={styles.mainBadge}>
+                      <Text style={styles.mainBadgeText}>
+                        {t("Principal", "Main")}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <SelectField
@@ -759,10 +797,7 @@ export default function OnboardingScreen() {
         onRequestClose={closeLanguagesModal}
       >
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.modalKeyboardAvoider}
-          >
+          <View style={styles.modalKeyboardAvoider}>
             <View
               style={[
                 styles.modalContainer,
@@ -901,7 +936,7 @@ export default function OnboardingScreen() {
               </View>
             </KeyboardAwareScrollViewCompat>
           </View>
-          </KeyboardAvoidingView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -1089,38 +1124,64 @@ const styles = StyleSheet.create({
   dropdownOptionTextActive: {
     color: Colors.primaryLight,
   },
-  photoCard: {
-    minHeight: 200,
-    borderRadius: 24,
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  photoSlot: {
+    width: "31%",
+    aspectRatio: 0.82,
+    borderRadius: 18,
     overflow: "hidden",
+    position: "relative",
+  },
+  photoSlotMain: {
+    width: "48.5%",
+  },
+  photoSlotImage: {
+    width: "100%",
+    height: "100%",
+  },
+  photoSlotPlaceholder: {
+    flex: 1,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  photoCardEmpty: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-  },
-  photoPreview: {
-    width: "100%",
-    height: 220,
-  },
-  photoPlaceholder: {
-    minHeight: 200,
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    padding: 12,
+  },
+  photoSlotPlaceholderMain: {
+    backgroundColor: Colors.backgroundElevated,
+    borderColor: Colors.border,
   },
   photoPlaceholderTitle: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 16,
     color: Colors.text,
+    textAlign: "center",
   },
   photoPlaceholderSub: {
     fontFamily: "Inter_400Regular",
     fontSize: 13,
     color: Colors.textSecondary,
+    textAlign: "center",
+  },
+  mainBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(15,26,20,0.72)",
+  },
+  mainBadgeText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 11,
+    color: Colors.text,
   },
   languagePickerButton: {
     minHeight: 54,

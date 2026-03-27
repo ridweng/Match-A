@@ -4,8 +4,10 @@ import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -15,7 +17,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
-import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import colors from "@/constants/colors";
 import {
   ENGLISH_PRONOUNS,
@@ -29,7 +30,16 @@ import {
   PERSONALITY_TRAITS,
   SPANISH_PRONOUNS,
 } from "@/constants/profile-options";
-import { useApp, type HeightUnit, type UserProfile } from "@/context/AppContext";
+import { useApp, type HeightUnit } from "@/context/AppContext";
+
+type SettingsDraft = {
+  name: string;
+  profession: string;
+  dateOfBirth: string;
+  genderIdentity: string;
+  pronouns: string;
+  personality: string;
+};
 
 function Field({
   label,
@@ -400,119 +410,63 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const {
     accountProfile,
+    authBusy,
+    authError,
     biometricsEnabled,
     heightUnit,
     language,
     user,
     logout,
     saveSettings,
+    deleteAccount,
     setBiometricsEnabled,
     t,
   } = useApp();
 
-  const [local, setLocal] = useState<UserProfile>({
-    name: accountProfile.name,
-    age: accountProfile.age,
-    dateOfBirth: accountProfile.dateOfBirth,
-    location: accountProfile.location,
-    profession: accountProfile.profession,
-    genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
-    pronouns: normalizePronouns(accountProfile.pronouns),
-    personality: normalizePersonality(accountProfile.personality),
-    relationshipGoals: accountProfile.relationshipGoals,
-    languagesSpoken: accountProfile.languagesSpoken,
-    education: accountProfile.education,
-    childrenPreference: accountProfile.childrenPreference,
-    physicalActivity: accountProfile.physicalActivity,
-    alcoholUse: accountProfile.alcoholUse,
-    tobaccoUse: accountProfile.tobaccoUse,
-    politicalInterest: accountProfile.politicalInterest,
-    religionImportance: accountProfile.religionImportance,
-    religion: accountProfile.religion,
-    bio: accountProfile.bio,
-    bodyType: accountProfile.bodyType,
-    height: accountProfile.height,
-    hairColor: accountProfile.hairColor,
-    ethnicity: accountProfile.ethnicity,
-    interests: accountProfile.interests,
-    photos: accountProfile.photos,
-  });
+  const settingsSeed = useMemo<SettingsDraft>(
+    () => ({
+      name: accountProfile.name || user?.name || "",
+      dateOfBirth: accountProfile.dateOfBirth || user?.dateOfBirth || "",
+      profession: accountProfile.profession || user?.profession || "",
+      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
+      pronouns: normalizePronouns(accountProfile.pronouns),
+      personality: normalizePersonality(accountProfile.personality),
+    }),
+    [
+      accountProfile.dateOfBirth,
+      accountProfile.genderIdentity,
+      accountProfile.name,
+      accountProfile.personality,
+      accountProfile.pronouns,
+      accountProfile.profession,
+      user?.dateOfBirth,
+      user?.name,
+      user?.profession,
+    ]
+  );
+  const [local, setLocal] = useState<SettingsDraft>(settingsSeed);
   const [biometricPending, setBiometricPending] = useState(false);
   const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
   const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
 
   useEffect(() => {
-    setLocal({
-      name: accountProfile.name,
-      age: accountProfile.age,
-      dateOfBirth: accountProfile.dateOfBirth,
-      location: accountProfile.location,
-      profession: accountProfile.profession,
-      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
-      pronouns: normalizePronouns(accountProfile.pronouns),
-      personality: normalizePersonality(accountProfile.personality),
-      relationshipGoals: accountProfile.relationshipGoals,
-      languagesSpoken: accountProfile.languagesSpoken,
-      education: accountProfile.education,
-      childrenPreference: accountProfile.childrenPreference,
-      physicalActivity: accountProfile.physicalActivity,
-      alcoholUse: accountProfile.alcoholUse,
-      tobaccoUse: accountProfile.tobaccoUse,
-      politicalInterest: accountProfile.politicalInterest,
-      religionImportance: accountProfile.religionImportance,
-      religion: accountProfile.religion,
-      bio: accountProfile.bio,
-      bodyType: accountProfile.bodyType,
-      height: accountProfile.height,
-      hairColor: accountProfile.hairColor,
-      ethnicity: accountProfile.ethnicity,
-      interests: accountProfile.interests,
-      photos: accountProfile.photos,
-    });
+    setLocal(settingsSeed);
     setLocalHeightUnit(heightUnit);
     setLocalLanguage(language);
-  }, [accountProfile, heightUnit, language]);
+  }, [heightUnit, language, settingsSeed]);
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
   const hasChanges = useMemo(() => {
-    const current = {
-      name: accountProfile.name,
-      age: accountProfile.age,
-      dateOfBirth: accountProfile.dateOfBirth,
-      location: accountProfile.location,
-      profession: accountProfile.profession,
-      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
-      pronouns: normalizePronouns(accountProfile.pronouns),
-      personality: normalizePersonality(accountProfile.personality),
-      relationshipGoals: accountProfile.relationshipGoals,
-      languagesSpoken: accountProfile.languagesSpoken,
-      education: accountProfile.education,
-      childrenPreference: accountProfile.childrenPreference,
-      physicalActivity: accountProfile.physicalActivity,
-      alcoholUse: accountProfile.alcoholUse,
-      tobaccoUse: accountProfile.tobaccoUse,
-      politicalInterest: accountProfile.politicalInterest,
-      religionImportance: accountProfile.religionImportance,
-      religion: accountProfile.religion,
-      bio: accountProfile.bio,
-      bodyType: accountProfile.bodyType,
-      height: accountProfile.height,
-      hairColor: accountProfile.hairColor,
-      ethnicity: accountProfile.ethnicity,
-      interests: accountProfile.interests,
-      photos: accountProfile.photos,
-    };
-
     return (
-      JSON.stringify(current) !== JSON.stringify(local) ||
+      JSON.stringify(settingsSeed) !== JSON.stringify(local) ||
       heightUnit !== localHeightUnit ||
       language !== localLanguage
     );
-  }, [accountProfile, heightUnit, language, local, localHeightUnit, localLanguage]);
+  }, [heightUnit, language, local, localHeightUnit, localLanguage, settingsSeed]);
 
-  const update = (key: keyof UserProfile, value: string | string[]) => {
+  const update = (key: keyof SettingsDraft, value: string) => {
     setLocal((prev) => ({
       ...prev,
       [key]: value,
@@ -533,7 +487,6 @@ export default function SettingsScreen() {
     });
     if (!saved) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace("/(tabs)/profile");
   };
 
   const handleBiometricToggle = async (enabled: boolean) => {
@@ -606,14 +559,20 @@ export default function SettingsScreen() {
         {
           text: t("Eliminar", "Delete"),
           style: "destructive",
-          onPress: () =>
-            Alert.alert(
-              "Demo",
-              t(
-                "La eliminación de cuenta aún no está conectada al backend.",
-                "Account deletion is not connected to the backend yet."
-              )
-            ),
+          onPress: async () => {
+            const deleted = await deleteAccount();
+            if (!deleted) {
+              Alert.alert(
+                t("No se pudo eliminar", "Could not delete account"),
+                t(
+                  "Inténtalo de nuevo en unos instantes.",
+                  "Please try again in a moment."
+                )
+              );
+              return;
+            }
+            router.replace("/login");
+          },
         },
       ]
     );
@@ -631,23 +590,23 @@ export default function SettingsScreen() {
         <Text style={s.headerTitle}>{t("Ajustes", "Settings")}</Text>
         <Pressable
           onPress={handleSave}
-          disabled={!hasChanges}
+          disabled={!hasChanges || authBusy}
           style={({ pressed }) => [
             s.saveIconBtn,
-            hasChanges && s.saveIconBtnActive,
-            !hasChanges && s.saveIconBtnDisabled,
-            pressed && hasChanges && { opacity: 0.82 },
+            hasChanges && !authBusy && s.saveIconBtnActive,
+            (!hasChanges || authBusy) && s.saveIconBtnDisabled,
+            pressed && hasChanges && !authBusy && { opacity: 0.82 },
           ]}
         >
           <Feather
             name="check"
             size={22}
-            color={hasChanges ? colors.textInverted : colors.textMuted}
+            color={hasChanges && !authBusy ? colors.textInverted : colors.textMuted}
           />
           <Text
             style={[
               s.saveIconBtnText,
-              !hasChanges && s.saveIconBtnTextDisabled,
+              (!hasChanges || authBusy) && s.saveIconBtnTextDisabled,
             ]}
           >
             {t("Guardar", "Save")}
@@ -655,15 +614,20 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
 
-      <KeyboardAwareScrollViewCompat
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
-        keyboardShouldPersistTaps="handled"
-        bottomOffset={bottomPadding + 16}
-        extraKeyboardSpace={28}
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      {authError ? <Text style={s.inlineError}>{authError}</Text> : null}
+
+      <KeyboardAvoidingView
+        style={s.keyboardShell}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? topPadding : 0}
       >
-        <Section title={t("Información básica", "Basic info")}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        >
+          <Section title={t("Información básica", "Basic info")}>
           <Field
             label={t("Nombre completo", "Full name")}
             value={local.name}
@@ -706,7 +670,7 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Section title={t("Cuenta", "Account")}>
+          <Section title={t("Cuenta", "Account")}>
           <Field
             label={t("Correo electrónico", "Email")}
             value={user?.email || accountProfile.email || t("Sin correo", "No email")}
@@ -746,27 +710,28 @@ export default function SettingsScreen() {
           />
         </Section>
 
-        <Pressable
-          onPress={handleLogout}
-          style={({ pressed }) => [s.logoutBtn, pressed && { opacity: 0.84 }]}
-        >
-          <Feather name="log-out" size={18} color={colors.ivory} />
-          <Text style={s.logoutText}>{t("Cerrar sesión", "Log out")}</Text>
-        </Pressable>
-
-        <View style={s.dangerZone}>
-          <Text style={s.dangerTitle}>{t("Zona de peligro", "Danger zone")}</Text>
           <Pressable
-            onPress={handleDeleteAccount}
-            style={({ pressed }) => [s.deleteBtn, pressed && { opacity: 0.8 }]}
+            onPress={handleLogout}
+            style={({ pressed }) => [s.logoutBtn, pressed && { opacity: 0.84 }]}
           >
-            <Feather name="trash-2" size={17} color={colors.dislikeRed} />
-            <Text style={s.deleteBtnText}>
-              {t("Eliminar mi cuenta", "Delete my account")}
-            </Text>
+            <Feather name="log-out" size={18} color={colors.ivory} />
+            <Text style={s.logoutText}>{t("Cerrar sesión", "Log out")}</Text>
           </Pressable>
-        </View>
-      </KeyboardAwareScrollViewCompat>
+
+          <View style={s.dangerZone}>
+            <Text style={s.dangerTitle}>{t("Zona de peligro", "Danger zone")}</Text>
+            <Pressable
+              onPress={handleDeleteAccount}
+              style={({ pressed }) => [s.deleteBtn, pressed && { opacity: 0.8 }]}
+            >
+              <Feather name="trash-2" size={17} color={colors.dislikeRed} />
+              <Text style={s.deleteBtnText}>
+                {t("Eliminar mi cuenta", "Delete my account")}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -846,6 +811,16 @@ const s = StyleSheet.create({
   scroll: {
     paddingHorizontal: 20,
     paddingTop: 8,
+  },
+  keyboardShell: {
+    flex: 1,
+  },
+  inlineError: {
+    paddingHorizontal: 20,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: colors.dislikeRed,
+    lineHeight: 18,
   },
   section: {
     marginTop: 24,

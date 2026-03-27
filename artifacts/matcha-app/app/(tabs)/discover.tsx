@@ -1,11 +1,11 @@
 import { Feather } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
-  Image,
   Modal,
   PanResponder,
   Platform,
@@ -16,6 +16,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useNetInfo } from "@react-native-community/netinfo";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
@@ -38,7 +39,15 @@ import {
 import { useApp } from "@/context/AppContext";
 import { discoverProfiles, type DiscoverProfile } from "@/data/profiles";
 import { getZodiacSignFromIsoDate, getZodiacSignLabel } from "@/utils/dateOfBirth";
+import {
+  isDiscoveryImageWarm,
+  isDiscoveryProfileWarm,
+  warmDiscoveryDeck,
+  warmDiscoveryFrontExtras,
+  warmDiscoveryProfileImages,
+} from "@/utils/discoveryPreload";
 import { formatPopularAttributeValue } from "@/utils/popularAttributes";
+import type { BaseGender, DiscoveryFilters, TherianMode } from "@/services/auth";
 
 const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
@@ -46,17 +55,10 @@ const CARD_HEIGHT = height * 0.62;
 const SWIPE_THRESHOLD = 80;
 const INFO_SWIPE_THRESHOLD = 82;
 const IS_WEB = Platform.OS === "web";
+const DISCOVERY_PAGE_SIZE = 12;
 
 type SwipeState = "idle" | "like" | "dislike";
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
-type BaseGender = "male" | "female" | "non_binary" | "fluid";
-type TherianMode = "exclude" | "include" | "only";
-type DiscoveryFilters = {
-  selectedGenders: BaseGender[];
-  therianMode: TherianMode;
-  ageMin: number;
-  ageMax: number;
-};
 type AgeBounds = {
   min: number;
   max: number;
@@ -65,6 +67,21 @@ type PopularUpdateBanner = {
   id: number;
   title: string;
   body: string;
+};
+type DeckSlotName = "front" | "second" | "third";
+type DeckSlotState = {
+  key: DeckSlotName;
+  profile: DiscoverProfile | null;
+  index: number | null;
+  primaryReady: boolean;
+  extraPhotosReady: boolean;
+};
+type DeckState = {
+  front: DeckSlotState;
+  second: DeckSlotState;
+  third: DeckSlotState;
+  frontIndex: number;
+  queueCursor: number;
 };
 
 const LANGUAGE_FLAG_CODES: Record<string, string> = {
@@ -166,6 +183,156 @@ function getLanguageFlagUri(value: string) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function createDeckSlot(
+  key: DeckSlotName,
+  profile: DiscoverProfile | null,
+  index: number | null,
+  primaryReady = false,
+  extraPhotosReady = false
+): DeckSlotState {
+  return {
+    key,
+    profile,
+    index,
+    primaryReady: profile ? primaryReady : true,
+    extraPhotosReady: profile ? extraPhotosReady : true,
+  };
+}
+
+function isPrimaryImageReady(profile: DiscoverProfile | null) {
+  return profile ? isDiscoveryProfileWarm(profile, 1) : true;
+}
+
+function areFrontExtrasReady(profile: DiscoverProfile | null) {
+  if (!profile || profile.images.length <= 1) {
+    return true;
+  }
+
+  return isDiscoveryProfileWarm(profile, profile.images.length - 1, 1);
+}
+
+function getNextDistinctIndex(
+  profiles: DiscoverProfile[],
+  startIndex: number,
+  excludedIds: Set<string>
+) {
+  if (!profiles.length || excludedIds.size >= profiles.length || startIndex >= profiles.length) {
+    return null;
+  }
+
+  for (
+    let candidateIndex = Math.max(0, startIndex);
+    candidateIndex < profiles.length;
+    candidateIndex += 1
+  ) {
+    const candidate = profiles[candidateIndex];
+    if (candidate && !excludedIds.has(candidate.id)) {
+      return candidateIndex;
+    }
+  }
+
+  return null;
+}
+
+function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState {
+  if (!profiles.length) {
+    return {
+      front: createDeckSlot("front", null, null, true, true),
+      second: createDeckSlot("second", null, null, true, true),
+      third: createDeckSlot("third", null, null, true, true),
+      frontIndex: 0,
+      queueCursor: 0,
+    };
+  }
+
+  const safeStart = Math.max(0, startIndex);
+  if (safeStart >= profiles.length) {
+    return {
+      front: createDeckSlot("front", null, null, true, true),
+      second: createDeckSlot("second", null, null, true, true),
+      third: createDeckSlot("third", null, null, true, true),
+      frontIndex: safeStart,
+      queueCursor: safeStart,
+    };
+  }
+  const front = profiles[safeStart] ?? null;
+  const secondIndex = getNextDistinctIndex(
+    profiles,
+    safeStart + 1,
+    new Set(front ? [front.id] : [])
+  );
+  const second = secondIndex == null ? null : profiles[secondIndex] ?? null;
+  const thirdIndex = getNextDistinctIndex(
+    profiles,
+    (secondIndex ?? safeStart) + 1,
+    new Set([front?.id, second?.id].filter(Boolean) as string[])
+  );
+  const third = thirdIndex == null ? null : profiles[thirdIndex] ?? null;
+  const lastAssignedIndex = thirdIndex ?? secondIndex ?? safeStart;
+
+  return {
+    front: createDeckSlot(
+      "front",
+      front,
+      safeStart,
+      isPrimaryImageReady(front),
+      areFrontExtrasReady(front)
+    ),
+    second: createDeckSlot("second", second, secondIndex, isPrimaryImageReady(second), false),
+    third: createDeckSlot("third", third, thirdIndex, true, false),
+    frontIndex: safeStart,
+    queueCursor: lastAssignedIndex + 1,
+  };
+}
+
+function advanceDeckState(currentDeck: DeckState, profiles: DiscoverProfile[]): DeckState {
+  if (!profiles.length) {
+    return buildDeckState(profiles, 0);
+  }
+
+  if (!currentDeck.second.profile || currentDeck.second.index == null) {
+    return buildDeckState(profiles, profiles.length);
+  }
+
+  const nextFront = createDeckSlot(
+    "front",
+    currentDeck.second.profile,
+    currentDeck.second.index,
+    currentDeck.second.primaryReady,
+    areFrontExtrasReady(currentDeck.second.profile)
+  );
+  const nextSecond = createDeckSlot(
+    "second",
+    currentDeck.third.profile,
+    currentDeck.third.index,
+    isPrimaryImageReady(currentDeck.third.profile),
+    false
+  );
+  const excludedIds = new Set(
+    [nextFront.profile?.id, nextSecond.profile?.id].filter(Boolean) as string[]
+  );
+  const nextThirdIndex = getNextDistinctIndex(
+    profiles,
+    currentDeck.queueCursor,
+    excludedIds
+  );
+  const nextThirdProfile = nextThirdIndex == null ? null : profiles[nextThirdIndex] ?? null;
+
+  return {
+    front: nextFront,
+    second: nextSecond,
+    third: createDeckSlot(
+      "third",
+      nextThirdProfile,
+      nextThirdIndex,
+      true,
+      false
+    ),
+    frontIndex: nextFront.index ?? currentDeck.frontIndex,
+    queueCursor: nextThirdIndex == null ? currentDeck.queueCursor : nextThirdIndex + 1,
+  };
 }
 
 function normalizeSelectedGenders(values: BaseGender[]) {
@@ -359,7 +526,16 @@ function AgeRangeFields({
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
-  const { t, likeProfile, goals, language } = useApp();
+  const netInfo = useNetInfo();
+  const {
+    t,
+    likeProfile,
+    goals,
+    language,
+    discoveryFilters,
+    lastServerSyncAt,
+    saveDiscoveryFilters,
+  } = useApp();
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
   const defaultFilters = useMemo<DiscoveryFilters>(
     () => ({
@@ -370,7 +546,7 @@ export default function DiscoverScreen() {
     }),
     []
   );
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const activeFilters = discoveryFilters ?? defaultFilters;
   const [activePhotoIndex, setActivePhotoIndex] = useState(0);
   const [swipeState, setSwipeState] = useState<SwipeState>("idle");
   const [showInsight, setShowInsight] = useState(false);
@@ -378,13 +554,16 @@ export default function DiscoverScreen() {
   const [popularUpdateBanner, setPopularUpdateBanner] = useState<PopularUpdateBanner | null>(null);
   const [isInfoVisible, setIsInfoVisible] = useState(false);
   const [isFilterVisible, setIsFilterVisible] = useState(false);
-  const [appliedFilters, setAppliedFilters] = useState<DiscoveryFilters>(
-    defaultFilters
-  );
-  const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(defaultFilters);
+  const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(activeFilters);
+  const [isDeckAnimating, setIsDeckAnimating] = useState(false);
+  const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
+  const [, setPreloadRevision] = useState(0);
+  const [deck, setDeck] = useState<DeckState>(() => buildDeckState(discoverProfiles, 0));
+  const deckRef = useRef<DeckState>(deck);
 
   const position = useRef(new Animated.ValueXY()).current;
   const flipAnim = useRef(new Animated.Value(0)).current;
+  const deckProgress = useRef(new Animated.Value(0)).current;
   const backScrollRef = useRef<ScrollView | null>(null);
 
   const rotate = position.x.interpolate({
@@ -420,17 +599,50 @@ export default function DiscoverScreen() {
     outputRange: [0, 0, 1, 1],
     extrapolate: "clamp",
   });
+  const promotedSecondScale = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.95, 1],
+    extrapolate: "clamp",
+  });
+  const promotedSecondTranslateY = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [16, 0],
+    extrapolate: "clamp",
+  });
+  const promotedSecondOpacity = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.85, 1],
+    extrapolate: "clamp",
+  });
+  const promotedThirdScale = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.9, 0.95],
+    extrapolate: "clamp",
+  });
+  const promotedThirdTranslateY = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [32, 16],
+    extrapolate: "clamp",
+  });
+  const promotedThirdOpacity = deckProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 0.85],
+    extrapolate: "clamp",
+  });
 
-  const filteredProfiles = useMemo(
+  const isOffline =
+    netInfo.isConnected === false || netInfo.isInternetReachable === false;
+
+  const sourceProfiles = useMemo(
     () =>
       discoverProfiles.filter((profile) => {
-        const activeBaseGenders = appliedFilters.selectedGenders.length
-          ? appliedFilters.selectedGenders
+        const activeBaseGenders = activeFilters.selectedGenders.length
+          ? activeFilters.selectedGenders
           : BASE_GENDERS;
         const allowedIdentities =
-          appliedFilters.therianMode === "only"
+          activeFilters.therianMode === "only"
             ? activeBaseGenders.map((value) => THERIAN_BY_BASE[value])
-            : appliedFilters.therianMode === "include"
+            : activeFilters.therianMode === "include"
               ? activeBaseGenders.flatMap((value) => [value, THERIAN_BY_BASE[value]])
               : activeBaseGenders;
 
@@ -439,44 +651,47 @@ export default function DiscoverScreen() {
         }
 
         return (
-          profile.age >= appliedFilters.ageMin &&
-          profile.age <= appliedFilters.ageMax
+          profile.age >= activeFilters.ageMin &&
+          profile.age <= activeFilters.ageMax
         );
       }),
-    [appliedFilters]
+    [activeFilters]
   );
-  const hasProfiles = filteredProfiles.length > 0;
-  const safeIndex = hasProfiles ? currentIndex % filteredProfiles.length : 0;
-  const current = hasProfiles ? filteredProfiles[safeIndex] : null;
-  const next =
-    filteredProfiles.length > 1
-      ? filteredProfiles[(safeIndex + 1) % filteredProfiles.length]
-      : null;
-  const nextNext =
-    filteredProfiles.length > 2
-      ? filteredProfiles[(safeIndex + 2) % filteredProfiles.length]
-      : null;
-  const currentImages = current?.images ?? [];
+  const filteredProfiles = useMemo(
+    () => sourceProfiles.slice(0, loadedCount),
+    [loadedCount, sourceProfiles]
+  );
+  const hasFilterMatches = sourceProfiles.length > 0;
+  const frontProfile = deck.front.profile;
+  const secondProfile = deck.second.profile;
+  const thirdProfile = deck.third.profile;
+  const secondReady = secondProfile ? deck.second.primaryReady : true;
+  const currentImages = frontProfile?.images ?? [];
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
-  const pronounLabel = current
-    ? getPronounLabel(current.pronouns, language)
+  const pronounLabel = frontProfile
+    ? getPronounLabel(frontProfile.pronouns, language)
     : "";
-  const genderIdentityLabel = current
-    ? getGenderIdentityLabel(current.genderIdentity, t)
+  const genderIdentityLabel = frontProfile
+    ? getGenderIdentityLabel(frontProfile.genderIdentity, t)
     : "";
   const zodiacLabel = getZodiacSignLabel(
-    getZodiacSignFromIsoDate(current?.dateOfBirth ?? ""),
+    getZodiacSignFromIsoDate(frontProfile?.dateOfBirth ?? ""),
     t
   );
-  const ageWithSign = current
+  const ageWithSign = frontProfile
     ? zodiacLabel
-      ? `${current.age} · ${zodiacLabel}`
-      : String(current.age)
+      ? `${frontProfile.age} · ${zodiacLabel}`
+      : String(frontProfile.age)
     : "";
-  const hasActiveFilters = !filtersEqual(appliedFilters, defaultFilters);
-  const canApplyFilters = !filtersEqual(draftFilters, appliedFilters);
+  const hasActiveFilters = !filtersEqual(activeFilters, defaultFilters);
+  const canApplyFilters = !filtersEqual(draftFilters, activeFilters);
+  const hasDeckProfiles = Boolean(frontProfile);
+  const isOfflineDeckExhausted =
+    !hasDeckProfiles && hasFilterMatches && loadedCount < sourceProfiles.length && isOffline;
+  const isOnlineDeckExhausted =
+    !hasDeckProfiles && hasFilterMatches && loadedCount >= sourceProfiles.length;
   const baseGenderOptions = useMemo(
     () => [
       { value: "male" as const, label: t("Hombre", "Male") },
@@ -511,6 +726,29 @@ export default function DiscoverScreen() {
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+  const lastSyncLabel = useMemo(() => {
+    if (!lastServerSyncAt) {
+      return null;
+    }
+
+    const date = new Date(lastServerSyncAt);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    try {
+      return date.toLocaleString(language === "es" ? "es-ES" : "en-GB", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+    } catch {
+      return date.toISOString();
+    }
+  }, [language, lastServerSyncAt]);
+
+  useEffect(() => {
+    deckRef.current = deck;
+  }, [deck]);
 
   useEffect(() => {
     if (!popularUpdateBanner) {
@@ -576,29 +814,128 @@ export default function DiscoverScreen() {
   );
 
   React.useEffect(() => {
-    setActivePhotoIndex(0);
-  }, [currentIndex]);
+    setDraftFilters(activeFilters);
+  }, [activeFilters]);
 
   React.useEffect(() => {
-    if (filteredProfiles.length === 0) {
-      setCurrentIndex(0);
-      setActivePhotoIndex(0);
+    const nextLoadedCount = Math.min(DISCOVERY_PAGE_SIZE, sourceProfiles.length);
+    setLoadedCount(nextLoadedCount);
+    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), 0));
+    setActivePhotoIndex(0);
+    setSwipeState("idle");
+    setIsInfoVisible(false);
+    setIsDeckAnimating(false);
+    position.setValue({ x: 0, y: 0 });
+    deckProgress.setValue(0);
+    flipAnim.setValue(0);
+    backScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [deckProgress, flipAnim, position, sourceProfiles]);
+
+  React.useEffect(() => {
+    if (isOffline || loadedCount >= sourceProfiles.length || !frontProfile) {
       return;
     }
 
-    if (currentIndex >= filteredProfiles.length) {
-      setCurrentIndex(0);
+    const remainingLoadedProfiles = loadedCount - (deck.frontIndex + 1);
+    if (remainingLoadedProfiles > 2) {
+      return;
     }
-  }, [currentIndex, filteredProfiles.length]);
 
-  const resetPosition = () => {
+    setLoadedCount((current) =>
+      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
+    );
+  }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceProfiles.length]);
+
+  React.useEffect(() => {
+    if (
+      isOffline ||
+      hasDeckProfiles ||
+      loadedCount >= sourceProfiles.length ||
+      !sourceProfiles.length
+    ) {
+      return;
+    }
+
+    setLoadedCount((current) =>
+      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
+    );
+  }, [hasDeckProfiles, isOffline, loadedCount, sourceProfiles.length, sourceProfiles]);
+
+  React.useEffect(() => {
+    if (!filteredProfiles.length) {
+      return;
+    }
+
+    void warmDiscoveryDeck([
+      deck.front.profile,
+      deck.second.profile,
+      deck.third.profile,
+    ]).then(() => {
+      setDeck((currentDeck) => ({
+        ...currentDeck,
+        front: {
+          ...currentDeck.front,
+          primaryReady: isPrimaryImageReady(currentDeck.front.profile),
+        },
+        second: {
+          ...currentDeck.second,
+          primaryReady: isPrimaryImageReady(currentDeck.second.profile),
+        },
+      }));
+      setPreloadRevision((value) => value + 1);
+    });
+  }, [
+    deck.front.profile,
+    deck.second.profile,
+    deck.third.profile,
+    filteredProfiles,
+  ]);
+
+  React.useEffect(() => {
+    if (!frontProfile || deck.front.extraPhotosReady) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void warmDiscoveryFrontExtras(frontProfile).then(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setDeck((currentDeck) => {
+        if (currentDeck.front.profile?.id !== frontProfile.id) {
+          return currentDeck;
+        }
+
+        const nextReady = areFrontExtrasReady(frontProfile);
+        if (currentDeck.front.extraPhotosReady === nextReady) {
+          return currentDeck;
+        }
+
+        return {
+          ...currentDeck,
+          front: {
+            ...currentDeck.front,
+            extraPhotosReady: nextReady,
+          },
+        };
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deck.front.extraPhotosReady, frontProfile]);
+
+  const resetPosition = useCallback(() => {
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
       useNativeDriver: false,
     }).start();
-  };
+  }, [position]);
 
-  const setInfoVisible = (nextVisible: boolean) => {
+  const setInfoVisible = useCallback((nextVisible: boolean) => {
     setIsInfoVisible(nextVisible);
     if (nextVisible) {
       backScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -609,40 +946,110 @@ export default function DiscoverScreen() {
       tension: 60,
       useNativeDriver: true,
     }).start();
-  };
+  }, [flipAnim]);
 
   const toggleInfo = () => {
     Haptics.selectionAsync().catch(() => {});
     setInfoVisible(!isInfoVisible);
   };
 
-  const resetCardState = () => {
+  const resetCardState = useCallback(() => {
     setSwipeState("idle");
+    setIsDeckAnimating(false);
     position.setValue({ x: 0, y: 0 });
+    deckProgress.setValue(0);
     setActivePhotoIndex(0);
     setIsInfoVisible(false);
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
-  };
+  }, [deckProgress, flipAnim, position]);
 
-  const stepPhoto = (direction: "prev" | "next") => {
-    if (currentImages.length <= 1) {
+  const markSlotReady = useCallback((slotName: DeckSlotName, profileId: string) => {
+    setDeck((currentDeck) => {
+      const slot = currentDeck[slotName];
+      if (!slot.profile || slot.profile.id !== profileId || slot.primaryReady) {
+        return currentDeck;
+      }
+
+      return {
+        ...currentDeck,
+        [slotName]: {
+          ...slot,
+          primaryReady: true,
+        },
+      };
+    });
+  }, []);
+
+  const advanceDeck = useCallback(() => {
+    setActivePhotoIndex(0);
+    setIsInfoVisible(false);
+    flipAnim.setValue(0);
+    backScrollRef.current?.scrollTo({ y: 0, animated: false });
+    setDeck((currentDeck) => advanceDeckState(currentDeck, filteredProfiles));
+    requestAnimationFrame(() => {
+      resetCardState();
+    });
+  }, [filteredProfiles, flipAnim, resetCardState]);
+
+  const syncFrontExtraPhotoState = useCallback((profile: DiscoverProfile) => {
+    const nextReady = areFrontExtrasReady(profile);
+    setDeck((currentDeck) => {
+      if (currentDeck.front.profile?.id !== profile.id) {
+        return currentDeck;
+      }
+      if (currentDeck.front.extraPhotosReady === nextReady) {
+        return currentDeck;
+      }
+      return {
+        ...currentDeck,
+        front: {
+          ...currentDeck.front,
+          extraPhotosReady: nextReady,
+        },
+      };
+    });
+  }, []);
+
+  const stepPhoto = useCallback((direction: "prev" | "next") => {
+    if (!frontProfile || currentImages.length <= 1) {
       return;
     }
 
-    setActivePhotoIndex((prev) => {
-      const nextIndex =
-        direction === "next"
-          ? Math.min(prev + 1, currentImages.length - 1)
-          : Math.max(prev - 1, 0);
+    const nextIndex =
+      direction === "next"
+        ? Math.min(activePhotoIndex + 1, currentImages.length - 1)
+        : Math.max(activePhotoIndex - 1, 0);
 
-      if (nextIndex !== prev) {
-        Haptics.selectionAsync().catch(() => {});
+    if (nextIndex === activePhotoIndex) {
+      return;
+    }
+
+    Haptics.selectionAsync().catch(() => {});
+
+    const nextUri = frontProfile.images[nextIndex];
+    if (!nextUri || isDiscoveryImageWarm(nextUri)) {
+      setActivePhotoIndex(nextIndex);
+      syncFrontExtraPhotoState(frontProfile);
+      return;
+    }
+
+    const frontProfileId = frontProfile.id;
+    void warmDiscoveryProfileImages(frontProfile, 1, nextIndex).then(() => {
+      syncFrontExtraPhotoState(frontProfile);
+      if (
+        deckRef.current.front.profile?.id === frontProfileId &&
+        isDiscoveryImageWarm(nextUri)
+      ) {
+        setActivePhotoIndex(nextIndex);
       }
-
-      return nextIndex;
     });
-  };
+  }, [
+    activePhotoIndex,
+    currentImages.length,
+    frontProfile,
+    syncFrontExtraPhotoState,
+  ]);
 
   const toggleBaseGender = (value: BaseGender) => {
     setDraftFilters((current) => {
@@ -666,19 +1073,18 @@ export default function DiscoverScreen() {
 
   const openFilters = () => {
     setDraftFilters({
-      ...appliedFilters,
-      selectedGenders: [...appliedFilters.selectedGenders],
+      ...activeFilters,
+      selectedGenders: [...activeFilters.selectedGenders],
     });
     setIsFilterVisible(true);
     Haptics.selectionAsync().catch(() => {});
   };
 
   const applyFilters = () => {
-    setAppliedFilters({
+    void saveDiscoveryFilters({
       ...draftFilters,
       selectedGenders: [...draftFilters.selectedGenders],
     });
-    setCurrentIndex(0);
     resetCardState();
     setIsFilterVisible(false);
   };
@@ -688,30 +1094,53 @@ export default function DiscoverScreen() {
       ...defaultFilters,
       selectedGenders: [...defaultFilters.selectedGenders],
     });
-    setAppliedFilters({
+    void saveDiscoveryFilters({
       ...defaultFilters,
       selectedGenders: [...defaultFilters.selectedGenders],
     });
-    setCurrentIndex(0);
     resetCardState();
     setIsFilterVisible(false);
   };
 
-  const swipeRight = () => {
-    if (!current) {
+  const handleRetryDiscovery = useCallback(() => {
+    if (isOffline) {
       return;
     }
-    const profile = current;
+
+    setLoadedCount((current) =>
+      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
+    );
+  }, [isOffline, sourceProfiles.length]);
+
+  const swipeRight = useCallback(() => {
+    if (!frontProfile || isDeckAnimating) {
+      return false;
+    }
+    if (!secondReady) {
+      resetPosition();
+      setSwipeState("idle");
+      return false;
+    }
+    const profile = frontProfile;
+    setIsDeckAnimating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    Animated.timing(position, {
-      toValue: { x: width + 100, y: 0 },
-      duration: 300,
-      useNativeDriver: false,
-    }).start(() => {
-      resetCardState();
-      setCurrentIndex((prev) =>
-        filteredProfiles.length > 1 ? (prev + 1) % filteredProfiles.length : 0
-      );
+    Animated.parallel([
+      Animated.timing(position, {
+        toValue: { x: width + 100, y: 0 },
+        duration: 300,
+        useNativeDriver: false,
+      }),
+      Animated.timing(deckProgress, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (!finished) {
+        resetCardState();
+        return;
+      }
+      advanceDeck();
       void (async () => {
         const result = await likeProfile(profile.id);
         setLastLikedProfile(profile);
@@ -728,24 +1157,60 @@ export default function DiscoverScreen() {
         }
       })();
     });
-  };
+    return true;
+  }, [
+    advanceDeck,
+    buildPopularUpdateMessage,
+    deckProgress,
+    frontProfile,
+    isDeckAnimating,
+    likeProfile,
+    position,
+    resetPosition,
+    resetCardState,
+    secondReady,
+  ]);
 
-  const swipeLeft = () => {
-    if (!current) {
-      return;
+  const swipeLeft = useCallback(() => {
+    if (!frontProfile || isDeckAnimating) {
+      return false;
     }
+    if (!secondReady) {
+      resetPosition();
+      setSwipeState("idle");
+      return false;
+    }
+    setIsDeckAnimating(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    Animated.timing(position, {
-      toValue: { x: -width - 100, y: 0 },
-      duration: 300,
-      useNativeDriver: false,
-    }).start(() => {
-      resetCardState();
-      setCurrentIndex((prev) =>
-        filteredProfiles.length > 1 ? (prev + 1) % filteredProfiles.length : 0
-      );
+    Animated.parallel([
+      Animated.timing(position, {
+        toValue: { x: -width - 100, y: 0 },
+        duration: 300,
+        useNativeDriver: false,
+      }),
+      Animated.timing(deckProgress, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (!finished) {
+        resetCardState();
+        return;
+      }
+      advanceDeck();
     });
-  };
+    return true;
+  }, [
+    advanceDeck,
+    deckProgress,
+    frontProfile,
+    isDeckAnimating,
+    position,
+    resetPosition,
+    resetCardState,
+    secondReady,
+  ]);
 
   const panResponder = useMemo(
     () =>
@@ -780,9 +1245,15 @@ export default function DiscoverScreen() {
           const horizontalIntent = Math.abs(gesture.dx) >= Math.abs(gesture.dy);
           if (horizontalIntent) {
             if (gesture.dx > SWIPE_THRESHOLD) {
-              swipeRight();
+              if (!swipeRight()) {
+                resetPosition();
+                setSwipeState("idle");
+              }
             } else if (gesture.dx < -SWIPE_THRESHOLD) {
-              swipeLeft();
+              if (!swipeLeft()) {
+                resetPosition();
+                setSwipeState("idle");
+              }
             } else {
               resetPosition();
               setSwipeState("idle");
@@ -812,7 +1283,7 @@ export default function DiscoverScreen() {
           setSwipeState("idle");
         },
       }),
-    [isInfoVisible]
+    [isInfoVisible, resetPosition, setInfoVisible, swipeLeft, swipeRight]
   );
 
   return (
@@ -860,28 +1331,82 @@ export default function DiscoverScreen() {
         </View>
       ) : null}
 
-      {hasProfiles && current ? (
+      {isOffline && hasDeckProfiles ? (
+        <View style={styles.offlineBannerWrap}>
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={14} color={Colors.info} />
+            <View style={styles.offlineBannerBody}>
+              <Text style={styles.offlineBannerTitle}>
+                {t("Modo sin conexión", "Offline mode")}
+              </Text>
+              <Text style={styles.offlineBannerText}>
+                {lastSyncLabel
+                  ? t(
+                      `Seguimos con perfiles guardados. Última sincronización: ${lastSyncLabel}`,
+                      `Still using cached profiles. Last sync: ${lastSyncLabel}`
+                    )
+                  : t(
+                      "Seguimos con perfiles guardados hasta que vuelva la conexión.",
+                      "Still using cached profiles until the connection returns."
+                    )}
+              </Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {hasDeckProfiles && frontProfile ? (
         <>
           <View style={styles.cardStack}>
-            {nextNext ? (
-              <View style={[styles.cardBase, styles.cardThird]}>
-                <Image
-                  source={{ uri: nextNext.images[0] }}
-                  style={styles.cardImage}
-                  resizeMode="cover"
-                />
-              </View>
-            ) : null}
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.cardBase,
+                styles.cardThird,
+                !thirdProfile && styles.cardSlotHidden,
+                {
+                  opacity: thirdProfile ? promotedThirdOpacity : 0,
+                  transform: [
+                    { scale: promotedThirdScale },
+                    { translateY: promotedThirdTranslateY },
+                  ],
+                },
+              ]}
+            >
+              {thirdProfile ? <View style={styles.cardThirdBackdrop} /> : null}
+            </Animated.View>
 
-            {next ? (
-              <View style={[styles.cardBase, styles.cardSecond]}>
-                <Image
-                  source={{ uri: next.images[0] }}
-                  style={styles.cardImage}
-                  resizeMode="cover"
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.cardBase,
+                styles.cardSecond,
+                !secondProfile && styles.cardSlotHidden,
+                {
+                  opacity: secondProfile ? promotedSecondOpacity : 0,
+                  transform: [
+                    { scale: promotedSecondScale },
+                    { translateY: promotedSecondTranslateY },
+                  ],
+                },
+              ]}
+            >
+              {secondProfile ? (
+                <ExpoImage
+                  source={{ uri: secondProfile.images[0] }}
+                  recyclingKey={secondProfile.id}
+                  style={[
+                    styles.cardImage,
+                    !deck.second.primaryReady && styles.cardImagePending,
+                  ]}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={0}
+                  onLoadEnd={() => markSlotReady("second", secondProfile.id)}
+                  onError={() => markSlotReady("second", secondProfile.id)}
                 />
-              </View>
-            ) : null}
+              ) : null}
+            </Animated.View>
 
             <Animated.View
               {...panResponder.panHandlers}
@@ -912,10 +1437,15 @@ export default function DiscoverScreen() {
                       },
                 ]}
               >
-                <Image
+                <ExpoImage
                   source={{ uri: currentImage }}
+                  recyclingKey={`${frontProfile.id}:${activePhotoIndex}`}
                   style={styles.cardImage}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={0}
+                  onLoadEnd={() => markSlotReady("front", frontProfile.id)}
+                  onError={() => markSlotReady("front", frontProfile.id)}
                 />
 
                 <View style={styles.photoTapLayer} pointerEvents="box-none">
@@ -964,24 +1494,24 @@ export default function DiscoverScreen() {
                   {pronounLabel ? (
                     <Text style={styles.cardPronouns}>{pronounLabel}</Text>
                   ) : null}
-                  <Text style={styles.cardName}>{current.name}</Text>
+                  <Text style={styles.cardName}>{frontProfile.name}</Text>
                   {genderIdentityLabel ? (
                     <Text style={styles.cardIdentity}>{genderIdentityLabel}</Text>
                   ) : null}
                   <Text style={styles.cardAgeSign}>{ageWithSign}</Text>
                   <View style={styles.cardRow}>
                     <Feather name="map-pin" size={13} color={Colors.primaryLight} />
-                    <Text style={styles.cardLocation}>{current.location}</Text>
+                    <Text style={styles.cardLocation}>{frontProfile.location}</Text>
                     <Text style={styles.cardDot}>·</Text>
                     <Text style={styles.cardOccupation}>
-                      {t(current.occupation.es, current.occupation.en)}
+                      {t(frontProfile.occupation.es, frontProfile.occupation.en)}
                     </Text>
                   </View>
 
                   <View style={styles.interestsRow}>
-                    {current.attributes.interests.slice(0, 3).map((interest) => (
+                    {frontProfile.attributes.interests.slice(0, 3).map((interest) => (
                       <View
-                        key={`${current.id}-${interest}`}
+                        key={`${frontProfile.id}-${interest}`}
                         style={styles.interestChip}
                       >
                         <Text style={styles.interestChipText}>{interest}</Text>
@@ -993,7 +1523,7 @@ export default function DiscoverScreen() {
                     <View style={styles.photoDotsRow}>
                       {currentImages.map((_, index) => (
                         <View
-                          key={`${current.id}-photo-dot-${index}`}
+                          key={`${frontProfile.id}-photo-dot-${index}`}
                           style={[
                             styles.photoDot,
                             index === activePhotoIndex && styles.photoDotActive,
@@ -1025,10 +1555,10 @@ export default function DiscoverScreen() {
                     <Feather name="info" size={14} color={Colors.info} />
                   </View>
                   <Text style={styles.backName}>
-                    {current.name}, {current.age}
+                    {frontProfile.name}, {frontProfile.age}
                   </Text>
                   <Text style={styles.backMeta}>
-                    {current.location} · {t(current.occupation.es, current.occupation.en)}
+                    {frontProfile.location} · {t(frontProfile.occupation.es, frontProfile.occupation.en)}
                   </Text>
                 </View>
 
@@ -1043,23 +1573,23 @@ export default function DiscoverScreen() {
                     <AboutRow
                       icon="message-circle"
                       label={t("Sobre mí", "About me")}
-                      value={t(current.about.bio.es, current.about.bio.en)}
+                      value={t(frontProfile.about.bio.es, frontProfile.about.bio.en)}
                     />
                     <AboutRow
                       icon="heart"
                       label={t("Metas de tu relación", "Relationship goals")}
-                      value={getRelationshipGoalLabel(current.about.relationshipGoals, t)}
+                      value={getRelationshipGoalLabel(frontProfile.about.relationshipGoals, t)}
                     />
                     <AboutRow
                       icon="book-open"
                       label={t("Educación", "Education")}
-                      value={getEducationLabel(current.about.education, t)}
+                      value={getEducationLabel(frontProfile.about.education, t)}
                     />
                     <AboutRow
                       icon="users"
                       label={t("Hijxs", "Children")}
                       value={getChildrenPreferenceLabel(
-                        current.about.childrenPreference,
+                        frontProfile.about.childrenPreference,
                         t
                       )}
                     />
@@ -1068,18 +1598,19 @@ export default function DiscoverScreen() {
                       label={t("Idiomas", "Languages")}
                       value={
                         <View style={styles.flagImageRow}>
-                          {current.about.languagesSpoken.map((value) => {
+                          {frontProfile.about.languagesSpoken.map((value) => {
                             const uri = getLanguageFlagUri(value);
                             return uri ? (
-                              <Image
-                                key={`${current.id}-${value}`}
+                              <ExpoImage
+                                key={`${frontProfile.id}-${value}`}
                                 source={{ uri }}
                                 style={styles.flagImage}
-                                resizeMode="cover"
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
                               />
                             ) : (
                               <View
-                                key={`${current.id}-${value}`}
+                                key={`${frontProfile.id}-${value}`}
                                 style={styles.flagFallback}
                               >
                                 <Feather name="globe" size={14} color={Colors.info} />
@@ -1100,25 +1631,25 @@ export default function DiscoverScreen() {
                         icon="activity"
                         label={t("Actividad física", "Activity")}
                         value={getPhysicalActivityLabel(
-                          current.lifestyle.physicalActivity,
+                          frontProfile.lifestyle.physicalActivity,
                           t
                         )}
                       />
                       <LifestyleTile
                         icon="coffee"
                         label={t("Bebida", "Drink")}
-                        value={getAlcoholUseLabel(current.lifestyle.alcoholUse, t)}
+                        value={getAlcoholUseLabel(frontProfile.lifestyle.alcoholUse, t)}
                       />
                       <LifestyleTile
                         icon="wind"
                         label={t("Tabaco", "Smoke")}
-                        value={getTobaccoUseLabel(current.lifestyle.tobaccoUse, t)}
+                        value={getTobaccoUseLabel(frontProfile.lifestyle.tobaccoUse, t)}
                       />
                       <LifestyleTile
                         icon="flag"
                         label={t("Política", "Politics")}
                         value={getPoliticalInterestLabel(
-                          current.lifestyle.politicalInterest,
+                          frontProfile.lifestyle.politicalInterest,
                           t
                         )}
                       />
@@ -1126,14 +1657,14 @@ export default function DiscoverScreen() {
                         icon="star"
                         label={t("Religión", "Religion")}
                         value={getReligionImportanceLabel(
-                          current.lifestyle.religionImportance,
+                          frontProfile.lifestyle.religionImportance,
                           t
                         )}
                       />
                       <LifestyleTile
                         icon="moon"
                         label={t("Creencia", "Belief")}
-                        value={getReligionLabel(current.lifestyle.religion, t)}
+                        value={getReligionLabel(frontProfile.lifestyle.religion, t)}
                       />
                     </View>
                   </View>
@@ -1145,22 +1676,22 @@ export default function DiscoverScreen() {
                     <PhysicalRow
                       icon="user"
                       label={t("Tipo de cuerpo", "Body type")}
-                      value={getBodyTypeLabel(current.physical.bodyType, t)}
+                      value={getBodyTypeLabel(frontProfile.physical.bodyType, t)}
                     />
                     <PhysicalRow
                       icon="maximize-2"
                       label={t("Altura", "Height")}
-                      value={current.physical.height}
+                      value={frontProfile.physical.height}
                     />
                     <PhysicalRow
                       icon="feather"
                       label={t("Color de cabello", "Hair color")}
-                      value={getHairColorLabel(current.physical.hairColor, t)}
+                      value={getHairColorLabel(frontProfile.physical.hairColor, t)}
                     />
                     <PhysicalRow
                       icon="map"
                       label={t("Etnia", "Ethnicity")}
-                      value={getEthnicityLabel(current.physical.ethnicity, t)}
+                      value={getEthnicityLabel(frontProfile.physical.ethnicity, t)}
                     />
                   </View>
                 </ScrollView>
@@ -1213,6 +1744,77 @@ export default function DiscoverScreen() {
             </Pressable>
           </View>
         </>
+      ) : isOfflineDeckExhausted ? (
+        <View style={styles.cardStack}>
+          <View style={[styles.cardBase, styles.emptyCard]}>
+            <View style={styles.emptyCardIconWrap}>
+              <Feather name="wifi-off" size={24} color={Colors.info} />
+            </View>
+            <Text style={styles.emptyCardTitle}>
+              {t(
+                "Sin conexión para cargar más perfiles",
+                "You are offline and we cannot load more profiles"
+              )}
+            </Text>
+            <Text style={styles.emptyCardCopy}>
+              {lastSyncLabel
+                ? t(
+                    `Vuelve a conectarte o reintenta. Última sincronización: ${lastSyncLabel}.`,
+                    `Reconnect or retry. Last sync: ${lastSyncLabel}.`
+                  )
+                : t(
+                    "Vuelve a conectarte o reintenta para seguir descubriendo.",
+                    "Reconnect or retry to keep discovering."
+                  )}
+            </Text>
+            <Pressable
+              onPress={handleRetryDiscovery}
+              disabled={isOffline}
+              style={({ pressed }) => [
+                styles.emptyCardButton,
+                isOffline && styles.emptyCardButtonDisabled,
+                pressed && !isOffline && { opacity: 0.84 },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.emptyCardButtonText,
+                  isOffline && styles.emptyCardButtonTextDisabled,
+                ]}
+              >
+                {t("Reintentar", "Retry")}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : isOnlineDeckExhausted ? (
+        <View style={styles.cardStack}>
+          <View style={[styles.cardBase, styles.emptyCard]}>
+            <View style={styles.emptyCardIconWrap}>
+              <Feather name="check-circle" size={24} color={Colors.info} />
+            </View>
+            <Text style={styles.emptyCardTitle}>
+              {t("No hay más perfiles por ahora", "No more profiles for now")}
+            </Text>
+            <Text style={styles.emptyCardCopy}>
+              {t(
+                "Ya viste todos los perfiles disponibles con esta selección.",
+                "You have seen all available profiles for this selection."
+              )}
+            </Text>
+            <Pressable
+              onPress={clearFilters}
+              style={({ pressed }) => [
+                styles.emptyCardButton,
+                pressed && { opacity: 0.84 },
+              ]}
+            >
+              <Text style={styles.emptyCardButtonText}>
+                {t("Limpiar filtros", "Clear filters")}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
       ) : (
         <View style={styles.cardStack}>
           <View style={[styles.cardBase, styles.emptyCard]}>
@@ -1446,6 +2048,36 @@ const styles = StyleSheet.create({
   popularUpdateWrap: {
     paddingHorizontal: 20,
     paddingBottom: 10,
+  },
+  offlineBannerWrap: {
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+  },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    backgroundColor: "rgba(90,169,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.18)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  offlineBannerBody: {
+    flex: 1,
+    gap: 2,
+  },
+  offlineBannerTitle: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
+    color: Colors.text,
+  },
+  offlineBannerText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
   },
   popularUpdateCard: {
     flexDirection: "row",
@@ -1814,6 +2446,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#fff",
   },
+  emptyCardButtonDisabled: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptyCardButtonTextDisabled: {
+    color: Colors.textMuted,
+  },
   cardInteractive: {
     zIndex: 3,
     shadowColor: "#000",
@@ -1848,6 +2488,16 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     position: "absolute",
+  },
+  cardThirdBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: Colors.backgroundCard,
+  },
+  cardImagePending: {
+    opacity: 0,
+  },
+  cardSlotHidden: {
+    opacity: 0,
   },
   photoTapLayer: {
     ...StyleSheet.absoluteFillObject,

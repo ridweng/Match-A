@@ -602,6 +602,24 @@ export const discoveryChangeMessagesTable = discoverySchema.table("discovery_cha
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const discoveryFilterPreferencesTable = discoverySchema.table(
+  "filter_preferences",
+  {
+    actorProfileId: bigint("actor_profile_id", { mode: "number" })
+      .primaryKey()
+      .references(() => profilesTable.id, { onDelete: "cascade" }),
+    selectedGenders: jsonb("selected_genders")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    therianMode: varchar("therian_mode", { length: 16 }).notNull().default("exclude"),
+    ageMin: integer("age_min").notNull().default(18),
+    ageMax: integer("age_max").notNull().default(40),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  }
+);
+
 export const mediaAssetsTable = mediaSchema.table(
   "media_assets",
   {

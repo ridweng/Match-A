@@ -13,6 +13,15 @@ import {
 
 @Injectable()
 export class DiscoveryService {
+  private defaultFilters() {
+    return {
+      selectedGenders: [] as Array<"male" | "female" | "non_binary" | "fluid">,
+      therianMode: "exclude" as const,
+      ageMin: 18,
+      ageMax: 40,
+    };
+  }
+
   private async findActorProfileId(userId: number) {
     const result = await pool.query<{ id: number }>(
       `SELECT id
@@ -33,10 +42,72 @@ export class DiscoveryService {
     const actorProfileId = await this.findActorProfileId(userId);
     const client = await pool.connect();
     try {
-      return await getDiscoveryPreferencesForActor(client, actorProfileId);
+      const preferences = await getDiscoveryPreferencesForActor(client, actorProfileId);
+      const filtersResult = await client.query<{
+        selected_genders: string[] | null;
+        therian_mode: "exclude" | "include" | "only" | null;
+        age_min: number | null;
+        age_max: number | null;
+      }>(
+        `SELECT selected_genders, therian_mode, age_min, age_max
+         FROM discovery.filter_preferences
+         WHERE actor_profile_id = $1
+         LIMIT 1`,
+        [actorProfileId]
+      );
+
+      const filters = filtersResult.rows[0];
+      return {
+        ...preferences,
+        filters: filters
+          ? {
+              selectedGenders: Array.isArray(filters.selected_genders)
+                ? (filters.selected_genders.filter(Boolean) as Array<
+                    "male" | "female" | "non_binary" | "fluid"
+                  >)
+                : [],
+              therianMode: filters.therian_mode || "exclude",
+              ageMin: Number(filters.age_min) || 18,
+              ageMax: Number(filters.age_max) || 40,
+            }
+          : this.defaultFilters(),
+      };
     } finally {
       client.release();
     }
+  }
+
+  async updatePreferences(
+    userId: number,
+    filters: {
+      selectedGenders: Array<"male" | "female" | "non_binary" | "fluid">;
+      therianMode: "exclude" | "include" | "only";
+      ageMin: number;
+      ageMax: number;
+    }
+  ) {
+    const actorProfileId = await this.findActorProfileId(userId);
+    await pool.query(
+      `INSERT INTO discovery.filter_preferences
+        (actor_profile_id, selected_genders, therian_mode, age_min, age_max)
+       VALUES ($1, $2::jsonb, $3, $4, $5)
+       ON CONFLICT (actor_profile_id)
+       DO UPDATE SET
+         selected_genders = EXCLUDED.selected_genders,
+         therian_mode = EXCLUDED.therian_mode,
+         age_min = EXCLUDED.age_min,
+         age_max = EXCLUDED.age_max,
+         updated_at = NOW()`,
+      [
+        actorProfileId,
+        JSON.stringify(filters.selectedGenders),
+        filters.therianMode,
+        filters.ageMin,
+        filters.ageMax,
+      ]
+    );
+
+    return this.getPreferences(userId);
   }
 
   async likeProfile(
@@ -116,6 +187,7 @@ export class DiscoveryService {
       popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
       totalLikesCount: 0,
       lastNotifiedPopularModeChangeAtLikeCount: 0,
+      filters: this.defaultFilters(),
     };
   }
 }

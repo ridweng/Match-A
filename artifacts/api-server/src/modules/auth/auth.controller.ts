@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpStatus,
   Inject,
@@ -375,6 +376,23 @@ export class AuthController {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_SETTINGS_PAYLOAD", error);
       }
+      if (error instanceof Error && error.message) {
+        return this.sendAuthError(res, error);
+      }
+      console.error(error);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: "INTERNAL_SERVER_ERROR" });
+    }
+  }
+
+  @Delete("me")
+  async deleteMe(@Req() req: Request, @Res() res: Response) {
+    try {
+      return res.json(
+        await this.authService.deleteAccount(this.getAuthorizationHeader(req))
+      );
+    } catch (error) {
       if (error instanceof Error && error.message) {
         return this.sendAuthError(res, error);
       }

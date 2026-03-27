@@ -14,8 +14,59 @@ type GoalTaskRow = {
   status: "active" | "completed";
 };
 
+type GoalTaskViewRow = {
+  goal_key: string;
+  category_code: GoalCategoryCode;
+  sort_order: number;
+  status: "active" | "completed";
+  title_es: string;
+  title_en: string;
+  next_action_es: string;
+  next_action_en: string;
+  impact_es: string;
+  impact_en: string;
+};
+
 @Injectable()
 export class GoalsService {
+  private mapGoalRows(rows: GoalTaskViewRow[]) {
+    const ordered = rows
+      .slice()
+      .sort((a, b) => {
+        if (a.category_code !== b.category_code) {
+          return String(a.category_code).localeCompare(String(b.category_code));
+        }
+        if (a.sort_order !== b.sort_order) {
+          return a.sort_order - b.sort_order;
+        }
+        return String(a.goal_key).localeCompare(String(b.goal_key));
+      });
+
+    const progressByCategory = new Map<GoalCategoryCode, number>();
+    for (const category of GOAL_CATEGORIES.map((item) => item.code)) {
+      const categoryRows = ordered.filter((row) => row.category_code === category);
+      const completedCount = categoryRows.filter((row) => row.status === "completed").length;
+      const progress = categoryRows.length
+        ? Math.round((completedCount / categoryRows.length) * 100)
+        : 0;
+      progressByCategory.set(category, progress);
+    }
+
+    return ordered.map((row) => ({
+      id: row.goal_key,
+      titleEs: row.title_es,
+      titleEn: row.title_en,
+      category: row.category_code,
+      order: row.sort_order,
+      completed: row.status === "completed",
+      progress: progressByCategory.get(row.category_code) || 0,
+      nextActionEs: row.next_action_es,
+      nextActionEn: row.next_action_en,
+      impactEs: row.impact_es,
+      impactEn: row.impact_en,
+    }));
+  }
+
   private async withClient<T>(
     maybeClient: DbClient | undefined,
     callback: (client: DbClient) => Promise<T>
@@ -202,6 +253,147 @@ export class GoalsService {
       }
 
       return { rebuiltUsers: users.rows.length };
+    });
+  }
+
+  async getUserGoals(userId: number, client?: DbClient) {
+    return this.withClient(client, async (dbClient) => {
+      const result = await dbClient.query<GoalTaskViewRow>(
+        `SELECT
+           gtt.goal_key,
+           ugt.category_code,
+           ugt.sort_order,
+           ugt.status,
+           gtt.title_es,
+           gtt.title_en,
+           gtt.next_action_es,
+           gtt.next_action_en,
+           gtt.impact_es,
+           gtt.impact_en
+         FROM goals.user_goal_tasks ugt
+         JOIN catalog.goal_task_templates gtt ON gtt.id = ugt.template_id
+         WHERE ugt.user_id = $1
+         ORDER BY ugt.category_code ASC, ugt.sort_order ASC, gtt.goal_key ASC`,
+        [userId]
+      );
+
+      return {
+        goals: this.mapGoalRows(result.rows),
+      };
+    });
+  }
+
+  async completeGoalTask(userId: number, goalKey: string) {
+    const normalizedGoalKey = String(goalKey || "").trim();
+    if (!normalizedGoalKey) {
+      throw new Error("GOAL_NOT_FOUND");
+    }
+
+    return this.withClient(undefined, async (dbClient) => {
+      await dbClient.query("BEGIN");
+
+      try {
+        const updated = await dbClient.query<{ id: number }>(
+          `UPDATE goals.user_goal_tasks AS ugt
+           SET status = 'completed',
+               completed_at = COALESCE(ugt.completed_at, NOW()),
+               updated_at = NOW()
+           FROM catalog.goal_task_templates AS gtt
+           WHERE ugt.template_id = gtt.id
+             AND ugt.user_id = $1
+             AND gtt.goal_key = $2
+           RETURNING ugt.id`,
+          [userId, normalizedGoalKey]
+        );
+
+        if (!updated.rows[0]) {
+          throw new Error("GOAL_NOT_FOUND");
+        }
+
+        await this.rebuildUserProgress(userId, dbClient);
+        const nextGoals = await this.getUserGoals(userId, dbClient);
+        await dbClient.query("COMMIT");
+        return nextGoals;
+      } catch (error) {
+        await dbClient.query("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
+  async reorderGoalTasks(
+    userId: number,
+    categoryCode: GoalCategoryCode,
+    orderedGoalKeys: string[]
+  ) {
+    return this.withClient(undefined, async (dbClient) => {
+      await dbClient.query("BEGIN");
+
+      try {
+        const current = await dbClient.query<{
+          goal_key: string;
+          status: "active" | "completed";
+        }>(
+          `SELECT gtt.goal_key, ugt.status
+           FROM goals.user_goal_tasks ugt
+           JOIN catalog.goal_task_templates gtt ON gtt.id = ugt.template_id
+           WHERE ugt.user_id = $1
+             AND ugt.category_code = $2
+           ORDER BY ugt.sort_order ASC, gtt.goal_key ASC`,
+          [userId, categoryCode]
+        );
+
+        const activeGoalKeys = current.rows
+          .filter((row) => row.status === "active")
+          .map((row) => row.goal_key);
+        const completedGoalKeys = current.rows
+          .filter((row) => row.status === "completed")
+          .map((row) => row.goal_key);
+
+        const normalizedGoalKeys = orderedGoalKeys
+          .map((value) => String(value || "").trim())
+          .filter(Boolean);
+
+        if (
+          normalizedGoalKeys.length !== activeGoalKeys.length ||
+          normalizedGoalKeys.some((value) => !activeGoalKeys.includes(value))
+        ) {
+          throw new Error("INVALID_GOAL_ORDER");
+        }
+
+        const nextGoalKeys = [...normalizedGoalKeys, ...completedGoalKeys];
+
+        await dbClient.query(
+          `UPDATE goals.user_goal_tasks
+           SET sort_order = sort_order + 1000,
+               updated_at = NOW()
+           WHERE user_id = $1
+             AND category_code = $2`,
+          [userId, categoryCode]
+        );
+
+        for (const [index, goalKey] of nextGoalKeys.entries()) {
+          await dbClient.query(
+            `UPDATE goals.user_goal_tasks AS ugt
+             SET sort_order = $3,
+                 updated_at = NOW()
+             FROM catalog.goal_task_templates AS gtt
+             WHERE ugt.template_id = gtt.id
+               AND ugt.user_id = $1
+               AND ugt.category_code = $2
+               AND gtt.goal_key = $4`,
+            [userId, categoryCode, index, goalKey]
+          );
+        }
+
+        await this.rebuildUserProgress(userId, dbClient);
+        const nextGoals = await this.getUserGoals(userId, dbClient);
+        await dbClient.query("COMMIT");
+        return nextGoals;
+      } catch (error) {
+        await dbClient.query("ROLLBACK");
+        throw error;
+      }
     });
   }
 }

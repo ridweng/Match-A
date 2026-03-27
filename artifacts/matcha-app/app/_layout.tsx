@@ -30,6 +30,22 @@ function RootLayoutNav() {
     hasCompletedOnboarding,
   } = useApp();
   const pathname = usePathname();
+  const isAuthCallbackActive = pathname === "/auth-callback";
+  const isLocked = authStatus === "authenticated" && biometricLockRequired;
+  const shouldShowTabs =
+    authStatus === "authenticated" &&
+    !biometricLockRequired &&
+    !needsProfileCompletion &&
+    hasCompletedOnboarding;
+  const shouldShowCompleteProfile =
+    authStatus === "authenticated" &&
+    !biometricLockRequired &&
+    needsProfileCompletion;
+  const shouldShowOnboarding =
+    authStatus === "authenticated" &&
+    !biometricLockRequired &&
+    !needsProfileCompletion &&
+    !hasCompletedOnboarding;
 
   const [loadingVisible, setLoadingVisible] = useState(true);
   const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
@@ -37,33 +53,33 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (authStatus === "loading") return;
-    if (pathname === "/auth-callback" && authBusy) {
+    if (isAuthCallbackActive && authBusy) {
       return;
     }
 
     if (authStatus !== "authenticated") {
-      if (pathname !== "/login" && pathname !== "/auth-callback") {
+      if (pathname !== "/login" && !isAuthCallbackActive) {
         router.replace("/login" as any);
       }
-    } else if (biometricLockRequired) {
+    } else if (isLocked) {
       if (pathname !== "/biometric-lock") {
         router.replace("/biometric-lock" as any);
       }
-    } else if (needsProfileCompletion) {
+    } else if (shouldShowCompleteProfile) {
       if (pathname !== "/complete-profile") {
         router.replace("/complete-profile" as any);
       }
-    } else if (!hasCompletedOnboarding) {
+    } else if (shouldShowOnboarding) {
       if (pathname !== "/onboarding") {
         router.replace("/onboarding" as any);
       }
-    } else if (
+    } else if (shouldShowTabs && (
       pathname === "/login" ||
       pathname === "/biometric-lock" ||
       pathname === "/complete-profile" ||
       pathname === "/onboarding" ||
       pathname === "/auth-callback"
-    ) {
+    )) {
       router.replace("/(tabs)/discover" as any);
     }
 
@@ -75,10 +91,12 @@ function RootLayoutNav() {
   }, [
     authStatus,
     authBusy,
-    biometricLockRequired,
-    needsProfileCompletion,
-    hasCompletedOnboarding,
+    isAuthCallbackActive,
+    isLocked,
     pathname,
+    shouldShowCompleteProfile,
+    shouldShowOnboarding,
+    shouldShowTabs,
   ]);
 
   return (

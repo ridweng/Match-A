@@ -9,6 +9,8 @@ import { DiscoveryModule } from "./modules/discovery/discovery.module";
 import { EmailModule } from "./modules/email/email.module";
 import { GoalsModule } from "./modules/goals/goals.module";
 import { HealthModule } from "./modules/health/health.module";
+import { MediaModule } from "./modules/media/media.module";
+import { ViewerModule } from "./modules/viewer/viewer.module";
 
 @Module({
   imports: [
@@ -23,6 +25,8 @@ import { HealthModule } from "./modules/health/health.module";
     EmailModule,
     AuthModule,
     DiscoveryModule,
+    MediaModule,
+    ViewerModule,
   ],
 })
 export class AppModule {}

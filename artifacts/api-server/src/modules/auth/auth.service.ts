@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { EmailDeliveryError } from "../email/email.types";
@@ -74,6 +76,18 @@ export class AuthService {
 
   private normalizeEmail(email: string) {
     return String(email || "").trim().toLowerCase();
+  }
+
+  private readonly mediaRoot = path.join(
+    process.cwd(),
+    "artifacts",
+    "api-server",
+    "storage",
+    "media"
+  );
+
+  private buildMediaAbsolutePath(storageKey: string) {
+    return path.join(this.mediaRoot, storageKey);
   }
 
   private randomToken() {
@@ -1691,6 +1705,31 @@ export class AuthService {
   async signOut(authorizationHeader: string | undefined) {
     const auth = await this.authenticate(authorizationHeader);
     await this.revokeSessionByAccessToken(auth.accessToken);
+  }
+
+  async deleteAccount(authorizationHeader: string | undefined) {
+    const auth = await this.authenticate(authorizationHeader);
+    const mediaAssets = await pool.query<{ storage_key: string | null }>(
+      `SELECT DISTINCT ma.storage_key
+       FROM media.media_assets ma
+       JOIN core.profiles p ON p.id = ma.owner_profile_id
+       WHERE p.user_id = $1
+         AND ma.storage_key IS NOT NULL`,
+      [auth.user.id]
+    );
+
+    await pool.query(`DELETE FROM auth.users WHERE id = $1`, [auth.user.id]);
+
+    await Promise.all(
+      mediaAssets.rows
+        .map((row) => row.storage_key)
+        .filter((storageKey): storageKey is string => Boolean(storageKey))
+        .map((storageKey) =>
+          rm(this.buildMediaAbsolutePath(storageKey), { force: true }).catch(() => {})
+        )
+    );
+
+    return { status: "deleted" as const };
   }
 
   startSocialAuth(provider: Provider, redirectUri: string, mode: string) {

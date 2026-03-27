@@ -7,8 +7,10 @@ import {
   Dimensions,
   Easing,
   Image,
+  Keyboard,
   Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -18,7 +20,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
-import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 import type { AuthProvider } from "@/services/auth";
@@ -175,6 +176,7 @@ export default function LoginScreen() {
   const [secondsUntilVerificationCheck, setSecondsUntilVerificationCheck] = useState<
     number | null
   >(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
 
   const animatePress = (anim: Animated.Value, down: boolean) => {
     Animated.spring(anim, {
@@ -312,6 +314,11 @@ export default function LoginScreen() {
   const landingPaddingTop = topOffset + 24;
   const verificationChecking = verificationStatus === "checking";
   const nextCheckLabel = formatCountdownLabel(secondsUntilVerificationCheck, t);
+  const effectiveBottomInset = Math.max(bottomPadding, keyboardInset);
+  const authCardMaxHeight = Math.max(
+    420,
+    Dimensions.get("window").height - topOffset - effectiveBottomInset - 18
+  );
   const cardScaleX = cardFlip.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: [1, 0.88, 1],
@@ -328,6 +335,34 @@ export default function LoginScreen() {
     inputRange: [0, 0.5, 1],
     outputRange: [0, -6, 0],
   });
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      return;
+    }
+
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const handleKeyboardShow = (event: any) => {
+      const height = event?.endCoordinates?.height || 0;
+      setKeyboardInset(Math.max(0, height - insets.bottom + 8));
+    };
+
+    const handleKeyboardHide = () => {
+      setKeyboardInset(0);
+    };
+
+    const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
+    const hideSubscription = Keyboard.addListener(hideEvent, handleKeyboardHide);
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [insets.bottom]);
 
   useEffect(() => {
     if (shouldShowVerificationBack) {
@@ -538,18 +573,17 @@ export default function LoginScreen() {
       </View>
 
       {mode !== "landing" ? (
-        <View style={[styles.overlayWrap, { paddingTop: topOffset, paddingBottom: bottomPadding }]}>
-          <KeyboardAwareScrollViewCompat
-            contentContainerStyle={styles.overlayScrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            bottomOffset={bottomPadding}
-            extraKeyboardSpace={28}
-            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-          >
+        <View
+          style={[
+            styles.overlayWrap,
+            { paddingTop: topOffset, paddingBottom: effectiveBottomInset },
+          ]}
+        >
+          <View style={styles.overlayCardShell}>
             <Animated.View
               style={[
                 styles.authCard,
+                { maxHeight: authCardMaxHeight },
                 {
                   opacity: cardOpacity,
                   transform: [
@@ -560,9 +594,15 @@ export default function LoginScreen() {
                 },
               ]}
             >
-              <View style={styles.authCardContent} pointerEvents={isCardFlipping ? "none" : "auto"}>
-                {visibleCardFace === "front" ? (
-                  <>
+              <ScrollView
+                contentContainerStyle={styles.authCardContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+              >
+                <View pointerEvents={isCardFlipping ? "none" : "auto"}>
+                  {visibleCardFace === "front" ? (
+                    <>
                     <View style={styles.authHeader}>
                       <Pressable
                         onPress={() => switchMode("landing")}
@@ -710,9 +750,9 @@ export default function LoginScreen() {
                             )}
                       </Text>
                     </Pressable>
-                  </>
-                ) : (
-                  <View style={styles.verificationBack}>
+                    </>
+                  ) : (
+                    <View style={styles.verificationBack}>
                     <View style={styles.authHeader}>
                       <Pressable
                         onPress={() => switchMode("landing")}
@@ -801,11 +841,12 @@ export default function LoginScreen() {
                         </>
                       )}
                     </Pressable>
-                  </View>
-                )}
-              </View>
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
             </Animated.View>
-          </KeyboardAwareScrollViewCompat>
+          </View>
         </View>
       ) : null}
     </View>
@@ -940,23 +981,25 @@ const styles = StyleSheet.create({
     borderColor: "rgba(82,183,136,0.16)",
     width: "100%",
     maxWidth: 460,
-    minHeight: 540,
+    minHeight: 0,
     overflow: "hidden",
+    alignSelf: "center",
   },
   authCardContent: {
-    flex: 1,
     padding: 20,
     gap: 14,
+    paddingBottom: 28,
   },
   overlayWrap: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 30,
     backgroundColor: "rgba(7,11,9,0.24)",
+    justifyContent: "flex-end",
   },
-  overlayScrollContent: {
-    flexGrow: 1,
-    justifyContent: "center",
+  overlayCardShell: {
+    flex: 1,
     paddingHorizontal: 24,
+    justifyContent: "flex-end",
   },
   authHeader: {
     flexDirection: "row",

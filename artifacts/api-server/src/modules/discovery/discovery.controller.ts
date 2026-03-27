@@ -4,6 +4,7 @@ import {
   Get,
   HttpStatus,
   Inject,
+  Patch,
   Post,
   Req,
   Res,
@@ -22,6 +23,21 @@ const likeDiscoverySchema = z.object({
     expectations: z.string().trim().max(120).nullable().optional(),
     language: z.string().trim().max(120).nullable().optional(),
     studies: z.string().trim().max(120).nullable().optional(),
+  }),
+});
+
+const discoveryFiltersSchema = z.object({
+  selectedGenders: z
+    .array(z.enum(["male", "female", "non_binary", "fluid"]))
+    .max(4),
+  therianMode: z.enum(["exclude", "include", "only"]),
+  ageMin: z.number().int().min(18).max(100),
+  ageMax: z.number().int().min(18).max(100),
+});
+
+const updateDiscoveryPreferencesSchema = z.object({
+  filters: discoveryFiltersSchema.refine((value) => value.ageMin <= value.ageMax, {
+    message: "INVALID_DISCOVERY_FILTER_RANGE",
   }),
 });
 
@@ -52,6 +68,31 @@ export class DiscoveryController {
       return res.json(await this.discoveryService.getPreferences(auth.user.id));
     } catch (error) {
       return this.sendAuthError(res, error);
+    }
+  }
+
+  @Patch("preferences")
+  async updatePreferences(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const payload = updateDiscoveryPreferencesSchema.parse(body);
+      return res.json(
+        await this.discoveryService.updatePreferences(auth.user.id, payload.filters)
+      );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: "INVALID_DISCOVERY_PREFERENCES_PAYLOAD",
+          issues: error.flatten(),
+        });
+      }
+      if (error instanceof Error && error.message) {
+        return this.sendAuthError(res, error);
+      }
+      console.error(error);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: "INTERNAL_SERVER_ERROR" });
     }
   }
 

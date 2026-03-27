@@ -5,7 +5,6 @@ import React from "react";
 import {
   Alert,
   Image,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -73,6 +72,8 @@ import {
 } from "@/utils/dateOfBirth";
 import {
   deleteStoredProfilePhoto,
+  getProfilePhotoBySortOrder,
+  getProfilePhotoDisplayUri,
   isStoredProfilePhoto,
   saveProfilePhotoLocally,
 } from "@/utils/profilePhotos";
@@ -296,12 +297,12 @@ export default function ProfileScreen() {
 
     const targetUri = await saveProfilePhotoLocally(index, sourceUri);
 
-    const previousUri = accountProfile.photos[index];
-    if (isStoredProfilePhoto(previousUri)) {
-      deleteStoredProfilePhoto(previousUri).catch(() => {});
+    const previousPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
+    if (previousPhoto?.localUri && isStoredProfilePhoto(previousPhoto.localUri)) {
+      deleteStoredProfilePhoto(previousPhoto.localUri).catch(() => {});
     }
 
-    setProfilePhoto(index, targetUri);
+    await setProfilePhoto(index, targetUri);
   };
 
   const requestAndPickPhoto = async (index: number) => {
@@ -386,7 +387,7 @@ export default function ProfileScreen() {
   };
 
   const handlePhotoPress = (index: number) => {
-    const currentPhoto = accountProfile.photos[index];
+    const currentPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
     if (!currentPhoto) {
       if (index === 0) {
         openMainPhotoPicker(index);
@@ -411,10 +412,10 @@ export default function ProfileScreen() {
           text: t("Eliminar", "Remove"),
           style: "destructive",
           onPress: () => {
-            if (isStoredProfilePhoto(currentPhoto)) {
-              deleteStoredProfilePhoto(currentPhoto).catch(() => {});
+            if (isStoredProfilePhoto(currentPhoto.localUri)) {
+              deleteStoredProfilePhoto(currentPhoto.localUri).catch(() => {});
             }
-            removeProfilePhoto(index);
+            removeProfilePhoto(index).catch(() => {});
           },
         },
         {
@@ -493,7 +494,9 @@ export default function ProfileScreen() {
     update("interests", next);
   };
 
-  const mainPhoto = accountProfile.photos[0];
+  const mainPhoto = getProfilePhotoDisplayUri(
+    getProfilePhotoBySortOrder(accountProfile.photos, 0)
+  );
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
@@ -580,7 +583,8 @@ export default function ProfileScreen() {
 
           <View style={styles.photoGrid}>
             {Array.from({ length: MAX_PROFILE_PHOTOS }).map((_, index) => {
-              const photo = accountProfile.photos[index];
+              const photo = getProfilePhotoBySortOrder(accountProfile.photos, index);
+              const photoUri = getProfilePhotoDisplayUri(photo);
               const isMain = index === 0;
               return (
                 <Pressable
@@ -588,8 +592,8 @@ export default function ProfileScreen() {
                   onPress={() => handlePhotoPress(index)}
                   style={[styles.photoSlot, isMain && styles.photoSlotMain]}
                 >
-                  {photo ? (
-                    <Image source={{ uri: photo }} style={styles.photoSlotImage} />
+                  {photoUri ? (
+                    <Image source={{ uri: photoUri }} style={styles.photoSlotImage} />
                   ) : (
                     <View
                       style={[
@@ -838,10 +842,7 @@ export default function ProfileScreen() {
         onRequestClose={closeLanguagesModal}
       >
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.modalKeyboardAvoider}
-          >
+          <View style={styles.modalKeyboardAvoider}>
             <View
               style={[
                 styles.modalContainer,
@@ -978,7 +979,7 @@ export default function ProfileScreen() {
               </View>
             </KeyboardAwareScrollViewCompat>
           </View>
-          </KeyboardAvoidingView>
+          </View>
         </View>
       </Modal>
     </View>

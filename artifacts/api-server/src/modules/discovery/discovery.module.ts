@@ -7,5 +7,6 @@ import { DiscoveryService } from "./discovery.service";
   imports: [AuthModule],
   controllers: [DiscoveryController],
   providers: [DiscoveryService],
+  exports: [DiscoveryService],
 })
 export class DiscoveryModule {}

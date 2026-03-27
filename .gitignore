@@ -52,6 +52,9 @@ Thumbs.db
 data/*
 !data/.gitkeep
 !data/media/
+data/media/*
 !data/media/.gitkeep
 !data/postgres/
+data/postgres/*
 !data/postgres/.gitkeep
+
