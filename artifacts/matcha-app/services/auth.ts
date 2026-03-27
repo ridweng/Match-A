@@ -13,6 +13,7 @@ import {
   type PopularAttributeInputByCategory,
   type PopularAttributeSnapshot,
 } from "@/utils/popularAttributes";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 export type AuthProvider = "google" | "facebook" | "apple";
 export type AuthCallbackProvider = AuthProvider | "email";
@@ -151,6 +152,17 @@ export type ViewerBootstrapResponse = {
   goals: GoalItemResponse[];
   discovery: DiscoveryPreferencesResponse;
   syncedAt: string;
+  bootstrapGeneratedAt: string;
+  viewerVersion: string;
+  updatedAtByDomain: {
+    user: string | null;
+    profile: string | null;
+    settings: string | null;
+    onboarding: string | null;
+    media: string | null;
+    goals: string | null;
+    discovery: string | null;
+  };
 };
 
 export type ProviderAvailability = Record<AuthProvider, boolean>;
@@ -307,24 +319,65 @@ function getBaseUrl() {
   })!;
 }
 
+function normalizeRemoteMediaUrl(url: string) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("/")) {
+    return `${getBaseUrl()}${trimmed}`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "0.0.0.0"
+    ) {
+      const apiBase = new URL(getBaseUrl());
+      parsed.protocol = apiBase.protocol;
+      parsed.host = apiBase.host;
+      return parsed.toString();
+    }
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
-  const response = await fetch(`${getBaseUrl()}${path}`, {
-    method: options.method || "GET",
-    headers: {
-      ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      ...(options.accessToken
-        ? { Authorization: `Bearer ${options.accessToken}` }
-        : {}),
-      ...(options.headers || {}),
-    },
-    body: options.body
-      ? isFormData
-        ? (options.body as BodyInit)
-        : JSON.stringify(options.body)
-      : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${getBaseUrl()}${path}`, {
+      method: options.method || "GET",
+      headers: {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(options.accessToken
+          ? { Authorization: `Bearer ${options.accessToken}` }
+          : {}),
+        ...(options.headers || {}),
+      },
+      body: options.body
+        ? isFormData
+          ? (options.body as BodyInit)
+          : JSON.stringify(options.body)
+        : undefined,
+    });
+  } catch (error: any) {
+    debugWarn("[api] network request failed", {
+      path,
+      method: options.method || "GET",
+      message: error?.message || "Network request failed",
+    });
+    throw new ApiError(
+      "NETWORK_REQUEST_FAILED",
+      error?.message || "Network request failed"
+    );
+  }
 
   if (response.status === 204) {
     return undefined as T;
@@ -333,8 +386,19 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
+    debugWarn("[api] request failed", {
+      path,
+      method: options.method || "GET",
+      status: response.status,
+      error: data.error || "REQUEST_FAILED",
+    });
     throw new ApiError(data.error || "REQUEST_FAILED", data.message || data.error);
   }
+  debugLog("[api] request ok", {
+    path,
+    method: options.method || "GET",
+    status: response.status,
+  });
   return data as T;
 }
 
@@ -412,6 +476,7 @@ export async function refreshSession(refreshToken: string) {
       hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
+  debugLog("[auth] refreshing session");
   return request<AuthSessionResponse>("/api/auth/refresh", {
     method: "POST",
     body: { refreshToken },
@@ -443,6 +508,7 @@ export async function getMe(accessToken: string) {
 
 export async function getViewerBootstrap(accessToken: string) {
   if (isDemoToken(accessToken)) {
+    const now = new Date().toISOString();
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
@@ -452,7 +518,18 @@ export async function getViewerBootstrap(accessToken: string) {
       photos: [],
       goals: DEMO_GOALS,
       discovery: DEMO_DISCOVERY_PREFERENCES,
-      syncedAt: new Date().toISOString(),
+      syncedAt: now,
+      bootstrapGeneratedAt: now,
+      viewerVersion: "viewer-bootstrap-v1",
+      updatedAtByDomain: {
+        user: now,
+        profile: now,
+        settings: now,
+        onboarding: now,
+        media: now,
+        goals: now,
+        discovery: now,
+      },
     } satisfies ViewerBootstrapResponse;
   }
 
@@ -581,9 +658,15 @@ function inferMimeType(uri: string) {
 }
 
 export async function listProfilePhotos(accessToken: string) {
-  return request<ProfileMediaListResponse>("/api/media/profile-images", {
+  const response = await request<ProfileMediaListResponse>("/api/media/profile-images", {
     accessToken,
   });
+  return {
+    photos: response.photos.map((photo) => ({
+      ...photo,
+      remoteUrl: normalizeRemoteMediaUrl(photo.remoteUrl),
+    })),
+  } satisfies ProfileMediaListResponse;
 }
 
 export async function uploadProfilePhoto(
@@ -599,11 +682,15 @@ export async function uploadProfilePhoto(
     type: inferMimeType(localUri),
   } as any);
 
-  return request<ProfileMediaItemResponse>("/api/media/profile-images", {
+  const response = await request<ProfileMediaItemResponse>("/api/media/profile-images", {
     method: "POST",
     accessToken,
     body: form,
   });
+  return {
+    ...response,
+    remoteUrl: normalizeRemoteMediaUrl(response.remoteUrl),
+  } satisfies ProfileMediaItemResponse;
 }
 
 export async function deleteProfilePhoto(
@@ -638,7 +725,7 @@ export function mergeRemotePhotosWithLocal(
       const local = bySort.get(remote.sortOrder);
       return {
         localUri: local?.localUri || "",
-        remoteUrl: remote.remoteUrl,
+        remoteUrl: normalizeRemoteMediaUrl(remote.remoteUrl),
         mediaAssetId: remote.mediaAssetId,
         profileImageId: remote.profileImageId,
         sortOrder: remote.sortOrder,
@@ -828,6 +915,17 @@ export function toReadableAuthError(code: string) {
     default:
       return code || "UNKNOWN_ERROR";
   }
+}
+
+export function isNetworkApiError(error: unknown) {
+  return error instanceof ApiError && error.code === "NETWORK_REQUEST_FAILED";
+}
+
+export function isInvalidRefreshError(error: unknown) {
+  return (
+    error instanceof ApiError &&
+    ["INVALID_REFRESH_TOKEN", "UNAUTHORIZED", "INVALID_SESSION"].includes(error.code)
+  );
 }
 
 export { ApiError };

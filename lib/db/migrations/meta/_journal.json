@@ -15,6 +15,20 @@
       "when": 1774564173450,
       "tag": "0001_email_module_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774681200000,
+      "tag": "0002_discovery_filter_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774687200000,
+      "tag": "0003_server_first_foundations",
+      "breakpoints": true
     }
   ]
 }

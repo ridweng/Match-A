@@ -28,6 +28,7 @@ import {
   deleteProfilePhoto as deleteProfilePhotoRequest,
   fetchProviderAvailability,
   getViewerBootstrap,
+  isInvalidRefreshError,
   likeDiscoveryProfile,
   completeOnboarding as completeOnboardingRequest,
   mergeRemotePhotosWithLocal,
@@ -54,11 +55,13 @@ import {
   normalizeStoredProfilePhotos,
   type UserProfilePhoto,
 } from "@/utils/profilePhotos";
+import { normalizeIsoDateString } from "@/utils/dateOfBirth";
 import {
   createEmptyPopularAttributesByCategory,
   type PopularAttributeCategory,
   type PopularAttributeSnapshot,
 } from "@/utils/popularAttributes";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 export type { AuthUser };
 
@@ -130,6 +133,11 @@ type AuthFormPrefill = {
 };
 
 type BiometricResult = { ok: boolean; code?: string };
+type DiscoveryViewPreferences = {
+  selectedTab: "discover" | "filters";
+  cardDensity: "comfortable" | "compact";
+  reduceMotion: boolean;
+};
 
 const GOAL_CATEGORIES: GoalCategory[] = [
   "physical",
@@ -404,11 +412,17 @@ const DEFAULT_PROFILE: UserProfile = {
   interests: [],
   photos: [],
 };
+const DEFAULT_DISCOVERY_VIEW_PREFERENCES: DiscoveryViewPreferences = {
+  selectedTab: "discover",
+  cardDensity: "comfortable",
+  reduceMotion: false,
+};
 
 function normalizeStoredProfile(input: Partial<UserProfile> | null | undefined): UserProfile {
   return {
     ...DEFAULT_PROFILE,
     ...(input || {}),
+    dateOfBirth: normalizeIsoDateString(input?.dateOfBirth),
     interests: Array.isArray(input?.interests) ? input.interests : [],
     photos: normalizeStoredProfilePhotos(input?.photos),
     languagesSpoken: Array.isArray(input?.languagesSpoken) ? input.languagesSpoken : [],
@@ -569,8 +583,13 @@ type AppContextType = {
   totalLikesCount: number;
   likedProfiles: string[];
   discoveryFilters: DiscoveryFilters;
+  discoveryViewPreferences: DiscoveryViewPreferences;
   lastServerSyncAt: string | null;
+  sessionOfflineFallback: boolean;
   saveDiscoveryFilters: (filters: DiscoveryFilters) => Promise<boolean>;
+  setDiscoveryViewPreferences: (
+    updates: Partial<DiscoveryViewPreferences>
+  ) => Promise<void>;
   likeProfile: (profileId: string) => Promise<DiscoveryLikeResponse | null>;
   profile: UserProfile;
   accountProfile: AccountProfile;
@@ -583,14 +602,38 @@ const AppContext = createContext<AppContextType | null>(null);
 const ACCESS_TOKEN_STORAGE_KEY = "accessToken";
 const REFRESH_TOKEN_STORAGE_KEY = "refreshToken";
 const DISCOVERY_FILTERS_STORAGE_KEY = "discoveryFiltersByUser";
+const DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY = "discoveryViewPreferences";
+const DISCOVERY_FEED_PAGE_STORAGE_PREFIX = "discoveryFeedPage:";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "lastAuthUserId";
 const VIEWER_BOOTSTRAP_STORAGE_PREFIX = "viewerBootstrap:";
 
 type DiscoveryFiltersCache = Record<string, DiscoveryFilters>;
 type ViewerBootstrapCache = ViewerBootstrapResponse;
+type ViewerBootstrapMetadata = Pick<
+  ViewerBootstrapCache,
+  "syncedAt" | "bootstrapGeneratedAt" | "viewerVersion" | "updatedAtByDomain"
+>;
 
 function getViewerBootstrapStorageKey(userId: number) {
   return `${VIEWER_BOOTSTRAP_STORAGE_PREFIX}${userId}`;
+}
+
+function createDefaultBootstrapMetadata(): ViewerBootstrapMetadata {
+  const now = new Date().toISOString();
+  return {
+    syncedAt: now,
+    bootstrapGeneratedAt: now,
+    viewerVersion: "viewer-bootstrap-v1",
+    updatedAtByDomain: {
+      user: now,
+      profile: now,
+      settings: now,
+      onboarding: now,
+      media: now,
+      goals: now,
+      discovery: now,
+    },
+  };
 }
 
 async function checkBiometricHardware(): Promise<boolean> {
@@ -623,6 +666,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [discoveryFilters, setDiscoveryFilters] =
     useState<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
   const discoveryFiltersRef = useRef<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
+  const [discoveryViewPreferences, setDiscoveryViewPreferencesState] =
+    useState<DiscoveryViewPreferences>(DEFAULT_DISCOVERY_VIEW_PREFERENCES);
   const [popularAttributesByCategory, setPopularAttributesByCategory] = useState<
     Record<PopularAttributeCategory, PopularAttributeSnapshot>
   >(() => createEmptyPopularAttributesByCategory());
@@ -632,8 +677,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [totalLikesCount, setTotalLikesCount] = useState(0);
   const totalLikesCountRef = useRef(0);
   const [lastServerSyncAt, setLastServerSyncAt] = useState<string | null>(null);
+  const [sessionOfflineFallback, setSessionOfflineFallback] = useState(false);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const profileRef = useRef<UserProfile>(DEFAULT_PROFILE);
+  const viewerBootstrapMetaRef = useRef<ViewerBootstrapMetadata>(
+    createDefaultBootstrapMetadata()
+  );
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authFormPrefill, setAuthFormPrefill] = useState<AuthFormPrefill | null>(null);
@@ -683,10 +732,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTotalLikesCount(0);
     totalLikesCountRef.current = 0;
     setLastServerSyncAt(null);
+    setSessionOfflineFallback(false);
     profileRef.current = DEFAULT_PROFILE;
     setProfile(DEFAULT_PROFILE);
     goalsRef.current = defaultGoals;
     setGoals(defaultGoals);
+    viewerBootstrapMetaRef.current = createDefaultBootstrapMetadata();
   }, []);
 
   const persistProfile = useCallback(async (nextProfile: UserProfile) => {
@@ -706,6 +757,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const persistDiscoveryViewPreferences = useCallback(
+    async (nextPreferences: DiscoveryViewPreferences) => {
+      await AsyncStorage.setItem(
+        DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(nextPreferences)
+      );
+    },
+    []
+  );
+
+  const clearUserScopedCachedState = useCallback(async (userId?: number | null) => {
+    const removals: Promise<unknown>[] = [
+      AsyncStorage.removeItem("profile"),
+      AsyncStorage.removeItem("goals"),
+    ];
+
+    if (!userId || !Number.isFinite(userId)) {
+      await Promise.all(removals);
+      return;
+    }
+
+    removals.push(AsyncStorage.removeItem(getViewerBootstrapStorageKey(userId)));
+
+    const [allKeys, filtersRaw] = await Promise.all([
+      AsyncStorage.getAllKeys(),
+      AsyncStorage.getItem(DISCOVERY_FILTERS_STORAGE_KEY),
+    ]);
+
+    const feedPageKeys = allKeys.filter((key) =>
+      key.startsWith(`${DISCOVERY_FEED_PAGE_STORAGE_PREFIX}${userId}:`)
+    );
+    if (feedPageKeys.length) {
+      removals.push(AsyncStorage.multiRemove(feedPageKeys));
+    }
+
+    if (filtersRaw) {
+      try {
+        const parsed = JSON.parse(filtersRaw) as DiscoveryFiltersCache;
+        delete parsed[String(userId)];
+        const nextValue = JSON.stringify(parsed);
+        removals.push(
+          Object.keys(parsed).length
+            ? AsyncStorage.setItem(DISCOVERY_FILTERS_STORAGE_KEY, nextValue)
+            : AsyncStorage.removeItem(DISCOVERY_FILTERS_STORAGE_KEY)
+        );
+      } catch {
+        removals.push(AsyncStorage.removeItem(DISCOVERY_FILTERS_STORAGE_KEY));
+      }
+    }
+
+    await Promise.all(removals);
+  }, []);
 
   const restoreProfilePhotos = useCallback(async (photos: UserProfilePhoto[]) => {
     return Promise.all(photos.map((photo, index) => ensureLocalProfilePhoto(photo, index)));
@@ -743,6 +847,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const nextGoals = normalizeStoredGoals(
         (overrides?.goals as Goal[] | undefined) ?? goalsRef.current
       );
+      const nextMetadata: ViewerBootstrapMetadata = {
+        syncedAt: overrides?.syncedAt ?? viewerBootstrapMetaRef.current.syncedAt,
+        bootstrapGeneratedAt:
+          overrides?.bootstrapGeneratedAt ??
+          viewerBootstrapMetaRef.current.bootstrapGeneratedAt,
+        viewerVersion:
+          overrides?.viewerVersion ?? viewerBootstrapMetaRef.current.viewerVersion,
+        updatedAtByDomain:
+          overrides?.updatedAtByDomain ?? viewerBootstrapMetaRef.current.updatedAtByDomain,
+      };
       const bootstrap: ViewerBootstrapCache = {
         user: currentUser,
         needsProfileCompletion:
@@ -763,9 +877,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         })),
         goals: nextGoals,
         discovery: nextDiscovery,
-        syncedAt: overrides?.syncedAt ?? new Date().toISOString(),
+        syncedAt: nextMetadata.syncedAt,
+        bootstrapGeneratedAt: nextMetadata.bootstrapGeneratedAt,
+        viewerVersion: nextMetadata.viewerVersion,
+        updatedAtByDomain: nextMetadata.updatedAtByDomain,
       };
 
+      viewerBootstrapMetaRef.current = nextMetadata;
       await AsyncStorage.setItem(
         getViewerBootstrapStorageKey(currentUser.id),
         JSON.stringify(bootstrap)
@@ -777,13 +895,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const applyViewerBootstrap = useCallback(
     async (bootstrap: ViewerBootstrapCache, options?: { persist?: boolean }) => {
+      const normalizedBootstrapUser: AuthUser = {
+        ...bootstrap.user,
+        dateOfBirth: normalizeIsoDateString(bootstrap.user.dateOfBirth),
+      };
       const nextProfile = normalizeStoredProfile({
         ...bootstrap.profile,
         photos: mergeRemotePhotosWithLocal(profileRef.current.photos, bootstrap.photos),
       });
 
-      userRef.current = bootstrap.user;
-      setUser(bootstrap.user);
+      userRef.current = normalizedBootstrapUser;
+      setUser(normalizedBootstrapUser);
+      viewerBootstrapMetaRef.current = {
+        syncedAt:
+          bootstrap.syncedAt ||
+          bootstrap.bootstrapGeneratedAt ||
+          createDefaultBootstrapMetadata().syncedAt,
+        bootstrapGeneratedAt:
+          bootstrap.bootstrapGeneratedAt ||
+          bootstrap.syncedAt ||
+          createDefaultBootstrapMetadata().bootstrapGeneratedAt,
+        viewerVersion: bootstrap.viewerVersion || "viewer-bootstrap-v1",
+        updatedAtByDomain:
+          bootstrap.updatedAtByDomain ||
+          createDefaultBootstrapMetadata().updatedAtByDomain,
+      };
       setNeedsProfileCompletion(bootstrap.needsProfileCompletion);
       needsProfileCompletionRef.current = bootstrap.needsProfileCompletion;
       setHasCompletedOnboarding(bootstrap.hasCompletedOnboarding);
@@ -808,7 +944,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPopularAttributesByCategory(bootstrap.discovery.popularAttributesByCategory);
       totalLikesCountRef.current = bootstrap.discovery.totalLikesCount;
       setTotalLikesCount(bootstrap.discovery.totalLikesCount);
-      setLastServerSyncAt(bootstrap.syncedAt || new Date().toISOString());
+      setLastServerSyncAt(
+        bootstrap.bootstrapGeneratedAt || bootstrap.syncedAt || new Date().toISOString()
+      );
 
       void restoreProfilePhotos(nextProfile.photos)
         .then((restoredPhotos) => {
@@ -962,6 +1100,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.setItem("heightUnit", unit).catch(() => {});
   }, []);
 
+  const setDiscoveryViewPreferences = useCallback(
+    async (updates: Partial<DiscoveryViewPreferences>) => {
+      setDiscoveryViewPreferencesState((current) => {
+        const nextPreferences = {
+          ...current,
+          ...updates,
+        };
+        void persistDiscoveryViewPreferences(nextPreferences);
+        return nextPreferences;
+      });
+    },
+    [persistDiscoveryViewPreferences]
+  );
+
   const clearAuthFeedback = useCallback(() => {
     setAuthError(null);
   }, []);
@@ -999,9 +1151,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       hasCompletedOnboarding: boolean;
     }) => {
       Keyboard.dismiss();
+      const normalizedSessionUser: AuthUser = {
+        ...session.user,
+        dateOfBirth: normalizeIsoDateString(session.user.dateOfBirth),
+      };
+      debugLog("[auth] applySession", {
+        userId: normalizedSessionUser.id,
+        needsProfileCompletion: session.needsProfileCompletion,
+        hasCompletedOnboarding: session.hasCompletedOnboarding,
+      });
       setAccessToken(session.accessToken);
       setRefreshToken(session.refreshToken);
-      setUser(session.user);
+      setUser(normalizedSessionUser);
       setAuthFormPrefill(null);
       setPendingVerificationEmail(null);
       setPendingVerificationPassword(null);
@@ -1009,8 +1170,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthError(null);
       setNeedsProfileCompletion(session.needsProfileCompletion);
       setHasCompletedOnboarding(session.hasCompletedOnboarding);
+      setSessionOfflineFallback(false);
       await Promise.all([
-        AsyncStorage.setItem(LAST_AUTH_USER_ID_STORAGE_KEY, String(session.user.id)),
+        AsyncStorage.setItem(LAST_AUTH_USER_ID_STORAGE_KEY, String(normalizedSessionUser.id)),
         AsyncStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY),
         AsyncStorage.removeItem("profile"),
         AsyncStorage.removeItem("goals"),
@@ -1020,16 +1182,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let bootstrap: ViewerBootstrapCache;
       try {
         bootstrap = await getViewerBootstrap(session.accessToken);
+        debugLog("[auth] bootstrap fetched", {
+          userId: normalizedSessionUser.id,
+          viewerVersion: bootstrap.viewerVersion,
+          bootstrapGeneratedAt: bootstrap.bootstrapGeneratedAt,
+        });
       } catch {
+        debugWarn("[auth] bootstrap fetch failed, using fallback cache seed", {
+          userId: normalizedSessionUser.id,
+        });
         bootstrap = {
-          user: session.user,
+          user: normalizedSessionUser,
           needsProfileCompletion: session.needsProfileCompletion,
           hasCompletedOnboarding: session.hasCompletedOnboarding,
           profile: normalizeStoredProfile({
             ...DEFAULT_PROFILE,
-            name: session.user.name || "",
-            dateOfBirth: session.user.dateOfBirth || "",
-            profession: session.user.profession || "",
+            name: normalizedSessionUser.name || "",
+            dateOfBirth: normalizedSessionUser.dateOfBirth || "",
+            profession: normalizedSessionUser.profession || "",
           }),
           settings: {
             language: languageRef.current,
@@ -1048,10 +1218,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             filters: discoveryFiltersRef.current,
           },
           syncedAt: new Date().toISOString(),
+          bootstrapGeneratedAt: new Date().toISOString(),
+          viewerVersion: "viewer-bootstrap-v1",
+          updatedAtByDomain: createDefaultBootstrapMetadata().updatedAtByDomain,
         };
       }
 
       await applyViewerBootstrap(bootstrap);
+      debugLog("[auth] session applied", {
+        userId: normalizedSessionUser.id,
+      });
       setAuthStatus("authenticated");
     },
     [applyViewerBootstrap]
@@ -1085,14 +1261,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         password: pendingVerificationPassword,
       });
       await applySession(session);
-      if (__DEV__) {
-        console.log("[auth] pending verification auto-login succeeded");
-      }
+      debugLog("[auth] pending verification auto-login succeeded");
       return true;
     } catch (e: any) {
-      if (__DEV__) {
-        console.log("[auth] pending verification auto-login failed", e?.code || e?.message);
-      }
+      debugWarn("[auth] pending verification auto-login failed", e?.code || e?.message);
       const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
       setAuthError(code);
       setSignInPrefill(pendingVerificationEmail);
@@ -1114,6 +1286,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const [
           lang,
           savedDiscoveryFilters,
+          savedDiscoveryViewPreferences,
           savedLastAuthUserId,
           savedBiometrics,
           savedHeightUnit,
@@ -1123,6 +1296,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await Promise.all([
             AsyncStorage.getItem("language"),
             AsyncStorage.getItem(DISCOVERY_FILTERS_STORAGE_KEY),
+            AsyncStorage.getItem(DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY),
             AsyncStorage.getItem(LAST_AUTH_USER_ID_STORAGE_KEY),
             AsyncStorage.getItem("biometricsEnabled"),
             AsyncStorage.getItem("heightUnit"),
@@ -1140,6 +1314,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const cachedDiscoveryFilters = savedDiscoveryFilters
           ? (JSON.parse(savedDiscoveryFilters) as DiscoveryFiltersCache)
           : null;
+        if (savedDiscoveryViewPreferences) {
+          try {
+            setDiscoveryViewPreferencesState({
+              ...DEFAULT_DISCOVERY_VIEW_PREFERENCES,
+              ...(JSON.parse(savedDiscoveryViewPreferences) as Partial<DiscoveryViewPreferences>),
+            });
+          } catch {}
+        }
         const lastAuthUserId = savedLastAuthUserId ? Number(savedLastAuthUserId) : null;
         const cachedBootstrapRaw =
           lastAuthUserId && Number.isFinite(lastAuthUserId)
@@ -1186,6 +1368,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (storedRefreshToken) {
           try {
             const session = await refreshSession(storedRefreshToken);
+            setSessionOfflineFallback(false);
+            debugLog("[auth] refresh succeeded", {
+              userId: session.user.id,
+            });
             if (cachedDiscoveryFilters?.[String(session.user.id)]) {
               setDiscoveryFilters({
                 ...DEFAULT_DISCOVERY_FILTERS,
@@ -1197,16 +1383,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
             }
-          } catch {
+          } catch (error) {
+            if (cachedBootstrapRaw && !isInvalidRefreshError(error)) {
+              debugWarn("[auth] refresh failed, keeping warm-start cache", {
+                reason: error instanceof Error ? error.message : "unknown",
+              });
+              setSessionOfflineFallback(true);
+              setAuthStatus("authenticated");
+              if (bioEnabled && Platform.OS !== "web") {
+                setBiometricLockRequired(true);
+              }
+              return;
+            }
+
+            debugWarn("[auth] refresh failed, clearing authenticated state", {
+              reason: error instanceof Error ? error.message : "unknown",
+            });
             resetClientState();
             await clearStoredSessionTokens();
             await Promise.all([
-              lastAuthUserId
-                ? AsyncStorage.removeItem(getViewerBootstrapStorageKey(lastAuthUserId))
-                : Promise.resolve(),
+              clearUserScopedCachedState(lastAuthUserId),
               AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
-              AsyncStorage.removeItem("profile"),
-              AsyncStorage.removeItem("goals"),
             ]);
             setAuthStatus("unauthenticated");
           }
@@ -1220,6 +1417,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [
     applySession,
     applyViewerBootstrap,
+    clearUserScopedCachedState,
     clearStoredSessionTokens,
     persistProfile,
     refreshProfileLocation,
@@ -1257,10 +1455,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthBusy(true);
       setAuthError(null);
       try {
+        const resolvedName =
+          input.name || profileRef.current.name || userRef.current?.name || "";
+        const resolvedDateOfBirth =
+          input.dateOfBirth ||
+          profileRef.current.dateOfBirth ||
+          userRef.current?.dateOfBirth ||
+          "";
         let nextProfile = normalizeStoredProfile({
           ...profileRef.current,
-          name: input.name,
-          dateOfBirth: input.dateOfBirth,
+          name: resolvedName,
+          dateOfBirth: resolvedDateOfBirth,
           profession: input.profession,
           genderIdentity: input.genderIdentity,
           pronouns: input.pronouns,
@@ -1275,24 +1480,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         };
 
         if (accessToken) {
+          const viewerProfilePayload: Parameters<typeof updateViewerProfile>[1] = {
+            profession: input.profession,
+            genderIdentity: input.genderIdentity,
+            pronouns: input.pronouns,
+            personality: input.personality,
+          };
+          if (resolvedName) {
+            viewerProfilePayload.name = resolvedName;
+          }
+          if (resolvedDateOfBirth) {
+            viewerProfilePayload.dateOfBirth = resolvedDateOfBirth;
+          }
+
           const [profileResult, settingsResult] = await Promise.all([
-            updateViewerProfile(accessToken, {
-              name: input.name,
-              dateOfBirth: input.dateOfBirth,
-              profession: input.profession,
-              genderIdentity: input.genderIdentity,
-              pronouns: input.pronouns,
-              personality: input.personality,
-            }),
+            updateViewerProfile(accessToken, viewerProfilePayload),
             updateSettings(accessToken, {
               language: input.language,
               heightUnit: input.heightUnit,
             }),
           ]);
+          debugLog("[settings] profile/settings updated", {
+            userId: userRef.current?.id ?? null,
+            language: settingsResult.settings.language,
+            heightUnit: settingsResult.settings.heightUnit,
+          });
 
           nextProfile = normalizeStoredProfile({
             ...profileRef.current,
             ...profileResult.profile,
+            dateOfBirth:
+              profileResult.profile.dateOfBirth || resolvedDateOfBirth,
             photos: profileRef.current.photos,
           });
           nextSettings = {
@@ -1302,12 +1520,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             personality: nextProfile.personality,
           };
 
-          const me = await updateMe(accessToken, {
-            name: input.name,
-            dateOfBirth: input.dateOfBirth,
+          const mePayload: Parameters<typeof updateMe>[1] = {
             profession: input.profession,
-          });
+          };
+          if (resolvedName) {
+            mePayload.name = resolvedName;
+          }
+          if (resolvedDateOfBirth) {
+            mePayload.dateOfBirth = resolvedDateOfBirth;
+          }
+
+          const me = await updateMe(accessToken, mePayload);
           setUser(me.user);
+          userRef.current = me.user;
           setNeedsProfileCompletion(me.needsProfileCompletion);
           setHasCompletedOnboarding(me.hasCompletedOnboarding);
         }
@@ -1323,8 +1548,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           prev
             ? {
                 ...prev,
-                name: input.name,
-                dateOfBirth: input.dateOfBirth,
+                name: resolvedName,
+                dateOfBirth: resolvedDateOfBirth,
                 profession: input.profession,
               }
             : prev
@@ -1332,11 +1557,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await persistViewerBootstrapCache({
           profile: nextProfile,
           settings: nextSettings,
-          needsProfileCompletion: !(input.name && input.dateOfBirth),
+          needsProfileCompletion: !(resolvedName && resolvedDateOfBirth),
+        });
+        debugLog("[settings] save completed", {
+          userId: userRef.current?.id ?? null,
+          hasDateOfBirth: Boolean(resolvedDateOfBirth),
+          hasName: Boolean(resolvedName),
         });
 
         return true;
       } catch (e: any) {
+        debugWarn("[settings] save failed", {
+          code: e?.code || null,
+          message: e?.message || "UNKNOWN_ERROR",
+          payload: {
+            hasName: Boolean(input.name || profileRef.current.name || userRef.current?.name),
+            dateOfBirth:
+              input.dateOfBirth ||
+              profileRef.current.dateOfBirth ||
+              userRef.current?.dateOfBirth ||
+              "",
+            profession: input.profession,
+            genderIdentity: input.genderIdentity,
+            pronouns: input.pronouns,
+            personality: input.personality,
+            language: input.language,
+            heightUnit: input.heightUnit,
+          },
+        });
         setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
         return false;
       } finally {
@@ -1433,14 +1681,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthBusy(true);
       setAuthError(null);
 
-      if (__DEV__) {
-        console.log("[auth-callback] payload", {
-          status: payload.status,
-          provider: payload.provider,
-          code: payload.code,
-          email: payload.email,
-        });
-      }
+      debugLog("[auth-callback] payload", {
+        status: payload.status,
+        provider: payload.provider,
+        code: payload.code,
+        email: payload.email,
+      });
 
       try {
         if (
@@ -1533,14 +1779,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     resetClientState();
     await Promise.all([
       clearStoredSessionTokens(),
-      currentUserId
-        ? AsyncStorage.removeItem(getViewerBootstrapStorageKey(currentUserId))
-        : Promise.resolve(),
+      clearUserScopedCachedState(currentUserId),
       AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
-      AsyncStorage.removeItem("profile"),
-      AsyncStorage.removeItem("goals"),
     ]);
-  }, [accessToken, clearStoredSessionTokens, resetClientState]);
+  }, [accessToken, clearStoredSessionTokens, clearUserScopedCachedState, resetClientState]);
 
   const deleteAccount = useCallback(async () => {
     setAuthBusy(true);
@@ -1564,11 +1806,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       resetClientState();
       await Promise.all([
         clearStoredSessionTokens(),
-        currentUserId
-          ? AsyncStorage.removeItem(getViewerBootstrapStorageKey(currentUserId))
-          : Promise.resolve(),
-        AsyncStorage.removeItem("profile"),
-        AsyncStorage.removeItem("goals"),
+        clearUserScopedCachedState(currentUserId),
         AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
         AsyncStorage.removeItem("biometricsEnabled"),
       ]);
@@ -1579,14 +1817,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setAuthBusy(false);
     }
-  }, [accessToken, clearStoredSessionTokens, resetClientState]);
+  }, [accessToken, clearStoredSessionTokens, clearUserScopedCachedState, resetClientState]);
 
   const accountProfile = useMemo(
-    () => ({
-      ...normalizeStoredProfile(profile),
-      email: user?.email || "",
-    }),
-    [profile, user?.email]
+    () => {
+      const normalizedProfile = normalizeStoredProfile(profile);
+      return {
+        ...normalizedProfile,
+        name: normalizedProfile.name || user?.name || "",
+        dateOfBirth: normalizedProfile.dateOfBirth || user?.dateOfBirth || "",
+        profession: normalizedProfile.profession || user?.profession || "",
+        email: user?.email || "",
+      };
+    },
+    [profile, user?.dateOfBirth, user?.email, user?.name, user?.profession]
   );
 
   const syncProfileToServer = useCallback(
@@ -1596,9 +1840,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return nextProfile;
       }
 
-      const result = await updateViewerProfile(accessToken, {
-        name: nextProfile.name,
-        dateOfBirth: nextProfile.dateOfBirth,
+      const profilePayload: Parameters<typeof updateViewerProfile>[1] = {
         location: nextProfile.location,
         profession: nextProfile.profession,
         genderIdentity: nextProfile.genderIdentity,
@@ -1620,7 +1862,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         hairColor: nextProfile.hairColor,
         ethnicity: nextProfile.ethnicity,
         interests: nextProfile.interests,
-      });
+      };
+
+      if (nextProfile.name) {
+        profilePayload.name = nextProfile.name;
+      }
+      if (nextProfile.dateOfBirth) {
+        profilePayload.dateOfBirth = nextProfile.dateOfBirth;
+      }
+
+      const result = await updateViewerProfile(accessToken, profilePayload);
 
       const syncedProfile = normalizeStoredProfile({
         ...nextProfile,
@@ -2183,8 +2434,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         totalLikesCount,
         likedProfiles,
         discoveryFilters,
+        discoveryViewPreferences,
         lastServerSyncAt,
+        sessionOfflineFallback,
         saveDiscoveryFilters,
+        setDiscoveryViewPreferences,
         likeProfile,
         profile,
         accountProfile,

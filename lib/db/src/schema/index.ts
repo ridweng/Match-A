@@ -22,6 +22,7 @@ const catalogSchema = pgSchema("catalog");
 const goalsSchema = pgSchema("goals");
 const discoverySchema = pgSchema("discovery");
 const mediaSchema = pgSchema("media");
+const notificationsSchema = pgSchema("notifications");
 
 export const authProviderEnum = pgEnum("auth_provider", [
   "local",
@@ -50,6 +51,16 @@ export const changeMessageTypeEnum = pgEnum("change_message_type", [
 export const emailActionTypeEnum = pgEnum("email_action_type", [
   "verify_resend",
   "password_reset_request",
+]);
+export const consentTypeEnum = pgEnum("consent_type", [
+  "terms_of_service",
+  "privacy_policy",
+  "marketing_email",
+]);
+export const notificationDevicePlatformEnum = pgEnum("notification_device_platform", [
+  "ios",
+  "android",
+  "web",
 ]);
 
 export const usersTable = authSchema.table(
@@ -316,6 +327,29 @@ export const userSyncStateTable = coreSchema.table("user_sync_state", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const userConsentsTable = coreSchema.table(
+  "user_consents",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    consentType: consentTypeEnum("consent_type").notNull(),
+    policyVersion: varchar("policy_version", { length: 64 }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+    source: varchar("source", { length: 64 }).notNull().default("mobile_app"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userConsentVersionUnique: uniqueIndex("core_user_consents_user_type_version_unique").on(
+      table.userId,
+      table.consentType,
+      table.policyVersion
+    ),
+  })
+);
 
 export const profileLanguagesTable = coreSchema.table(
   "profile_languages",
@@ -669,6 +703,34 @@ export const profileImagesTable = mediaSchema.table(
     profileImageSortUnique: uniqueIndex("media_profile_images_profile_sort_unique").on(
       table.profileId,
       table.sortOrder
+    ),
+  })
+);
+
+export const userDevicesTable = notificationsSchema.table(
+  "user_devices",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    pushToken: varchar("push_token", { length: 512 }).notNull(),
+    platform: notificationDevicePlatformEnum("platform").notNull(),
+    appVersion: varchar("app_version", { length: 64 }),
+    deviceModel: varchar("device_model", { length: 120 }),
+    locale: localeCodeEnum("locale"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    pushTokenUnique: uniqueIndex("notifications_user_devices_push_token_unique").on(
+      table.pushToken
+    ),
+    userDeviceSeenIndex: index("notifications_user_devices_user_seen_idx").on(
+      table.userId,
+      table.lastSeenAt
     ),
   })
 );

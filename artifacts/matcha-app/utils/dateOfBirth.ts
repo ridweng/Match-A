@@ -2,6 +2,20 @@ function pad(value: number) {
   return String(value).padStart(2, "0");
 }
 
+export function normalizeIsoDateString(value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const dateOnlyMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnlyMatch) {
+    return dateOnlyMatch[1];
+  }
+
+  return "";
+}
+
 export function getAdultMaximumDate(today = new Date()) {
   const maxDate = new Date(today);
   maxDate.setHours(0, 0, 0, 0);
@@ -10,11 +24,12 @@ export function getAdultMaximumDate(today = new Date()) {
 }
 
 export function parseIsoDate(value: string | null | undefined) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  const normalized = normalizeIsoDateString(value);
+  if (!normalized || !/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
     return null;
   }
 
-  const [year, month, day] = value.split("-").map(Number);
+  const [year, month, day] = normalized.split("-").map(Number);
   const parsed = new Date(year, month - 1, day);
   if (Number.isNaN(parsed.getTime())) {
     return null;

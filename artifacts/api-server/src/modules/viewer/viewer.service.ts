@@ -30,6 +30,10 @@ type ProfileRow = {
   ethnicity: string;
 };
 
+type FreshnessRow = {
+  updated_at: string | Date | null;
+};
+
 @Injectable()
 export class ViewerService {
   constructor(
@@ -76,6 +80,102 @@ export class ViewerService {
       [profileId]
     );
     return result.rows.map((row) => row.interest_code).filter(Boolean);
+  }
+
+  private toIsoTimestamp(input: string | Date | null | undefined) {
+    if (!input) {
+      return null;
+    }
+
+    if (input instanceof Date) {
+      return input.toISOString();
+    }
+
+    const parsed = new Date(input);
+    if (Number.isNaN(parsed.getTime()) || parsed.getTime() === 0) {
+      return null;
+    }
+    return parsed.toISOString();
+  }
+
+  private async getBootstrapFreshness(userId: number, profileId: number) {
+    const epochExpression = "TIMESTAMP WITH TIME ZONE 'epoch'";
+    const [userRow, profileRow, settingsRow, onboardingRow, mediaRow, goalsRow, discoveryRow] =
+      await Promise.all([
+        pool.query<FreshnessRow>(
+          `SELECT updated_at
+           FROM auth.users
+           WHERE id = $1
+           LIMIT 1`,
+          [userId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT GREATEST(
+             COALESCE((SELECT p.updated_at FROM core.profiles p WHERE p.id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pl.updated_at) FROM core.profile_languages pl WHERE pl.profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pi.updated_at) FROM core.profile_interests pi WHERE pi.profile_id = $1), ${epochExpression})
+           ) AS updated_at`,
+          [profileId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT GREATEST(
+             COALESCE((SELECT us.updated_at FROM core.user_settings us WHERE us.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT sync.updated_at FROM core.user_sync_state sync WHERE sync.user_id = $1), ${epochExpression})
+           ) AS updated_at`,
+          [userId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT updated_at
+           FROM core.user_onboarding
+           WHERE user_id = $1
+           LIMIT 1`,
+          [userId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT GREATEST(
+             COALESCE((SELECT MAX(pi.updated_at) FROM media.profile_images pi WHERE pi.profile_id = $1), ${epochExpression}),
+             COALESCE((
+               SELECT MAX(ma.updated_at)
+               FROM media.media_assets ma
+               WHERE ma.owner_profile_id = $1
+             ), ${epochExpression})
+           ) AS updated_at`,
+          [profileId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT GREATEST(
+             COALESCE((SELECT MAX(ugt.updated_at) FROM goals.user_goal_tasks ugt WHERE ugt.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(ucp.updated_at) FROM goals.user_category_progress ucp WHERE ucp.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT ugp.updated_at FROM goals.user_global_progress ugp WHERE ugp.user_id = $1), ${epochExpression})
+           ) AS updated_at`,
+          [userId]
+        ),
+        pool.query<FreshnessRow>(
+          `SELECT GREATEST(
+             COALESCE((SELECT fp.updated_at FROM discovery.filter_preferences fp WHERE fp.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pm.updated_at) FROM discovery.popular_attribute_modes pm WHERE pm.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(dcm.created_at) FROM discovery.discovery_change_messages dcm WHERE dcm.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = $1), ${epochExpression})
+           ) AS updated_at`,
+          [profileId]
+        ),
+      ]);
+
+    const bootstrapGeneratedAt = new Date().toISOString();
+
+    return {
+      bootstrapGeneratedAt,
+      viewerVersion: "viewer-bootstrap-v1",
+      updatedAtByDomain: {
+        user: this.toIsoTimestamp(userRow.rows[0]?.updated_at),
+        profile: this.toIsoTimestamp(profileRow.rows[0]?.updated_at),
+        settings: this.toIsoTimestamp(settingsRow.rows[0]?.updated_at),
+        onboarding: this.toIsoTimestamp(onboardingRow.rows[0]?.updated_at),
+        media: this.toIsoTimestamp(mediaRow.rows[0]?.updated_at),
+        goals: this.toIsoTimestamp(goalsRow.rows[0]?.updated_at),
+        discovery: this.toIsoTimestamp(discoveryRow.rows[0]?.updated_at),
+      },
+    };
   }
 
   private mapProfile(row: ProfileRow, input: { languagesSpoken: string[]; interests: string[] }) {
@@ -313,8 +413,9 @@ export class ViewerService {
       throw new Error("USER_NOT_FOUND");
     }
 
+    const profileId = await this.findProfileId(userId);
     const directSettings = await this.authService.findUserSettings(userId);
-    const [profile, settings, photos, goals, discovery] = await Promise.all([
+    const [profile, settings, photos, goals, discovery, freshness] = await Promise.all([
       this.getProfile(userId),
       Promise.resolve({
         settings: this.authService.sanitizeSettings(directSettings),
@@ -324,6 +425,7 @@ export class ViewerService {
       this.discoveryService.getPreferences(userId).catch(() =>
         this.discoveryService.getEmptyPreferences()
       ),
+      this.getBootstrapFreshness(userId, profileId),
     ]);
 
     return {
@@ -335,7 +437,10 @@ export class ViewerService {
       photos: photos.photos,
       goals: goals.goals,
       discovery,
-      syncedAt: new Date().toISOString(),
+      syncedAt: freshness.bootstrapGeneratedAt,
+      bootstrapGeneratedAt: freshness.bootstrapGeneratedAt,
+      viewerVersion: freshness.viewerVersion,
+      updatedAtByDomain: freshness.updatedAtByDomain,
     };
   }
 }

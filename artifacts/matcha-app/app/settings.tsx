@@ -41,6 +41,10 @@ type SettingsDraft = {
   personality: string;
 };
 
+function keepAllowedValue<T extends string>(value: string, allowed: readonly T[]) {
+  return allowed.includes(value as T) ? value : "";
+}
+
 function Field({
   label,
   value,
@@ -428,9 +432,18 @@ export default function SettingsScreen() {
       name: accountProfile.name || user?.name || "",
       dateOfBirth: accountProfile.dateOfBirth || user?.dateOfBirth || "",
       profession: accountProfile.profession || user?.profession || "",
-      genderIdentity: normalizeGenderIdentity(accountProfile.genderIdentity),
-      pronouns: normalizePronouns(accountProfile.pronouns),
-      personality: normalizePersonality(accountProfile.personality),
+      genderIdentity: keepAllowedValue(
+        normalizeGenderIdentity(accountProfile.genderIdentity),
+        GENDER_IDENTITIES
+      ),
+      pronouns: keepAllowedValue(normalizePronouns(accountProfile.pronouns), [
+        ...SPANISH_PRONOUNS,
+        ...ENGLISH_PRONOUNS,
+      ]),
+      personality: keepAllowedValue(
+        normalizePersonality(accountProfile.personality),
+        PERSONALITY_TRAITS
+      ),
     }),
     [
       accountProfile.dateOfBirth,
@@ -476,12 +489,15 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     if (!hasChanges) return;
     const saved = await saveSettings({
-      name: local.name,
+      name: local.name.trim(),
       dateOfBirth: local.dateOfBirth,
-      profession: local.profession,
-      genderIdentity: local.genderIdentity,
-      pronouns: local.pronouns,
-      personality: local.personality,
+      profession: local.profession.trim(),
+      genderIdentity: keepAllowedValue(local.genderIdentity, GENDER_IDENTITIES),
+      pronouns: keepAllowedValue(local.pronouns, [
+        ...SPANISH_PRONOUNS,
+        ...ENGLISH_PRONOUNS,
+      ]),
+      personality: keepAllowedValue(local.personality, PERSONALITY_TRAITS),
       language: localLanguage,
       heightUnit: localHeightUnit,
     });
@@ -659,7 +675,7 @@ export default function SettingsScreen() {
             value={local.pronouns}
             onChange={(value) => update("pronouns", value)}
             placeholder={t("Selecciona pronombres", "Select pronouns")}
-            language={language}
+            language={localLanguage}
           />
           <PersonalityField
             label={t("Personalidad", "Personality")}
