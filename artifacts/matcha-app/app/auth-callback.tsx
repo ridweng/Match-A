@@ -1,0 +1,45 @@
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef } from "react";
+import { View } from "react-native";
+
+import Colors from "@/constants/colors";
+import { useApp } from "@/context/AppContext";
+import type { AuthCallbackPayload } from "@/services/auth";
+
+export default function AuthCallbackScreen() {
+  const params = useLocalSearchParams();
+  const { handleAuthCallback } = useApp();
+  const handledRef = useRef(false);
+
+  useEffect(() => {
+    if (handledRef.current) {
+      return;
+    }
+    handledRef.current = true;
+
+    const payload: AuthCallbackPayload = {
+      status: typeof params.status === "string" ? params.status : undefined,
+      provider: typeof params.provider === "string" ? params.provider : undefined,
+      code: typeof params.code === "string" ? params.code : undefined,
+      message: typeof params.message === "string" ? params.message : undefined,
+      accessToken:
+        typeof params.accessToken === "string" ? params.accessToken : undefined,
+      refreshToken:
+        typeof params.refreshToken === "string" ? params.refreshToken : undefined,
+      needsProfileCompletion:
+        typeof params.needsProfileCompletion === "string"
+          ? params.needsProfileCompletion === "true"
+          : false,
+      email: typeof params.email === "string" ? params.email : undefined,
+    };
+
+    void (async () => {
+      const success = await handleAuthCallback(payload);
+      if (!success) {
+        router.replace("/login");
+      }
+    })();
+  }, [handleAuthCallback, params]);
+
+  return <View style={{ flex: 1, backgroundColor: Colors.background }} />;
+}

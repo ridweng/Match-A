@@ -31,7 +31,7 @@ const envSchema = z
     AUTH_FRONTEND_REDIRECT_URI: z
       .string()
       .trim()
-      .default("matcha://auth-callback"),
+      .default("matcha:///auth-callback"),
     AUTH_SESSION_SECRET: z.string().trim().min(1).default("matcha-dev-secret"),
     AUTH_MINIMUM_AGE: integerLikeSchema.default(18),
     AUTH_ACCESS_TTL_MINUTES: integerLikeSchema.default(15),
@@ -99,7 +99,7 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     API_BASE_URL: apiBaseUrl,
     FRONTEND_BASE_URL: frontendBaseUrl,
     AUTH_FRONTEND_REDIRECT_URI:
-      env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha://auth-callback",
+      env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",
     AUTH_SESSION_SECRET: env.AUTH_SESSION_SECRET ?? "matcha-dev-secret",
     AUTH_MINIMUM_AGE: env.AUTH_MINIMUM_AGE ?? "18",
     AUTH_ACCESS_TTL_MINUTES: env.AUTH_ACCESS_TTL_MINUTES ?? "15",

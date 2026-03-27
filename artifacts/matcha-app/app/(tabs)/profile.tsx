@@ -5,10 +5,10 @@ import React from "react";
 import {
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import Colors from "@/constants/colors";
 import {
   ALCOHOL_USE_OPTIONS,
@@ -489,9 +490,13 @@ export default function ProfileScreen() {
     <View style={[styles.container, { paddingTop: topPad }]}>
       <StatusBar barStyle="light-content" />
 
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         contentContainerStyle={{ paddingBottom: bottomPad }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={bottomPad}
+        extraKeyboardSpace={28}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         <View style={styles.header}>
           <View>
@@ -809,7 +814,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <Modal
         visible={languagesModalOpen}
@@ -819,15 +824,19 @@ export default function ProfileScreen() {
         onRequestClose={closeLanguagesModal}
       >
         <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.modalContainer,
-              {
-                marginTop: insets.top + 16,
-                marginBottom: insets.bottom + 16,
-              },
-            ]}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalKeyboardAvoider}
           >
+            <View
+              style={[
+                styles.modalContainer,
+                {
+                  marginTop: insets.top + 16,
+                  marginBottom: insets.bottom + 16,
+                },
+              ]}
+            >
             <View style={styles.modalHeader}>
               <Pressable
                 onPress={closeLanguagesModal}
@@ -873,10 +882,13 @@ export default function ProfileScreen() {
               />
             </View>
 
-            <ScrollView
+            <KeyboardAwareScrollViewCompat
               style={styles.modalScroll}
               contentContainerStyle={styles.modalScrollContent}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              bottomOffset={insets.bottom + 16}
+              extraKeyboardSpace={18}
             >
               <View style={styles.modalOptionsWrap}>
                 {filteredLanguages.map((item) => {
@@ -905,8 +917,9 @@ export default function ProfileScreen() {
                   );
                 })}
               </View>
-            </ScrollView>
+            </KeyboardAwareScrollViewCompat>
           </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>
@@ -1288,6 +1301,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(6, 12, 10, 0.72)",
     paddingHorizontal: 16,
+    justifyContent: "center",
+  },
+  modalKeyboardAvoider: {
+    flex: 1,
     justifyContent: "center",
   },
   modalContainer: {

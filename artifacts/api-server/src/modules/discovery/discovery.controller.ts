@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpStatus,
+  Inject,
   Post,
   Req,
   Res,
@@ -27,7 +28,8 @@ const likeDiscoverySchema = z.object({
 @Controller("discovery")
 export class DiscoveryController {
   constructor(
-    private readonly authService: AuthService,
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(DiscoveryService)
     private readonly discoveryService: DiscoveryService
   ) {}
 

@@ -1,15 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import * as WebBrowser from "expo-web-browser";
-import React, { useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
   Dimensions,
+  Easing,
   Image,
   Platform,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -19,14 +18,18 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 import type { AuthProvider } from "@/services/auth";
 import { isAdultBirthDate } from "@/utils/dateOfBirth";
 
 type AuthMode = "landing" | "signin" | "signup";
+type AuthCardFace = "front" | "back";
 
 const { width } = Dimensions.get("window");
+const INITIAL_VERIFICATION_POLL_MS = 60_000;
+const VERIFICATION_POLL_INCREMENT_MS = 30_000;
 
 const providerMeta: Array<{
   provider: AuthProvider;
@@ -47,6 +50,21 @@ function translateAuthError(code: string | null, t: (es: string, en: string) => 
       return t("Correo o contraseña inválidos.", "Invalid email or password.");
     case "EMAIL_VERIFICATION_REQUIRED":
       return t("Verifica tu correo antes de iniciar sesión.", "Verify your email before signing in.");
+    case "EXPIRED_VERIFICATION_TOKEN":
+      return t(
+        "Este enlace de verificación expiró. Solicita uno nuevo.",
+        "This verification link expired. Request a new one."
+      );
+    case "INVALID_VERIFICATION_TOKEN":
+      return t(
+        "Este enlace de verificación no es válido.",
+        "This verification link is not valid."
+      );
+    case "VERIFICATION_LINK_REPLACED":
+      return t(
+        "Este enlace ya fue reemplazado. Usa el correo de verificación más reciente.",
+        "This link was replaced. Use the most recent verification email."
+      );
     case "UNDERAGE":
       return t("Debes tener al menos 18 años.", "You must be at least 18 years old.");
     case "PROVIDER_UNAVAILABLE":
@@ -96,6 +114,28 @@ function Field({
   );
 }
 
+function formatCountdownLabel(
+  totalSeconds: number | null,
+  t: (es: string, en: string) => string
+) {
+  if (totalSeconds === null) {
+    return t("1 min", "1 min");
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) {
+    return t(`${seconds}s`, `${seconds}s`);
+  }
+
+  if (seconds === 0) {
+    return t(`${minutes} min`, `${minutes} min`);
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const {
@@ -104,24 +144,37 @@ export default function LoginScreen() {
     signInWithProvider,
     authBusy,
     authError,
-    authNotice,
+    authFormPrefill,
     pendingVerificationEmail,
-    verificationPreviewUrl,
+    verificationStatus,
+    checkPendingVerificationStatus,
     providerAvailability,
-    authStatus,
     clearAuthFeedback,
     t,
   } = useApp();
 
   const primaryScale = useRef(new Animated.Value(1)).current;
   const secondaryScale = useRef(new Animated.Value(1)).current;
+  const cardFlip = useRef(new Animated.Value(0)).current;
+  const wasVerificationBackVisibleRef = useRef(false);
 
   const [mode, setMode] = useState<AuthMode>("landing");
+  const [visibleCardFace, setVisibleCardFace] = useState<AuthCardFace>("front");
+  const [isCardFlipping, setIsCardFlipping] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [verificationDelayMs, setVerificationDelayMs] = useState(
+    INITIAL_VERIFICATION_POLL_MS
+  );
+  const [nextVerificationCheckAt, setNextVerificationCheckAt] = useState<number | null>(
+    null
+  );
+  const [secondsUntilVerificationCheck, setSecondsUntilVerificationCheck] = useState<
+    number | null
+  >(null);
 
   const animatePress = (anim: Animated.Value, down: boolean) => {
     Animated.spring(anim, {
@@ -139,6 +192,44 @@ export default function LoginScreen() {
     resetMessages();
     setMode(nextMode);
   };
+
+  const animateCardToFace = useCallback(
+    (nextFace: AuthCardFace) => {
+      if (visibleCardFace === nextFace || isCardFlipping) {
+        return;
+      }
+
+      setIsCardFlipping(true);
+
+      const finalValue = nextFace === "back" ? 1 : 0;
+      const halfwayValue = 0.5;
+
+      Animated.timing(cardFlip, {
+        toValue: halfwayValue,
+        duration: 170,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished) {
+          setIsCardFlipping(false);
+          return;
+        }
+
+        setVisibleCardFace(nextFace);
+        cardFlip.setValue(halfwayValue);
+
+        Animated.timing(cardFlip, {
+          toValue: finalValue,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => {
+          setIsCardFlipping(false);
+        });
+      });
+    },
+    [cardFlip, isCardFlipping, visibleCardFace]
+  );
 
   const validateSignIn = () => {
     if (!email.trim() || !password.trim()) {
@@ -210,15 +301,135 @@ export default function LoginScreen() {
     await signInWithProvider(provider, mode === "signup" ? "signup" : "signin");
   };
 
-  const openVerificationPreview = async () => {
-    if (!verificationPreviewUrl) return;
-    await WebBrowser.openBrowserAsync(verificationPreviewUrl);
-  };
-
   const activeError = localError || translateAuthError(authError, t);
+  const shouldShowVerificationBack =
+    mode !== "landing" &&
+    Boolean(pendingVerificationEmail) &&
+    verificationStatus !== "idle" &&
+    verificationStatus !== "verified";
   const topOffset = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 24);
   const landingPaddingTop = topOffset + 24;
+  const verificationChecking = verificationStatus === "checking";
+  const nextCheckLabel = formatCountdownLabel(secondsUntilVerificationCheck, t);
+  const cardScaleX = cardFlip.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 0.88, 1],
+  });
+  const cardScaleY = cardFlip.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 0.965, 1],
+  });
+  const cardOpacity = cardFlip.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 0.82, 1],
+  });
+  const cardTranslateY = cardFlip.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, -6, 0],
+  });
+
+  useEffect(() => {
+    if (shouldShowVerificationBack) {
+      animateCardToFace("back");
+      if (!wasVerificationBackVisibleRef.current) {
+        setVerificationDelayMs(INITIAL_VERIFICATION_POLL_MS);
+        setNextVerificationCheckAt(Date.now() + INITIAL_VERIFICATION_POLL_MS);
+      }
+    } else {
+      animateCardToFace("front");
+      if (wasVerificationBackVisibleRef.current) {
+        setVerificationDelayMs(INITIAL_VERIFICATION_POLL_MS);
+        setNextVerificationCheckAt(null);
+        setSecondsUntilVerificationCheck(null);
+      }
+    }
+
+    wasVerificationBackVisibleRef.current = shouldShowVerificationBack;
+  }, [animateCardToFace, shouldShowVerificationBack]);
+
+  useEffect(() => {
+    if (!authFormPrefill) {
+      return;
+    }
+
+    setEmail(authFormPrefill.email);
+    setMode(authFormPrefill.mode);
+    setPassword("");
+    setName("");
+    setDateOfBirth("");
+    setLocalError(null);
+  }, [authFormPrefill]);
+
+  useEffect(() => {
+    if (!shouldShowVerificationBack || nextVerificationCheckAt === null) {
+      setSecondsUntilVerificationCheck(null);
+      return;
+    }
+
+    const syncCountdown = () => {
+      setSecondsUntilVerificationCheck(
+        Math.max(0, Math.ceil((nextVerificationCheckAt - Date.now()) / 1000))
+      );
+    };
+
+    syncCountdown();
+    const interval = setInterval(syncCountdown, 1000);
+
+    return () => clearInterval(interval);
+  }, [nextVerificationCheckAt, shouldShowVerificationBack]);
+
+  useEffect(() => {
+    if (!shouldShowVerificationBack || nextVerificationCheckAt === null) {
+      return;
+    }
+
+    const delayMs = Math.max(0, nextVerificationCheckAt - Date.now());
+    const timeout = setTimeout(() => {
+      void (async () => {
+        const result = await checkPendingVerificationStatus();
+        if (result === "verified") {
+          setNextVerificationCheckAt(null);
+          return;
+        }
+
+        const nextDelay =
+          result === "pending"
+            ? verificationDelayMs + VERIFICATION_POLL_INCREMENT_MS
+            : verificationDelayMs;
+
+        setVerificationDelayMs(nextDelay);
+        setNextVerificationCheckAt(Date.now() + nextDelay);
+      })();
+    }, delayMs);
+
+    return () => clearTimeout(timeout);
+  }, [
+    checkPendingVerificationStatus,
+    nextVerificationCheckAt,
+    shouldShowVerificationBack,
+    verificationDelayMs,
+  ]);
+
+  const handleManualVerificationCheck = useCallback(async () => {
+    const remainingDelayMs =
+      nextVerificationCheckAt === null
+        ? verificationDelayMs
+        : Math.max(1000, nextVerificationCheckAt - Date.now());
+
+    setNextVerificationCheckAt(null);
+
+    const result = await checkPendingVerificationStatus();
+    if (result === "verified") {
+      return;
+    }
+
+    setNextVerificationCheckAt(Date.now() + remainingDelayMs);
+  }, [
+    checkPendingVerificationStatus,
+    nextVerificationCheckAt,
+    verificationDelayMs,
+  ]);
 
   return (
     <View style={styles.container}>
@@ -328,178 +539,273 @@ export default function LoginScreen() {
 
       {mode !== "landing" ? (
         <View style={[styles.overlayWrap, { paddingTop: topOffset, paddingBottom: bottomPadding }]}>
-          <ScrollView
+          <KeyboardAwareScrollViewCompat
             contentContainerStyle={styles.overlayScrollContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            bottomOffset={bottomPadding}
+            extraKeyboardSpace={28}
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           >
-            <View style={styles.authCard}>
-              <View style={styles.authHeader}>
-                <Pressable
-                  onPress={() => switchMode("landing")}
-                  style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
-                >
-                  <Feather name="chevron-left" size={18} color={Colors.text} />
-                </Pressable>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.authTitle}>
-                    {mode === "signin"
-                      ? t("Iniciar sesión", "Sign in")
-                      : t("Crear cuenta", "Create account")}
-                  </Text>
-                  <Text style={styles.authSub}>
-                    {mode === "signin"
-                      ? t("Vuelve a entrar a tu progreso.", "Get back to your progress.")
-                      : t(
-                          "Crea tu cuenta con correo o proveedor social.",
-                          "Create your account with email or a social provider."
-                        )}
-                  </Text>
-                </View>
-              </View>
-
-              {providerMeta.map((item) => {
-                const enabled = providerAvailability[item.provider];
-                return (
-                  <Pressable
-                    key={item.provider}
-                    onPress={() => handleProviderAuth(item.provider)}
-                    disabled={authBusy || !enabled}
-                    style={({ pressed }) => [
-                      styles.providerBtn,
-                      !enabled && styles.providerBtnDisabled,
-                      pressed && enabled && { opacity: 0.84 },
-                    ]}
-                  >
-                    <View style={styles.providerIconWrap}>
-                      <Feather
-                        name={item.icon as any}
-                        size={16}
-                        color={enabled ? Colors.text : Colors.textMuted}
-                      />
+            <Animated.View
+              style={[
+                styles.authCard,
+                {
+                  opacity: cardOpacity,
+                  transform: [
+                    { translateY: cardTranslateY },
+                    { scaleX: cardScaleX },
+                    { scaleY: cardScaleY },
+                  ],
+                },
+              ]}
+            >
+              <View style={styles.authCardContent} pointerEvents={isCardFlipping ? "none" : "auto"}>
+                {visibleCardFace === "front" ? (
+                  <>
+                    <View style={styles.authHeader}>
+                      <Pressable
+                        onPress={() => switchMode("landing")}
+                        style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
+                      >
+                        <Feather name="chevron-left" size={18} color={Colors.text} />
+                      </Pressable>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.authTitle}>
+                          {mode === "signin"
+                            ? t("Iniciar sesión", "Sign in")
+                            : t("Crear cuenta", "Create account")}
+                        </Text>
+                        <Text style={styles.authSub}>
+                          {mode === "signin"
+                            ? t("Vuelve a entrar a tu progreso.", "Get back to your progress.")
+                            : t(
+                                "Crea tu cuenta con correo o proveedor social.",
+                                "Create your account with email or a social provider."
+                              )}
+                        </Text>
+                      </View>
                     </View>
-                    <Text
-                      style={[
-                        styles.providerText,
-                        !enabled && styles.providerTextDisabled,
+
+                    {providerMeta.map((item) => {
+                      const enabled = providerAvailability[item.provider];
+                      return (
+                        <Pressable
+                          key={item.provider}
+                          onPress={() => handleProviderAuth(item.provider)}
+                          disabled={authBusy || !enabled}
+                          style={({ pressed }) => [
+                            styles.providerBtn,
+                            !enabled && styles.providerBtnDisabled,
+                            pressed && enabled && { opacity: 0.84 },
+                          ]}
+                        >
+                          <View style={styles.providerIconWrap}>
+                            <Feather
+                              name={item.icon as any}
+                              size={16}
+                              color={enabled ? Colors.text : Colors.textMuted}
+                            />
+                          </View>
+                          <Text
+                            style={[
+                              styles.providerText,
+                              !enabled && styles.providerTextDisabled,
+                            ]}
+                          >
+                            {t(item.labelEs, item.labelEn)}
+                          </Text>
+                          {!enabled && (
+                            <Text style={styles.providerPill}>
+                              {t("Pronto", "Soon")}
+                            </Text>
+                          )}
+                        </Pressable>
+                      );
+                    })}
+
+                    <View style={styles.dividerRow}>
+                      <View style={styles.dividerLine} />
+                      <Text style={styles.dividerText}>
+                        {mode === "signin"
+                          ? t("o entra con correo", "or sign in with email")
+                          : t("o regístrate con correo", "or register with email")}
+                      </Text>
+                      <View style={styles.dividerLine} />
+                    </View>
+
+                    {mode === "signup" && (
+                      <>
+                        <Field
+                          label={t("Nombre", "Name")}
+                          value={name}
+                          onChangeText={setName}
+                          placeholder={t("Tu nombre", "Your name")}
+                        />
+                        <DateOfBirthField
+                          label={t("Fecha de nacimiento", "Date of birth")}
+                          value={dateOfBirth}
+                          onChange={setDateOfBirth}
+                          cancelLabel={t("Cancelar", "Cancel")}
+                          confirmLabel={t("Guardar", "Save")}
+                        />
+                      </>
+                    )}
+
+                    <Field
+                      label={t("Correo electrónico", "Email")}
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder={t("tu@email.com", "you@email.com")}
+                      keyboardType="email-address"
+                    />
+
+                    <Field
+                      label={t("Contraseña", "Password")}
+                      value={password}
+                      onChangeText={setPassword}
+                      placeholder={t("Mínimo 8 caracteres", "At least 8 characters")}
+                      secureTextEntry
+                    />
+
+                    {activeError ? <Text style={styles.errorText}>{activeError}</Text> : null}
+
+                    <Pressable
+                      onPress={mode === "signin" ? handleSignIn : handleSignUp}
+                      disabled={authBusy}
+                      style={({ pressed }) => [
+                        styles.submitBtn,
+                        pressed && !authBusy && { opacity: 0.86 },
+                        authBusy && { opacity: 0.7 },
                       ]}
                     >
-                      {t(item.labelEs, item.labelEn)}
-                    </Text>
-                    {!enabled && (
-                      <Text style={styles.providerPill}>
-                        {t("Pronto", "Soon")}
-                      </Text>
-                    )}
-                  </Pressable>
-                );
-              })}
+                      {authBusy ? (
+                        <ActivityIndicator color={Colors.textInverted} />
+                      ) : (
+                        <>
+                          <Text style={styles.submitBtnText}>
+                            {mode === "signin"
+                              ? t("Entrar", "Sign in")
+                              : t("Crear cuenta", "Create account")}
+                          </Text>
+                          <Feather
+                            name="arrow-right"
+                            size={18}
+                            color={Colors.textInverted}
+                          />
+                        </>
+                      )}
+                    </Pressable>
 
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>
-                  {mode === "signin"
-                    ? t("o entra con correo", "or sign in with email")
-                    : t("o regístrate con correo", "or register with email")}
-                </Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              {mode === "signup" && (
-                <>
-                  <Field
-                    label={t("Nombre", "Name")}
-                    value={name}
-                    onChangeText={setName}
-                    placeholder={t("Tu nombre", "Your name")}
-                  />
-                  <DateOfBirthField
-                    label={t("Fecha de nacimiento", "Date of birth")}
-                    value={dateOfBirth}
-                    onChange={setDateOfBirth}
-                    cancelLabel={t("Cancelar", "Cancel")}
-                    confirmLabel={t("Guardar", "Save")}
-                  />
-                </>
-              )}
-
-              <Field
-                label={t("Correo electrónico", "Email")}
-                value={email}
-                onChangeText={setEmail}
-                placeholder={t("tu@email.com", "you@email.com")}
-                keyboardType="email-address"
-              />
-
-              <Field
-                label={t("Contraseña", "Password")}
-                value={password}
-                onChangeText={setPassword}
-                placeholder={t("Mínimo 8 caracteres", "At least 8 characters")}
-                secureTextEntry
-              />
-
-              {activeError ? <Text style={styles.errorText}>{activeError}</Text> : null}
-              {!activeError && authNotice ? (
-                <Text style={styles.noticeText}>{authNotice}</Text>
-              ) : null}
-
-              {authStatus === "verification_pending" && pendingVerificationEmail ? (
-                <View style={styles.verifyBox}>
-                  <Text style={styles.verifyTitle}>
-                    {t("Verificación pendiente", "Verification pending")}
-                  </Text>
-                  <Text style={styles.verifyText}>
-                    {t(
-                      `Enviamos un correo a ${pendingVerificationEmail}. Verifícalo antes de iniciar sesión.`,
-                      `We sent an email to ${pendingVerificationEmail}. Verify it before signing in.`
-                    )}
-                  </Text>
-                  {verificationPreviewUrl ? (
-                    <Pressable onPress={openVerificationPreview} style={styles.previewBtn}>
-                      <Text style={styles.previewBtnText}>
-                        {t("Abrir enlace de prueba", "Open preview link")}
+                    <Pressable
+                      onPress={() => switchMode(mode === "signin" ? "signup" : "signin")}
+                      style={styles.swapAction}
+                    >
+                      <Text style={styles.swapActionText}>
+                        {mode === "signin"
+                          ? t("¿No tienes cuenta? Crear una", "No account yet? Create one")
+                          : t(
+                              "¿Ya tienes cuenta? Iniciar sesión",
+                              "Already have an account? Sign in"
+                            )}
                       </Text>
                     </Pressable>
-                  ) : null}
-                </View>
-              ) : null}
-
-              <Pressable
-                onPress={mode === "signin" ? handleSignIn : handleSignUp}
-                disabled={authBusy}
-                style={({ pressed }) => [
-                  styles.submitBtn,
-                  pressed && !authBusy && { opacity: 0.86 },
-                  authBusy && { opacity: 0.7 },
-                ]}
-              >
-                {authBusy ? (
-                  <ActivityIndicator color={Colors.textInverted} />
-                ) : (
-                  <>
-                    <Text style={styles.submitBtnText}>
-                      {mode === "signin"
-                        ? t("Entrar", "Sign in")
-                        : t("Crear cuenta", "Create account")}
-                    </Text>
-                    <Feather name="arrow-right" size={18} color={Colors.textInverted} />
                   </>
-                )}
-              </Pressable>
+                ) : (
+                  <View style={styles.verificationBack}>
+                    <View style={styles.authHeader}>
+                      <Pressable
+                        onPress={() => switchMode("landing")}
+                        style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
+                      >
+                        <Feather name="chevron-left" size={18} color={Colors.text} />
+                      </Pressable>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.authTitle}>
+                          {t("Verificación pendiente", "Verification pending")}
+                        </Text>
+                        <Text style={styles.authSub}>
+                          {t(
+                            "Mantén esta tarjeta abierta. Revisaremos tu verificación automáticamente.",
+                            "Keep this card open. We will check your verification automatically."
+                          )}
+                        </Text>
+                      </View>
+                    </View>
 
-              <Pressable
-                onPress={() => switchMode(mode === "signin" ? "signup" : "signin")}
-                style={styles.swapAction}
-              >
-                <Text style={styles.swapActionText}>
-                  {mode === "signin"
-                    ? t("¿No tienes cuenta? Crear una", "No account yet? Create one")
-                    : t("¿Ya tienes cuenta? Iniciar sesión", "Already have an account? Sign in")}
-                </Text>
-              </Pressable>
-            </View>
-          </ScrollView>
+                    <View style={styles.verificationBadge}>
+                      <Feather name="mail" size={18} color={Colors.primaryLight} />
+                      <Text style={styles.verificationBadgeText}>
+                        {t("Correo enviado", "Email sent")}
+                      </Text>
+                    </View>
+
+                    <View style={styles.verifyBox}>
+                      <Text style={styles.verifyTitle}>
+                        {t("Revisa tu bandeja de entrada", "Check your inbox")}
+                      </Text>
+                      <Text style={styles.verifyText}>
+                        {t(
+                          `Tu cuenta ya está creada. Falta verificar ${pendingVerificationEmail}.`,
+                          `Your account is ready. ${pendingVerificationEmail} still needs verification.`
+                        )}
+                      </Text>
+                      <Text style={styles.verifyText}>
+                        {t(
+                          "La primera comprobación automática será en 1 minuto. Si sigue pendiente, aumentará 30 segundos cada vez.",
+                          "The first automatic check will happen in 1 minute. If it is still pending, it will increase by 30 seconds each time."
+                        )}
+                      </Text>
+                    </View>
+
+                    <View style={styles.verificationMeta}>
+                      <Text style={styles.verificationMetaLabel}>
+                        {t(
+                          `Próxima comprobación automática en ${nextCheckLabel}.`,
+                          `Next automatic check in ${nextCheckLabel}.`
+                        )}
+                      </Text>
+                      <Text style={styles.verificationMetaHint}>
+                        {t(
+                          "También puedes comprobarlo manualmente en cualquier momento.",
+                          "You can also check it manually at any time."
+                        )}
+                      </Text>
+                    </View>
+
+                    {activeError ? (
+                      <Text style={styles.errorText}>{activeError}</Text>
+                    ) : null}
+
+                    <Pressable
+                      onPress={handleManualVerificationCheck}
+                      disabled={verificationChecking}
+                      style={({ pressed }) => [
+                        styles.submitBtn,
+                        pressed && !verificationChecking && { opacity: 0.86 },
+                        verificationChecking && { opacity: 0.7 },
+                      ]}
+                    >
+                      {verificationChecking ? (
+                        <ActivityIndicator color={Colors.textInverted} />
+                      ) : (
+                        <>
+                          <Text style={styles.submitBtnText}>
+                            {t("Comprobar ahora", "Check now")}
+                          </Text>
+                          <Feather
+                            name="refresh-cw"
+                            size={18}
+                            color={Colors.textInverted}
+                          />
+                        </>
+                      )}
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            </Animated.View>
+          </KeyboardAwareScrollViewCompat>
         </View>
       ) : null}
     </View>
@@ -629,13 +935,18 @@ const styles = StyleSheet.create({
   },
   authCard: {
     borderRadius: 28,
-    padding: 20,
     backgroundColor: "rgba(20,31,24,1)",
     borderWidth: 1,
     borderColor: "rgba(82,183,136,0.16)",
-    gap: 14,
     width: "100%",
     maxWidth: 460,
+    minHeight: 540,
+    overflow: "hidden",
+  },
+  authCardContent: {
+    flex: 1,
+    padding: 20,
+    gap: 14,
   },
   overlayWrap: {
     ...StyleSheet.absoluteFillObject,
@@ -781,17 +1092,43 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     lineHeight: 19,
   },
-  previewBtn: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.08)",
+  verificationBack: {
+    flex: 1,
+    justifyContent: "center",
+    gap: 16,
   },
-  previewBtnText: {
+  verificationBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(82,183,136,0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.22)",
+  },
+  verificationBadgeText: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 12,
+    color: Colors.primaryLight,
+    letterSpacing: 0.2,
+  },
+  verificationMeta: {
+    gap: 6,
+  },
+  verificationMetaLabel: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
     color: Colors.text,
+    lineHeight: 19,
+  },
+  verificationMetaHint: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 18,
   },
   submitBtn: {
     height: 54,

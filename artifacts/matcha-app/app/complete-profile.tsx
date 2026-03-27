@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 import { isAdultBirthDate } from "@/utils/dateOfBirth";
@@ -76,70 +78,83 @@ export default function CompleteProfileScreen() {
   };
 
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top + (Platform.OS === "web" ? 67 : 18) },
-      ]}
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={styles.header}>
-        <View style={styles.badge}>
-          <Feather name="user-check" size={18} color={Colors.primaryLight} />
+      <KeyboardAwareScrollViewCompat
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: insets.top + (Platform.OS === "web" ? 67 : 18),
+            paddingBottom: insets.bottom + 32,
+          },
+        ]}
+        bottomOffset={insets.bottom + 24}
+        extraKeyboardSpace={24}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+      >
+        <View style={styles.header}>
+          <View style={styles.badge}>
+            <Feather name="user-check" size={18} color={Colors.primaryLight} />
+          </View>
+          <Text style={styles.title}>
+            {t("Completa tu perfil", "Complete your profile")}
+          </Text>
+          <Text style={styles.sub}>
+            {t(
+              "Para terminar el registro necesitamos tu nombre y fecha de nacimiento.",
+              "To finish sign-up we need your name and date of birth."
+            )}
+          </Text>
         </View>
-        <Text style={styles.title}>
-          {t("Completa tu perfil", "Complete your profile")}
-        </Text>
-        <Text style={styles.sub}>
-          {t(
-            "Para terminar el registro necesitamos tu nombre y fecha de nacimiento.",
-            "To finish sign-up we need your name and date of birth."
-          )}
-        </Text>
-      </View>
 
-      <View style={styles.card}>
-        <Text style={styles.label}>{t("Nombre", "Name")}</Text>
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={setName}
-          placeholder={t("Tu nombre", "Your name")}
-          placeholderTextColor="rgba(240,245,241,0.28)"
-        />
+        <View style={styles.card}>
+          <Text style={styles.label}>{t("Nombre", "Name")}</Text>
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder={t("Tu nombre", "Your name")}
+            placeholderTextColor="rgba(240,245,241,0.28)"
+          />
 
-        <DateOfBirthField
-          label={t("Fecha de nacimiento", "Date of birth")}
-          value={dateOfBirth}
-          onChange={setDateOfBirth}
-          cancelLabel={t("Cancelar", "Cancel")}
-          confirmLabel={t("Guardar", "Save")}
-        />
+          <DateOfBirthField
+            label={t("Fecha de nacimiento", "Date of birth")}
+            value={dateOfBirth}
+            onChange={setDateOfBirth}
+            cancelLabel={t("Cancelar", "Cancel")}
+            confirmLabel={t("Guardar", "Save")}
+          />
 
-        {localError ? <Text style={styles.error}>{localError}</Text> : null}
-        {!localError && authError ? <Text style={styles.error}>{authError}</Text> : null}
+          {localError ? <Text style={styles.error}>{localError}</Text> : null}
+          {!localError && authError ? <Text style={styles.error}>{authError}</Text> : null}
 
-        <Pressable
-          onPress={handleSave}
-          disabled={authBusy}
-          style={({ pressed }) => [
-            styles.submit,
-            pressed && !authBusy && { opacity: 0.88 },
-            authBusy && { opacity: 0.7 },
-          ]}
-        >
-          {authBusy ? (
-            <ActivityIndicator color={Colors.textInverted} />
-          ) : (
-            <>
-              <Text style={styles.submitText}>
-                {t("Guardar y continuar", "Save and continue")}
-              </Text>
-              <Feather name="arrow-right" size={18} color={Colors.textInverted} />
-            </>
-          )}
-        </Pressable>
-      </View>
-    </View>
+          <Pressable
+            onPress={handleSave}
+            disabled={authBusy}
+            style={({ pressed }) => [
+              styles.submit,
+              pressed && !authBusy && { opacity: 0.88 },
+              authBusy && { opacity: 0.7 },
+            ]}
+          >
+            {authBusy ? (
+              <ActivityIndicator color={Colors.textInverted} />
+            ) : (
+              <>
+                <Text style={styles.submitText}>
+                  {t("Guardar y continuar", "Save and continue")}
+                </Text>
+                <Feather name="arrow-right" size={18} color={Colors.textInverted} />
+              </>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardAwareScrollViewCompat>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -147,7 +162,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  scrollContent: {
     paddingHorizontal: 22,
+    minHeight: "100%",
   },
   header: {
     paddingTop: 12,

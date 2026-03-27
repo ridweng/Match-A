@@ -6,14 +6,15 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { router, Stack } from "expo-router";
+import { router, Stack, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { KeyboardProviderCompat } from "@/components/KeyboardProviderCompat";
 import { AppProvider, useApp } from "@/context/AppContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -23,33 +24,47 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   const {
     authStatus,
+    authBusy,
     biometricLockRequired,
     needsProfileCompletion,
     hasCompletedOnboarding,
   } = useApp();
+  const pathname = usePathname();
 
   const [loadingVisible, setLoadingVisible] = useState(true);
   const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
     useState(true);
-  const hasNavigatedRef = useRef(false);
 
   useEffect(() => {
     if (authStatus === "loading") return;
+    if (pathname === "/auth-callback" && authBusy) {
+      return;
+    }
 
-    if (!hasNavigatedRef.current) {
-      hasNavigatedRef.current = true;
-
-      if (authStatus !== "authenticated") {
+    if (authStatus !== "authenticated") {
+      if (pathname !== "/login" && pathname !== "/auth-callback") {
         router.replace("/login" as any);
-      } else if (biometricLockRequired) {
-        router.replace("/biometric-lock" as any);
-      } else if (needsProfileCompletion) {
-        router.replace("/complete-profile" as any);
-      } else if (!hasCompletedOnboarding) {
-        router.replace("/onboarding" as any);
-      } else {
-        router.replace("/(tabs)/discover" as any);
       }
+    } else if (biometricLockRequired) {
+      if (pathname !== "/biometric-lock") {
+        router.replace("/biometric-lock" as any);
+      }
+    } else if (needsProfileCompletion) {
+      if (pathname !== "/complete-profile") {
+        router.replace("/complete-profile" as any);
+      }
+    } else if (!hasCompletedOnboarding) {
+      if (pathname !== "/onboarding") {
+        router.replace("/onboarding" as any);
+      }
+    } else if (
+      pathname === "/login" ||
+      pathname === "/biometric-lock" ||
+      pathname === "/complete-profile" ||
+      pathname === "/onboarding" ||
+      pathname === "/auth-callback"
+    ) {
+      router.replace("/(tabs)/discover" as any);
     }
 
     const frame = requestAnimationFrame(() => {
@@ -59,14 +74,17 @@ function RootLayoutNav() {
     return () => cancelAnimationFrame(frame);
   }, [
     authStatus,
+    authBusy,
     biometricLockRequired,
     needsProfileCompletion,
     hasCompletedOnboarding,
+    pathname,
   ]);
 
   return (
     <>
       <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="auth-callback" />
         <Stack.Screen name="login" />
         <Stack.Screen name="biometric-lock" />
         <Stack.Screen name="complete-profile" />
@@ -105,9 +123,11 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
-            <AppProvider>
-              <RootLayoutNav />
-            </AppProvider>
+            <KeyboardProviderCompat>
+              <AppProvider>
+                <RootLayoutNav />
+              </AppProvider>
+            </KeyboardProviderCompat>
           </GestureHandlerRootView>
         </QueryClientProvider>
       </ErrorBoundary>

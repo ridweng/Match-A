@@ -7,10 +7,10 @@ import {
   Alert,
   Animated,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import Colors from "@/constants/colors";
 import {
   BODY_TYPES,
@@ -677,9 +678,13 @@ export default function OnboardingScreen() {
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
       <StatusBar barStyle="light-content" />
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         contentContainerStyle={{ paddingBottom: bottomPad }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={bottomPad}
+        extraKeyboardSpace={28}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         <ProgressBar currentStep={step} t={t} />
         <Animated.View
@@ -700,7 +705,7 @@ export default function OnboardingScreen() {
         >
           {step === 1 ? renderIntro() : step === 2 ? renderForm() : renderCompletion()}
         </Animated.View>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <Modal
         visible={languagesModalOpen}
@@ -713,7 +718,11 @@ export default function OnboardingScreen() {
             style={StyleSheet.absoluteFillObject}
             onPress={() => setLanguagesModalOpen(false)}
           />
-          <View style={[styles.modalCard, { paddingBottom: bottomPad }]}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.modalKeyboardAvoider}
+          >
+            <View style={[styles.modalCard, { paddingBottom: bottomPad }]}>
             <View style={styles.modalHeader}>
               <Pressable
                 onPress={() => setLanguagesModalOpen(false)}
@@ -748,9 +757,12 @@ export default function OnboardingScreen() {
               style={styles.searchInput}
             />
 
-            <ScrollView
+            <KeyboardAwareScrollViewCompat
               contentContainerStyle={styles.modalChipsWrap}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              bottomOffset={bottomPad}
+              extraKeyboardSpace={18}
             >
               {filteredLanguages.map((item) => {
                 const selected = languagesSpoken.includes(item.value);
@@ -774,8 +786,9 @@ export default function OnboardingScreen() {
                   </Pressable>
                 );
               })}
-            </ScrollView>
+            </KeyboardAwareScrollViewCompat>
           </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
     </View>
@@ -1062,6 +1075,9 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(9,16,13,0.72)",
+    justifyContent: "flex-end",
+  },
+  modalKeyboardAvoider: {
     justifyContent: "flex-end",
   },
   modalCard: {

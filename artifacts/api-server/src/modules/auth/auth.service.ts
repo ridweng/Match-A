@@ -45,6 +45,13 @@ type SessionRow = {
   created_at: string | Date;
 };
 
+type VerificationTokenRow = UserRow & {
+  token_id: number;
+  user_id: number;
+  token_expires_at: string | Date;
+  token_used_at: string | Date | null;
+};
+
 const accessTtlMs = runtimeConfig.accessTtlMinutes * 60 * 1000;
 const refreshTtlMs = runtimeConfig.refreshTtlDays * 24 * 60 * 60 * 1000;
 const verificationTtlMs = runtimeConfig.emailVerificationTtlMinutes * 60 * 1000;
@@ -62,7 +69,7 @@ type DbClient = {
 export class AuthService {
   constructor(
     @Inject(GoalsService) private readonly goalsService: GoalsService,
-    private readonly emailService: EmailService
+    @Inject(EmailService) private readonly emailService: EmailService
   ) {}
 
   private normalizeEmail(email: string) {
@@ -258,6 +265,28 @@ export class AuthService {
   private async queryOne<T>(query: string, values: unknown[] = []) {
     const result = await pool.query(query, values);
     return result.rows[0] as T | undefined;
+  }
+
+  private maskEmail(email: string | null | undefined) {
+    if (!email) return null;
+    const [localPart, domain] = String(email).split("@");
+    if (!localPart || !domain) return email;
+    const visible = localPart.slice(0, 2);
+    return `${visible}${"*".repeat(Math.max(0, localPart.length - 2))}@${domain}`;
+  }
+
+  private logVerificationRedirectOutcome(
+    outcome: "success" | "already_verified" | "replaced" | "expired" | "invalid",
+    email?: string | null
+  ) {
+    if (runtimeConfig.nodeEnv === "production") {
+      return;
+    }
+
+    console.log("[api-server] verification redirect", {
+      outcome,
+      email: this.maskEmail(email),
+    });
   }
 
   private async initializeUserState(
@@ -477,35 +506,26 @@ export class AuthService {
   }
 
   async sendWelcomeEmailOnce(userId: number) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const profile = await this.findUserDeliveryProfile(userId, client);
-      if (!profile?.email || profile.welcome_email_sent_at) {
-        await client.query("COMMIT");
-        return false;
-      }
-
-      await this.emailService.sendWelcomeEmail({
-        recipientEmail: profile.email,
-        recipientName: profile.display_name || undefined,
-        locale: profile.language === "es" ? "es" : "en",
-      });
-
-      await client.query(
-        `UPDATE auth.users
-         SET welcome_email_sent_at = NOW(), updated_at = NOW()
-         WHERE id = $1 AND welcome_email_sent_at IS NULL`,
-        [userId]
-      );
-      await client.query("COMMIT");
-      return true;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      throw error;
-    } finally {
-      client.release();
+    const profile = await this.findUserDeliveryProfile(userId);
+    if (!profile?.email || profile.welcome_email_sent_at) {
+      return false;
     }
+
+    await this.emailService.sendWelcomeEmail({
+      recipientEmail: profile.email,
+      recipientName: profile.display_name || undefined,
+      locale: profile.language === "es" ? "es" : "en",
+    });
+
+    const update = await pool.query<{ id: number }>(
+      `UPDATE auth.users
+       SET welcome_email_sent_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND welcome_email_sent_at IS NULL
+       RETURNING id`,
+      [userId]
+    );
+
+    return Boolean(update.rows[0]);
   }
 
   async createVerificationToken(userId: number, rawToken: string, expiresAt: string) {
@@ -670,32 +690,81 @@ export class AuthService {
     return result.rows[0] || null;
   }
 
-  async consumeVerificationToken(rawToken: string) {
-    const token = await this.queryOne<{
-      id: number;
-      user_id: number;
-      expires_at: string | Date;
-      used_at: string | Date | null;
-    }>(
-      `SELECT *
-       FROM auth.email_verification_tokens
-       WHERE token_hash = $1 AND used_at IS NULL
+  async findVerificationToken(rawToken: string) {
+    const row = await this.queryOne<VerificationTokenRow>(
+      `SELECT
+         evt.id AS token_id,
+         evt.user_id,
+         evt.expires_at AS token_expires_at,
+         evt.used_at AS token_used_at,
+         u.id,
+         u.email,
+         u.password_hash,
+         u.email_verified,
+         u.welcome_email_sent_at,
+         u.created_at,
+         u.updated_at,
+         p.display_name AS name,
+         p.date_of_birth,
+         p.profession,
+         o.status AS onboarding_status
+       FROM auth.email_verification_tokens evt
+       JOIN auth.users u ON u.id = evt.user_id
+       LEFT JOIN core.profiles p ON p.user_id = u.id AND p.kind = 'user'
+       LEFT JOIN core.user_onboarding o ON o.user_id = u.id
+       WHERE evt.token_hash = $1
        LIMIT 1`,
       [this.hashToken(rawToken)]
     );
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      tokenId: Number(row.token_id),
+      userId: Number(row.user_id),
+      expiresAt: row.token_expires_at,
+      usedAt: row.token_used_at,
+      user: this.mapUser(row),
+    };
+  }
+
+  async consumeVerificationToken(rawToken: string) {
+    const token = await this.findVerificationToken(rawToken);
     if (!token) return null;
-    if (new Date(token.expires_at).getTime() < Date.now()) {
+    if (token.usedAt) {
+      return token.user?.emailVerified
+        ? { alreadyVerified: true as const, user: token.user }
+        : { replaced: true as const, user: token.user };
+    }
+    if (new Date(token.expiresAt).getTime() < Date.now()) {
       return { expired: true as const };
     }
-    await pool.query(
+
+    const claim = await pool.query<{ id: number }>(
       `UPDATE auth.email_verification_tokens
        SET used_at = NOW(), updated_at = NOW()
-       WHERE id = $1`,
-      [token.id]
+       WHERE id = $1 AND used_at IS NULL
+       RETURNING id`,
+      [token.tokenId]
     );
-    const user = await this.verifyUserEmail(token.user_id);
+
+    if (!claim.rows[0]) {
+      const refreshed = await this.findVerificationToken(rawToken);
+      if (!refreshed) {
+        return null;
+      }
+      return refreshed.user?.emailVerified
+        ? { alreadyVerified: true as const, user: refreshed.user }
+        : { replaced: true as const, user: refreshed.user };
+    }
+
+    const user = token.user?.emailVerified
+      ? token.user
+      : await this.verifyUserEmail(token.userId);
     try {
-      await this.sendWelcomeEmailOnce(token.user_id);
+      await this.sendWelcomeEmailOnce(token.userId);
     } catch (error) {
       if (error instanceof EmailDeliveryError) {
         console.error("[api-server] welcome email failed", error.code);
@@ -1368,6 +1437,13 @@ export class AuthService {
     );
   }
 
+  async getVerificationStatus(input: { email: string }) {
+    const user = await this.findUserByEmail(this.normalizeEmail(input.email));
+    return {
+      status: user?.emailVerified ? ("verified" as const) : ("pending" as const),
+    };
+  }
+
   async requestPasswordReset(input: { email: string; ipAddress: string }) {
     const normalizedEmail = this.normalizeEmail(input.email);
     const user = await this.findUserByEmail(normalizedEmail);
@@ -1478,34 +1554,74 @@ export class AuthService {
     if (!result) {
       return { error: "INVALID_VERIFICATION_TOKEN" };
     }
+    if ("alreadyVerified" in result) {
+      return {
+        status: "verified" as const,
+        user: this.sanitizeUser(result.user || null),
+      };
+    }
+    if ("replaced" in result) {
+      return { error: "VERIFICATION_LINK_REPLACED" as const };
+    }
     if (result.expired) {
       return { error: "EXPIRED_VERIFICATION_TOKEN" };
     }
     return {
       status: "verified" as const,
-      user: this.sanitizeUser(result.user),
+      user: this.sanitizeUser(result.user || null),
     };
   }
 
   async getVerificationConfirmRedirect(token: string) {
     const target = new URL(runtimeConfig.frontendRedirectUri);
     if (!token) {
+      this.logVerificationRedirectOutcome("invalid");
       target.searchParams.set("status", "error");
       target.searchParams.set("code", "INVALID_VERIFICATION_TOKEN");
       return target.toString();
     }
 
     const result = await this.consumeVerificationToken(token);
-    if (!result || result.expired) {
+    if (!result) {
+      this.logVerificationRedirectOutcome("invalid");
       target.searchParams.set("status", "error");
-      target.searchParams.set(
-        "code",
-        result?.expired ? "EXPIRED_VERIFICATION_TOKEN" : "INVALID_VERIFICATION_TOKEN"
-      );
+      target.searchParams.set("code", "INVALID_VERIFICATION_TOKEN");
       return target.toString();
     }
 
-    target.searchParams.set("status", "verified");
+    if ("alreadyVerified" in result) {
+      this.logVerificationRedirectOutcome("already_verified", result.user?.email);
+      target.searchParams.set("status", "already_verified");
+      target.searchParams.set("provider", "email");
+      target.searchParams.set("email", result.user?.email || "");
+      return target.toString();
+    }
+
+    if ("replaced" in result) {
+      this.logVerificationRedirectOutcome("replaced", result.user?.email);
+      target.searchParams.set("status", "error");
+      target.searchParams.set("code", "VERIFICATION_LINK_REPLACED");
+      target.searchParams.set("email", result.user?.email || "");
+      return target.toString();
+    }
+
+    if (result.expired) {
+      this.logVerificationRedirectOutcome("expired");
+      target.searchParams.set("status", "error");
+      target.searchParams.set("code", "EXPIRED_VERIFICATION_TOKEN");
+      return target.toString();
+    }
+
+    const payload = await this.createSessionResponse(result.user);
+    this.logVerificationRedirectOutcome("success", result.user?.email);
+    target.searchParams.set("status", "success");
+    target.searchParams.set("provider", "email");
+    target.searchParams.set("accessToken", payload.accessToken);
+    target.searchParams.set("refreshToken", payload.refreshToken);
+    target.searchParams.set(
+      "needsProfileCompletion",
+      payload.needsProfileCompletion ? "true" : "false"
+    );
     target.searchParams.set("email", result.user?.email || "");
     return target.toString();
   }

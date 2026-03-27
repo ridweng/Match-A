@@ -6,7 +6,6 @@ import {
   Alert,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -16,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import colors from "@/constants/colors";
 import {
   ENGLISH_PRONOUNS,
@@ -654,9 +654,13 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={bottomPadding + 16}
+        extraKeyboardSpace={28}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
       >
         <Section title={t("Información básica", "Basic info")}>
           <Field
@@ -761,7 +765,7 @@ export default function SettingsScreen() {
             </Text>
           </Pressable>
         </View>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
     </View>
   );
 }

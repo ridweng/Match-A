@@ -8,13 +8,15 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState, Keyboard, Platform } from "react-native";
 
 import {
+  type AuthCallbackPayload,
   type AuthUser,
   type DiscoveryLikeResponse,
   type ProviderAvailability,
   type AuthProvider,
+  checkVerificationStatus as authCheckVerificationStatus,
   fetchProviderAvailability,
   getDiscoveryPreferences,
   getSettings,
@@ -101,6 +103,11 @@ type AuthStatus =
   | "unauthenticated"
   | "authenticated"
   | "verification_pending";
+type VerificationStatus = "idle" | "pending" | "checking" | "verified";
+type AuthFormPrefill = {
+  email: string;
+  mode: "signin" | "signup";
+};
 
 type BiometricResult = { ok: boolean; code?: string };
 
@@ -453,9 +460,12 @@ type AppContextType = {
   user: AuthUser | null;
   authBusy: boolean;
   authError: string | null;
-  authNotice: string | null;
+  authFormPrefill: AuthFormPrefill | null;
   pendingVerificationEmail: string | null;
-  verificationPreviewUrl: string | null;
+  verificationStatus: VerificationStatus;
+  checkPendingVerificationStatus: () => Promise<"pending" | "verified" | null>;
+  resetPendingVerificationState: () => void;
+  handleAuthCallback: (payload: AuthCallbackPayload) => Promise<boolean>;
   clearAuthFeedback: () => void;
   providerAvailability: ProviderAvailability;
   needsProfileCompletion: boolean;
@@ -516,6 +526,8 @@ type AppContextType = {
 };
 
 const AppContext = createContext<AppContextType | null>(null);
+const ACCESS_TOKEN_STORAGE_KEY = "accessToken";
+const REFRESH_TOKEN_STORAGE_KEY = "refreshToken";
 
 async function checkBiometricHardware(): Promise<boolean> {
   if (Platform.OS === "web") return false;
@@ -532,6 +544,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [, setRefreshToken] = useState<string | null>(null);
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const [heightUnit, setHeightUnitState] = useState<HeightUnit>("metric");
   const [goals, setGoals] = useState<Goal[]>(() =>
@@ -545,9 +558,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [authFormPrefill, setAuthFormPrefill] = useState<AuthFormPrefill | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
-  const [verificationPreviewUrl, setVerificationPreviewUrl] = useState<string | null>(null);
+  const [pendingVerificationPassword, setPendingVerificationPassword] = useState<string | null>(
+    null
+  );
+  const [verificationStatus, setVerificationStatus] =
+    useState<VerificationStatus>("idle");
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
@@ -631,7 +648,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const clearAuthFeedback = useCallback(() => {
     setAuthError(null);
-    setAuthNotice(null);
+  }, []);
+
+  const resetPendingVerificationState = useCallback(() => {
+    setPendingVerificationEmail(null);
+    setPendingVerificationPassword(null);
+    setVerificationStatus("idle");
+    setAuthStatus((prev) =>
+      prev === "verification_pending" ? "unauthenticated" : prev
+    );
+  }, []);
+
+  const clearStoredSessionTokens = useCallback(async () => {
+    await Promise.all([
+      AsyncStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY),
+      AsyncStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY),
+    ]);
+  }, []);
+
+  const setSignInPrefill = useCallback((email: string | null | undefined) => {
+    if (!email) return;
+    setAuthFormPrefill({
+      email,
+      mode: "signin",
+    });
   }, []);
 
   const applyServerSettings = useCallback(
@@ -686,16 +726,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const applySession = useCallback(
     async (session: {
       accessToken: string;
-      refreshToken?: string;
+      refreshToken: string;
       user: AuthUser;
       needsProfileCompletion: boolean;
       hasCompletedOnboarding: boolean;
     }) => {
+      Keyboard.dismiss();
       setAccessToken(session.accessToken);
+      setRefreshToken(session.refreshToken);
       setUser(session.user);
+      setAuthFormPrefill(null);
+      setPendingVerificationEmail(null);
+      setPendingVerificationPassword(null);
+      setVerificationStatus("idle");
+      setAuthError(null);
       setNeedsProfileCompletion(session.needsProfileCompletion);
       setHasCompletedOnboarding(session.hasCompletedOnboarding);
-      await AsyncStorage.setItem("accessToken", session.accessToken);
+      await Promise.all([
+        AsyncStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, session.accessToken),
+        AsyncStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, session.refreshToken),
+      ]);
       setProfile((prev) => normalizeStoredProfile({
         ...prev,
         name: session.user.name || prev.name,
@@ -709,13 +759,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [hydrateDiscoveryState, hydrateServerSettings]
   );
 
+  const hydrateSessionFromTokens = useCallback(
+    async (tokens: { accessToken: string; refreshToken: string }) => {
+      const me = await getMe(tokens.accessToken);
+      await applySession({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        user: me.user,
+        needsProfileCompletion: me.needsProfileCompletion,
+        hasCompletedOnboarding: me.hasCompletedOnboarding,
+      });
+    },
+    [applySession]
+  );
+
+  const completePendingVerificationSignIn = useCallback(async () => {
+    if (!pendingVerificationEmail || !pendingVerificationPassword) {
+      setSignInPrefill(pendingVerificationEmail);
+      resetPendingVerificationState();
+      setAuthStatus("unauthenticated");
+      return false;
+    }
+
+    try {
+      const session = await authSignIn({
+        email: pendingVerificationEmail,
+        password: pendingVerificationPassword,
+      });
+      await applySession(session);
+      if (__DEV__) {
+        console.log("[auth] pending verification auto-login succeeded");
+      }
+      return true;
+    } catch (e: any) {
+      if (__DEV__) {
+        console.log("[auth] pending verification auto-login failed", e?.code || e?.message);
+      }
+      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      setAuthError(code);
+      setSignInPrefill(pendingVerificationEmail);
+      resetPendingVerificationState();
+      setAuthStatus("unauthenticated");
+      return false;
+    }
+  }, [
+    applySession,
+    pendingVerificationEmail,
+    pendingVerificationPassword,
+    resetPendingVerificationState,
+    setSignInPrefill,
+  ]);
+
   useEffect(() => {
     (async () => {
       try {
-        const [lang, storedToken, savedGoals, savedProfile, savedBiometrics, savedHeightUnit] =
+        const [
+          lang,
+          storedAccessToken,
+          storedRefreshToken,
+          savedGoals,
+          savedProfile,
+          savedBiometrics,
+          savedHeightUnit,
+        ] =
           await Promise.all([
             AsyncStorage.getItem("language"),
-            AsyncStorage.getItem("accessToken"),
+            AsyncStorage.getItem(ACCESS_TOKEN_STORAGE_KEY),
+            AsyncStorage.getItem(REFRESH_TOKEN_STORAGE_KEY),
             AsyncStorage.getItem("goals"),
             AsyncStorage.getItem("profile"),
             AsyncStorage.getItem("biometricsEnabled"),
@@ -735,16 +845,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const bioEnabled = savedBiometrics === "true";
         setBiometricsEnabledState(bioEnabled);
 
-        if (storedToken) {
+        if (storedRefreshToken) {
           try {
-            const session = await refreshSession(storedToken);
+            const session = await refreshSession(storedRefreshToken);
             await applySession(session);
             refreshProfileLocation().catch(() => {});
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
             }
           } catch {
-            await AsyncStorage.removeItem("accessToken");
+            setAccessToken(null);
+            setRefreshToken(null);
+            if (storedAccessToken) {
+              setUser(null);
+            }
+            await clearStoredSessionTokens();
             setAuthStatus("unauthenticated");
           }
         } else {
@@ -754,7 +869,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthStatus("unauthenticated");
       }
     })();
-  }, [applySession, refreshProfileLocation]);
+  }, [applySession, clearStoredSessionTokens, refreshProfileLocation]);
 
   useEffect(() => {
     if (Platform.OS === "web") {
@@ -840,6 +955,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async () => {
     await applySession({
       accessToken: "demo-access-token",
+      refreshToken: "demo-refresh-token",
       user: {
         id: 1,
         email: "demo@matcha.app",
@@ -857,9 +973,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (input: { email: string; password: string }) => {
       setAuthBusy(true);
       setAuthError(null);
-      setAuthNotice(null);
       try {
         const session = await authSignIn(input);
+        setSignInPrefill(input.email);
         await applySession(session);
         return true;
       } catch (e: any) {
@@ -877,14 +993,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (input: { name: string; email: string; password: string; dateOfBirth: string }) => {
       setAuthBusy(true);
       setAuthError(null);
-      setAuthNotice(null);
       try {
         const result = await authSignUp(input);
         if (result.status === "verification_pending") {
           setAuthStatus("verification_pending");
           setPendingVerificationEmail(result.email);
-          setVerificationPreviewUrl(result.verificationPreviewUrl || null);
-          setAuthNotice("VERIFICATION_EMAIL_SENT");
+          setPendingVerificationPassword(input.password);
+          setSignInPrefill(result.email);
+          setVerificationStatus("pending");
         }
         return true;
       } catch (e: any) {
@@ -895,22 +1011,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    []
+    [setSignInPrefill]
   );
 
   const signInWithProvider = useCallback(
     async (provider: AuthProvider, mode: "signin" | "signup") => {
       setAuthBusy(true);
       setAuthError(null);
-      setAuthNotice(null);
       try {
         const session = await authSignInWithProvider(provider, mode);
-        await applySession({
-          accessToken: session.accessToken,
-          user: session.user,
-          needsProfileCompletion: session.needsProfileCompletion,
-          hasCompletedOnboarding: session.hasCompletedOnboarding,
-        });
+        await applySession(session);
         return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
@@ -923,6 +1033,103 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [applySession]
   );
 
+  const handleAuthCallback = useCallback(
+    async (payload: AuthCallbackPayload) => {
+      Keyboard.dismiss();
+      setAuthBusy(true);
+      setAuthError(null);
+
+      if (__DEV__) {
+        console.log("[auth-callback] payload", {
+          status: payload.status,
+          provider: payload.provider,
+          code: payload.code,
+          email: payload.email,
+        });
+      }
+
+      try {
+        if (
+          payload.status === "success" &&
+          payload.accessToken &&
+          payload.refreshToken
+        ) {
+          await hydrateSessionFromTokens({
+            accessToken: payload.accessToken,
+            refreshToken: payload.refreshToken,
+          });
+          return true;
+        }
+
+        if (payload.status === "already_verified" || payload.status === "verified") {
+          if (payload.email) {
+            setSignInPrefill(payload.email);
+          }
+          const loggedIn = await completePendingVerificationSignIn();
+          if (loggedIn) {
+            return true;
+          }
+          return false;
+        }
+
+        if (payload.email) {
+          setSignInPrefill(payload.email);
+        }
+        resetPendingVerificationState();
+        setAuthStatus("unauthenticated");
+        setAuthError(
+          toReadableAuthError(payload.code || "INVALID_VERIFICATION_TOKEN")
+        );
+        return false;
+      } catch (e: any) {
+        const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        setAuthError(code);
+        if (payload.email) {
+          setSignInPrefill(payload.email);
+        }
+        resetPendingVerificationState();
+        setAuthStatus("unauthenticated");
+        return false;
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [
+      completePendingVerificationSignIn,
+      hydrateSessionFromTokens,
+      resetPendingVerificationState,
+      setSignInPrefill,
+    ]
+  );
+
+  const checkPendingVerificationStatus = useCallback(async () => {
+    if (!pendingVerificationEmail) {
+      return null;
+    }
+
+    setAuthError(null);
+    setVerificationStatus("checking");
+
+    try {
+      const result = await authCheckVerificationStatus(pendingVerificationEmail);
+      if (result.status === "verified") {
+        const loggedIn = await completePendingVerificationSignIn();
+        if (!loggedIn) {
+          setVerificationStatus("idle");
+        }
+        return "verified";
+      }
+
+      setVerificationStatus("pending");
+      return "pending";
+    } catch (e: any) {
+      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      setAuthError(code);
+      setVerificationStatus("pending");
+      return null;
+    }
+  }, [completePendingVerificationSignIn, pendingVerificationEmail]);
+
   const logout = useCallback(async () => {
     try {
       if (accessToken) await authSignOut(accessToken);
@@ -930,15 +1137,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAuthStatus("unauthenticated");
     setUser(null);
     setAccessToken(null);
+    setRefreshToken(null);
     setBiometricLockRequired(false);
     setHasCompletedOnboarding(false);
     setAuthError(null);
-    setAuthNotice(null);
+    setAuthFormPrefill(null);
+    setPendingVerificationEmail(null);
+    setPendingVerificationPassword(null);
+    setVerificationStatus("idle");
     setLikedProfiles([]);
     setPopularAttributesByCategory(createEmptyPopularAttributesByCategory());
     setTotalLikesCount(0);
-    await AsyncStorage.removeItem("accessToken");
-  }, [accessToken]);
+    await clearStoredSessionTokens();
+  }, [accessToken, clearStoredSessionTokens]);
 
   const completeProfile = useCallback(
     async (data: { name: string; dateOfBirth: string }) => {
@@ -1240,9 +1451,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         user,
         authBusy,
         authError,
-        authNotice,
+        authFormPrefill,
         pendingVerificationEmail,
-        verificationPreviewUrl,
+        verificationStatus,
+        checkPendingVerificationStatus,
+        resetPendingVerificationState,
+        handleAuthCallback,
         clearAuthFeedback,
         providerAvailability,
         needsProfileCompletion,

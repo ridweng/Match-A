@@ -77,7 +77,7 @@ Recommended auth/runtime config:
 ```bash
 export PORT=8082
 export AUTH_BASE_URL="http://127.0.0.1:8082"
-export AUTH_FRONTEND_REDIRECT_URI="matcha://auth-callback"
+export AUTH_FRONTEND_REDIRECT_URI="matcha:///auth-callback"
 export AUTH_SESSION_SECRET="change-me"
 export AUTH_ACCESS_TTL_MINUTES=15
 export AUTH_REFRESH_TTL_DAYS=30

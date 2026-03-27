@@ -14,6 +14,7 @@ import {
 } from "@/utils/popularAttributes";
 
 export type AuthProvider = "google" | "facebook" | "apple";
+export type AuthCallbackProvider = AuthProvider | "email";
 
 export type AuthUser = {
   id: number;
@@ -38,6 +39,21 @@ export type SignUpResponse = {
   email: string;
   message: string;
   verificationPreviewUrl?: string;
+};
+
+export type VerificationStatusResponse = {
+  status: "pending" | "verified";
+};
+
+export type AuthCallbackPayload = {
+  status?: string;
+  provider?: AuthCallbackProvider | string;
+  code?: string;
+  message?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  needsProfileCompletion: boolean;
+  email?: string;
 };
 
 export type MeResponse = {
@@ -176,7 +192,7 @@ function parseAuthCallbackUrl(url: string) {
     refreshToken: query.refreshToken,
     needsProfileCompletion: query.needsProfileCompletion === "true",
     email: query.email,
-  };
+  } satisfies AuthCallbackPayload;
 }
 
 export async function fetchProviderAvailability(): Promise<ProviderAvailability> {
@@ -319,6 +335,16 @@ export async function verifyEmail(token: string) {
   });
 }
 
+export async function checkVerificationStatus(email: string) {
+  if (email.trim().toLowerCase() === DEMO_EMAIL) {
+    return { status: "verified" } satisfies VerificationStatusResponse;
+  }
+  return request<VerificationStatusResponse>("/api/auth/verification-status", {
+    method: "POST",
+    body: { email },
+  });
+}
+
 export async function completeOnboarding(accessToken: string) {
   if (isDemoToken(accessToken)) {
     DEMO_HAS_COMPLETED_ONBOARDING = true;
@@ -442,6 +468,12 @@ export function toReadableAuthError(code: string) {
       return "INVALID_CREDENTIALS";
     case "EMAIL_VERIFICATION_REQUIRED":
       return "EMAIL_VERIFICATION_REQUIRED";
+    case "EXPIRED_VERIFICATION_TOKEN":
+      return "EXPIRED_VERIFICATION_TOKEN";
+    case "INVALID_VERIFICATION_TOKEN":
+      return "INVALID_VERIFICATION_TOKEN";
+    case "VERIFICATION_LINK_REPLACED":
+      return "VERIFICATION_LINK_REPLACED";
     case "UNDERAGE":
       return "UNDERAGE";
     case "PROVIDER_UNAVAILABLE":

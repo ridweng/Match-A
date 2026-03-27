@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpStatus,
+  Inject,
   Param,
   Patch,
   Post,
@@ -38,6 +39,10 @@ const resendVerificationSchema = z.object({
   email: z.string().trim().email(),
 });
 
+const verificationStatusSchema = z.object({
+  email: z.string().trim().email(),
+});
+
 const passwordResetRequestSchema = z.object({
   email: z.string().trim().email(),
 });
@@ -67,7 +72,7 @@ type SupportedProvider = z.infer<typeof providerSchema>;
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   private getAuthorizationHeader(req: Request) {
     return typeof req.headers.authorization === "string"
@@ -231,6 +236,24 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_VERIFY_RESEND_PAYLOAD", error);
+      }
+      console.error(error);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: "INTERNAL_SERVER_ERROR" });
+    }
+  }
+
+  @Post("verification-status")
+  async getVerificationStatus(@Body() body: unknown, @Res() res: Response) {
+    try {
+      const input = verificationStatusSchema.parse(body);
+      return res.json(
+        await this.authService.getVerificationStatus({ email: input.email })
+      );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return this.sendZodError(res, "INVALID_VERIFICATION_STATUS_PAYLOAD", error);
       }
       console.error(error);
       return res
