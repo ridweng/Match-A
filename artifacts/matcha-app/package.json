@@ -9,6 +9,10 @@
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "android": "expo run:android",
+    "android:prebuild": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android",
+    "android:release": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android && cd android && ./gradlew assembleRelease",
+    "android:release:clean": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android --clean && cd android && ./gradlew clean assembleRelease",
+    "android:release:install": "cd android && ./gradlew installRelease",
     "ios": "expo run:ios"
   },
   "devDependencies": {

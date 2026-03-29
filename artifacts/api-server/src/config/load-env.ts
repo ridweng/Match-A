@@ -37,9 +37,14 @@ function loadEnvFile(filePath: string) {
 
 export function loadApiEnvFiles(startDir = process.cwd()) {
   const repoRoot = path.resolve(startDir);
+  const envName =
+    process.env.APP_ENV?.trim() || process.env.NODE_ENV?.trim() || "development";
+  const apiServerDir = path.join(repoRoot, "artifacts/api-server");
   const candidates = [
     path.join(repoRoot, ".env"),
-    path.join(repoRoot, "artifacts/api-server/.env"),
+    path.join(repoRoot, `.env.${envName}`),
+    path.join(apiServerDir, ".env"),
+    path.join(apiServerDir, `.env.${envName}`),
   ];
 
   candidates.forEach(loadEnvFile);
