@@ -192,19 +192,27 @@ export default function OnboardingScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const [languagesModalOpen, setLanguagesModalOpen] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
-  const [genderIdentity, setGenderIdentity] = useState("");
-  const [pronouns, setPronouns] = useState("");
+  const [genderIdentity, setGenderIdentity] = useState(accountProfile.genderIdentity || "");
+  const [pronouns, setPronouns] = useState(accountProfile.pronouns || "");
   const [photos, setPhotos] = useState<UserProfilePhoto[]>(accountProfile.photos || []);
-  const [relationshipGoals, setRelationshipGoals] = useState("");
-  const [childrenPreference, setChildrenPreference] = useState("");
+  const [relationshipGoals, setRelationshipGoals] = useState(
+    accountProfile.relationshipGoals || ""
+  );
+  const [childrenPreference, setChildrenPreference] = useState(
+    accountProfile.childrenPreference || ""
+  );
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>(
-    [getDefaultSpokenLanguageValue(language)]
+    accountProfile.languagesSpoken.length
+      ? normalizeSpokenLanguages(accountProfile.languagesSpoken)
+      : [getDefaultSpokenLanguageValue(language)]
   );
   const [draftLanguages, setDraftLanguages] = useState<string[]>(languagesSpoken);
-  const [education, setEducation] = useState("");
-  const [physicalActivity, setPhysicalActivity] = useState("");
-  const [bodyType, setBodyType] = useState("");
-  const [personality, setPersonality] = useState("");
+  const [education, setEducation] = useState(accountProfile.education || "");
+  const [physicalActivity, setPhysicalActivity] = useState(
+    accountProfile.physicalActivity || ""
+  );
+  const [bodyType, setBodyType] = useState(accountProfile.bodyType || "");
+  const [personality, setPersonality] = useState(accountProfile.personality || "");
 
   React.useEffect(() => {
     setPhotos(accountProfile.photos || []);
@@ -286,14 +294,24 @@ export default function OnboardingScreen() {
   const savePickedPhoto = async (index: number, sourceUri: string) => {
     const targetUri = await saveProfilePhotoLocally(index, sourceUri);
     const previous = getPhotoForSlot(index);
+    const syncedPhoto = await setProfilePhoto(index, targetUri);
+    if (syncedPhoto?.status === "error") {
+      Alert.alert(
+        t("No se pudo subir la foto", "Couldn't upload photo"),
+        t(
+          "La foto quedó como pendiente con error. Puedes volver a intentarlo o eliminarla.",
+          "The photo stayed in an error state. You can retry or remove it."
+        )
+      );
+    }
     if (
+      syncedPhoto?.status !== "error" &&
       previous?.localUri &&
       previous.localUri !== targetUri &&
       isStoredProfilePhoto(previous.localUri)
     ) {
       deleteStoredProfilePhoto(previous.localUri).catch(() => {});
     }
-    const syncedPhoto = await setProfilePhoto(index, targetUri);
     setPhotos((current) => {
       const next = normalizeStoredProfilePhotos(current).filter(
         (photo) => photo.sortOrder !== index
@@ -576,6 +594,18 @@ export default function OnboardingScreen() {
                       <Text style={styles.mainBadgeText}>
                         {t("Principal", "Main")}
                       </Text>
+                    </View>
+                  ) : null}
+                  {photo?.status === "pending" ? (
+                    <View style={styles.photoStateBadge}>
+                      <Text style={styles.photoStateBadgeText}>
+                        {t("Subiendo", "Uploading")}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {photo?.status === "error" ? (
+                    <View style={[styles.photoStateBadge, styles.photoStateBadgeError]}>
+                      <Text style={styles.photoStateBadgeText}>{t("Error", "Error")}</Text>
                     </View>
                   ) : null}
                 </Pressable>
@@ -1179,6 +1209,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,26,20,0.72)",
   },
   mainBadgeText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 11,
+    color: Colors.text,
+  },
+  photoStateBadge: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(15,26,20,0.76)",
+  },
+  photoStateBadgeError: {
+    backgroundColor: "rgba(194,65,76,0.92)",
+  },
+  photoStateBadgeText: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 11,
     color: Colors.text,

@@ -6,6 +6,7 @@ import {
   Inject,
   Patch,
   Post,
+  Query,
   Req,
   Res,
 } from "@nestjs/common";
@@ -14,8 +15,8 @@ import type { Request, Response } from "express";
 import { AuthService } from "../auth/auth.service";
 import { DiscoveryService } from "./discovery.service";
 
-const likeDiscoverySchema = z.object({
-  likedProfileId: z.string().trim().min(1).max(64),
+const discoveryDecisionSchema = z.object({
+  targetProfileId: z.coerce.number().int().positive(),
   categoryValues: z.object({
     physical: z.string().trim().max(120).nullable().optional(),
     personality: z.string().trim().max(120).nullable().optional(),
@@ -24,6 +25,13 @@ const likeDiscoverySchema = z.object({
     language: z.string().trim().max(120).nullable().optional(),
     studies: z.string().trim().max(120).nullable().optional(),
   }),
+  requestId: z.string().trim().max(128).optional(),
+  queueVersion: z.coerce.number().int().positive().optional(),
+  presentedPosition: z.coerce.number().int().positive().optional(),
+});
+
+const discoveryQueuedDecisionSchema = discoveryDecisionSchema.extend({
+  action: z.enum(["like", "pass"]),
 });
 
 const discoveryFiltersSchema = z.object({
@@ -39,6 +47,15 @@ const updateDiscoveryPreferencesSchema = z.object({
   filters: discoveryFiltersSchema.refine((value) => value.ageMin <= value.ageMax, {
     message: "INVALID_DISCOVERY_FILTER_RANGE",
   }),
+});
+
+const discoveryFeedQuerySchema = z.object({
+  cursor: z.string().trim().max(128).optional(),
+  limit: z.coerce.number().int().min(1).max(60).optional(),
+});
+
+const discoveryWindowQuerySchema = z.object({
+  size: z.coerce.number().int().min(1).max(3).optional(),
 });
 
 @Controller("discovery")
@@ -61,6 +78,18 @@ export class DiscoveryController {
     return res.status(HttpStatus.UNAUTHORIZED).json({ error: message });
   }
 
+  private sendServerError(res: Response, error: unknown) {
+    if (error instanceof Error && error.message) {
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: error.message });
+    }
+    console.error(error);
+    return res
+      .status(HttpStatus.INTERNAL_SERVER_ERROR)
+      .json({ error: "INTERNAL_SERVER_ERROR" });
+  }
+
   @Get("preferences")
   async getPreferences(@Req() req: Request, @Res() res: Response) {
     try {
@@ -68,6 +97,79 @@ export class DiscoveryController {
       return res.json(await this.discoveryService.getPreferences(auth.user.id));
     } catch (error) {
       return this.sendAuthError(res, error);
+    }
+  }
+
+  @Get("feed")
+  async getFeed(
+    @Req() req: Request,
+    @Query() query: Record<string, string | undefined>,
+    @Res() res: Response
+  ) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const parsed = discoveryFeedQuerySchema.parse(query || {});
+      return res.json(
+        await this.discoveryService.getFeed(auth.user.id, {
+          cursor: parsed.cursor || null,
+          limit: parsed.limit,
+        })
+      );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: "INVALID_DISCOVERY_FEED_QUERY",
+          issues: error.flatten(),
+        });
+      }
+      if (error instanceof Error && error.message) {
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
+      }
+      return this.sendServerError(res, error);
+    }
+  }
+
+  @Get("window")
+  async getWindow(
+    @Req() req: Request,
+    @Query() query: Record<string, string | undefined>,
+    @Res() res: Response
+  ) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const parsed = discoveryWindowQuerySchema.parse(query || {});
+      return res.json(
+        await this.discoveryService.getWindow(auth.user.id, {
+          size: parsed.size,
+        })
+      );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: "INVALID_DISCOVERY_WINDOW_QUERY",
+          issues: error.flatten(),
+        });
+      }
+      if (error instanceof Error && error.message) {
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
+      }
+      return this.sendServerError(res, error);
     }
   }
 
@@ -87,12 +189,38 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
-        return this.sendAuthError(res, error);
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
       }
-      console.error(error);
-      return res
-        .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .json({ error: "INTERNAL_SERVER_ERROR" });
+      return this.sendServerError(res, error);
+    }
+  }
+
+  @Post("reset")
+  async resetDecisions(@Req() req: Request, @Res() res: Response) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      return res.json(await this.discoveryService.resetDecisions(auth.user.id));
+    } catch (error) {
+      if (error instanceof Error && error.message) {
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
+      }
+      return this.sendServerError(res, error);
     }
   }
 
@@ -100,7 +228,7 @@ export class DiscoveryController {
   async likeProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
-      const payload = likeDiscoverySchema.parse(body);
+      const payload = discoveryDecisionSchema.parse(body);
       return res.json(await this.discoveryService.likeProfile(auth.user.id, payload));
     } catch (error) {
       if (error instanceof ZodError) {
@@ -110,12 +238,73 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
-        return this.sendAuthError(res, error);
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
       }
-      console.error(error);
-      return res
-        .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .json({ error: "INTERNAL_SERVER_ERROR" });
+      return this.sendServerError(res, error);
+    }
+  }
+
+  @Post("decision")
+  async decideProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const payload = discoveryQueuedDecisionSchema.parse(body);
+      return res.json(await this.discoveryService.decideProfile(auth.user.id, payload));
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: "INVALID_DISCOVERY_DECISION_PAYLOAD",
+          issues: error.flatten(),
+        });
+      }
+      if (error instanceof Error && error.message) {
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
+      }
+      return this.sendServerError(res, error);
+    }
+  }
+
+  @Post("pass")
+  async passProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const payload = discoveryDecisionSchema.parse(body);
+      return res.json(await this.discoveryService.passProfile(auth.user.id, payload));
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          error: "INVALID_DISCOVERY_PASS_PAYLOAD",
+          issues: error.flatten(),
+        });
+      }
+      if (error instanceof Error && error.message) {
+        if (
+          error.message === "UNAUTHORIZED" ||
+          error.message === "SESSION_NOT_FOUND" ||
+          error.message === "ACCESS_TOKEN_EXPIRED" ||
+          error.message === "INVALID_ACCESS_TOKEN"
+        ) {
+          return this.sendAuthError(res, error);
+        }
+        return this.sendServerError(res, error);
+      }
+      return this.sendServerError(res, error);
     }
   }
 }

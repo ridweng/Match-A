@@ -8,7 +8,7 @@ export type UserProfilePhoto = {
   mediaAssetId: number | null;
   profileImageId: number | null;
   sortOrder: number;
-  status: "pending" | "ready";
+  status: "pending" | "ready" | "error";
 };
 
 export function isStoredProfilePhoto(uri: string | null | undefined) {
@@ -74,7 +74,12 @@ export function normalizeStoredProfilePhotos(
           typeof photo?.profileImageId === "number" ? photo.profileImageId : null,
         sortOrder:
           typeof photo?.sortOrder === "number" ? photo.sortOrder : index,
-        status: photo?.status === "pending" ? "pending" : "ready",
+        status:
+          photo?.status === "pending"
+            ? "pending"
+            : photo?.status === "error"
+              ? "error"
+              : "ready",
       };
     })
     .filter((photo): photo is UserProfilePhoto => Boolean(photo))

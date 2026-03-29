@@ -11,12 +11,12 @@ async function main() {
   runWorkspaceCommand([
     "--dir",
     "artifacts/api-server",
-    "db:rebuild:goals-projections",
+    "db:rebuild:preferences",
   ]);
   runWorkspaceCommand([
     "--dir",
     "artifacts/api-server",
-    "db:rebuild:discovery-projections",
+    "db:rebuild:goal-targets",
   ]);
 }
 

@@ -1,0 +1,1277 @@
+import { Injectable } from "@nestjs/common";
+import { pool } from "@workspace/db";
+
+type TableRole = "source" | "projection" | "ops";
+type EdgeType = "fk" | "flow";
+
+type UserListRow = {
+  profile_id: number;
+  user_id: number | null;
+  public_id: string;
+  display_name: string;
+  kind: "user" | "dummy";
+  gender_identity: string;
+  synthetic_group: string | null;
+  dummy_batch_key: string | null;
+  generation_version: number | null;
+  total_likes: number | null;
+  total_passes: number | null;
+  threshold_reached: boolean | null;
+  last_decision_at: string | Date | null;
+  last_recomputed_at: string | Date | null;
+};
+
+type RecentDecisionRow = {
+  id: number;
+  interaction_type: "like" | "pass";
+  target_profile_public_id: string;
+  created_at: string | Date;
+};
+
+type UserListFilters = {
+  q?: string;
+  kind?: "all" | "user" | "dummy";
+  threshold?: "all" | "reached" | "pending";
+  genderIdentity?: string;
+  syntheticGroup?: string;
+  dummyBatchKey?: string;
+  generationVersion?: number | null;
+};
+
+type UserFilterOptions = {
+  genderIdentities: string[];
+  syntheticGroups: string[];
+  dummyBatchKeys: string[];
+  generationVersions: number[];
+};
+
+type DatabaseTableKey =
+  | "auth.users"
+  | "core.profiles"
+  | "core.profile_category_values"
+  | "core.profile_dummy_metadata"
+  | "core.profile_languages"
+  | "core.profile_interests"
+  | "media.media_assets"
+  | "media.profile_images"
+  | "catalog.goal_categories"
+  | "catalog.preference_values"
+  | "catalog.category_goal_rules"
+  | "catalog.goal_task_templates"
+  | "discovery.profile_interactions"
+  | "discovery.profile_decisions"
+  | "discovery.popular_attribute_modes"
+  | "discovery.profile_preference_thresholds"
+  | "goals.user_unlock_state"
+  | "goals.user_category_targets"
+  | "goals.user_category_target_progress"
+  | "goals.user_goal_tasks"
+  | "goals.user_category_progress"
+  | "goals.user_global_progress"
+  | "goals.user_goal_projection_meta";
+
+type DatabaseGraphNode = {
+  key: DatabaseTableKey;
+  schema: string;
+  table: string;
+  label: string;
+  role: TableRole;
+  description: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rowCount: number | null;
+  freshness: string | Date | null;
+  present: boolean;
+};
+
+type DatabaseGraphEdge = {
+  from: DatabaseTableKey;
+  to: DatabaseTableKey;
+  edgeType: EdgeType;
+  label: string;
+};
+
+type DatabaseMetric = {
+  label: string;
+  value: string;
+  detail?: string | null;
+};
+
+type DatabaseMetricGroup = {
+  title: string;
+  metrics: DatabaseMetric[];
+};
+
+type DatabaseTableStat = {
+  key: DatabaseTableKey;
+  schema: string;
+  table: string;
+  role: TableRole;
+  present: boolean;
+  rowCount: number | null;
+  freshness: string | Date | null;
+};
+
+type DatabaseSchemaStatus = {
+  missingRequiredRelations: string[];
+  missingRequiredColumns: string[];
+  warnings: string[];
+};
+
+type DatabaseView = {
+  schemaStatus: DatabaseSchemaStatus;
+  graph: {
+    schemas: string[];
+    nodes: DatabaseGraphNode[];
+    edges: DatabaseGraphEdge[];
+  };
+  metricGroups: DatabaseMetricGroup[];
+  tableStats: DatabaseTableStat[];
+};
+
+type TableSpec = {
+  key: DatabaseTableKey;
+  schema: string;
+  table: string;
+  role: TableRole;
+  description: string;
+  freshnessColumn?: string | null;
+  required?: boolean;
+  x: number;
+  y: number;
+};
+
+type ColumnRequirement = {
+  relation: DatabaseTableKey;
+  column: string;
+};
+
+type RecentTimestampRow = {
+  value: string | Date | null;
+};
+
+const GRAPH_NODE_WIDTH = 220;
+const GRAPH_NODE_HEIGHT = 92;
+const GRAPH_SCHEMA_COLUMNS = ["auth", "core", "catalog", "discovery", "goals", "media"] as const;
+
+const APPROVED_TABLE_SPECS: TableSpec[] = [
+  {
+    key: "auth.users",
+    schema: "auth",
+    table: "users",
+    role: "source",
+    description: "Accounts and auth identity root",
+    freshnessColumn: "updated_at",
+    required: true,
+    x: 40,
+    y: 70,
+  },
+  {
+    key: "core.profiles",
+    schema: "core",
+    table: "profiles",
+    role: "source",
+    description: "Primary person/profile record",
+    freshnessColumn: "updated_at",
+    required: true,
+    x: 320,
+    y: 70,
+  },
+  {
+    key: "core.profile_category_values",
+    schema: "core",
+    table: "profile_category_values",
+    role: "source",
+    description: "Profile source values by goal category",
+    freshnessColumn: null,
+    x: 320,
+    y: 190,
+  },
+  {
+    key: "core.profile_dummy_metadata",
+    schema: "core",
+    table: "profile_dummy_metadata",
+    role: "ops",
+    description: "Dummy batch and synthetic metadata",
+    freshnessColumn: "created_at",
+    x: 320,
+    y: 310,
+  },
+  {
+    key: "core.profile_languages",
+    schema: "core",
+    table: "profile_languages",
+    role: "source",
+    description: "Profile spoken languages",
+    freshnessColumn: null,
+    x: 320,
+    y: 430,
+  },
+  {
+    key: "core.profile_interests",
+    schema: "core",
+    table: "profile_interests",
+    role: "source",
+    description: "Profile interests",
+    freshnessColumn: null,
+    x: 320,
+    y: 550,
+  },
+  {
+    key: "catalog.goal_categories",
+    schema: "catalog",
+    table: "goal_categories",
+    role: "source",
+    description: "Goal category catalog",
+    freshnessColumn: "updated_at",
+    required: true,
+    x: 600,
+    y: 70,
+  },
+  {
+    key: "catalog.preference_values",
+    schema: "catalog",
+    table: "preference_values",
+    role: "source",
+    description: "Allowed values per category",
+    freshnessColumn: "updated_at",
+    x: 600,
+    y: 190,
+  },
+  {
+    key: "catalog.category_goal_rules",
+    schema: "catalog",
+    table: "category_goal_rules",
+    role: "source",
+    description: "Rule mapping from values to targets",
+    freshnessColumn: "updated_at",
+    x: 600,
+    y: 310,
+  },
+  {
+    key: "catalog.goal_task_templates",
+    schema: "catalog",
+    table: "goal_task_templates",
+    role: "source",
+    description: "Task templates derived into user tasks",
+    freshnessColumn: "updated_at",
+    x: 600,
+    y: 430,
+  },
+  {
+    key: "discovery.profile_interactions",
+    schema: "discovery",
+    table: "profile_interactions",
+    role: "source",
+    description: "Immutable like/pass interaction events",
+    freshnessColumn: "created_at",
+    required: true,
+    x: 880,
+    y: 70,
+  },
+  {
+    key: "discovery.profile_decisions",
+    schema: "discovery",
+    table: "profile_decisions",
+    role: "projection",
+    description: "Current final decision per target",
+    freshnessColumn: "updated_at",
+    required: true,
+    x: 880,
+    y: 190,
+  },
+  {
+    key: "discovery.popular_attribute_modes",
+    schema: "discovery",
+    table: "popular_attribute_modes",
+    role: "projection",
+    description: "Derived preference modes from likes",
+    freshnessColumn: "updated_at",
+    x: 880,
+    y: 310,
+  },
+  {
+    key: "discovery.profile_preference_thresholds",
+    schema: "discovery",
+    table: "profile_preference_thresholds",
+    role: "projection",
+    description: "Lifetime totals and threshold state",
+    freshnessColumn: "computed_at",
+    required: true,
+    x: 880,
+    y: 430,
+  },
+  {
+    key: "goals.user_unlock_state",
+    schema: "goals",
+    table: "user_unlock_state",
+    role: "projection",
+    description: "Goals unlock projection",
+    freshnessColumn: "updated_at",
+    x: 1160,
+    y: 70,
+  },
+  {
+    key: "goals.user_category_targets",
+    schema: "goals",
+    table: "user_category_targets",
+    role: "projection",
+    description: "Derived category targets",
+    freshnessColumn: "computed_at",
+    x: 1160,
+    y: 190,
+  },
+  {
+    key: "goals.user_category_target_progress",
+    schema: "goals",
+    table: "user_category_target_progress",
+    role: "projection",
+    description: "Progress toward derived targets",
+    freshnessColumn: "computed_at",
+    x: 1160,
+    y: 310,
+  },
+  {
+    key: "goals.user_goal_tasks",
+    schema: "goals",
+    table: "user_goal_tasks",
+    role: "projection",
+    description: "Projected user task assignments",
+    freshnessColumn: "updated_at",
+    x: 1160,
+    y: 430,
+  },
+  {
+    key: "goals.user_category_progress",
+    schema: "goals",
+    table: "user_category_progress",
+    role: "projection",
+    description: "Category-level task completion summary",
+    freshnessColumn: "updated_at",
+    x: 1160,
+    y: 550,
+  },
+  {
+    key: "goals.user_global_progress",
+    schema: "goals",
+    table: "user_global_progress",
+    role: "projection",
+    description: "Global progress summary",
+    freshnessColumn: "updated_at",
+    x: 1160,
+    y: 670,
+  },
+  {
+    key: "goals.user_goal_projection_meta",
+    schema: "goals",
+    table: "user_goal_projection_meta",
+    role: "ops",
+    description: "Goals rebuild watermark and status",
+    freshnessColumn: "last_recomputed_at",
+    x: 1160,
+    y: 790,
+  },
+  {
+    key: "media.media_assets",
+    schema: "media",
+    table: "media_assets",
+    role: "source",
+    description: "Uploaded media asset metadata",
+    freshnessColumn: "updated_at",
+    x: 1440,
+    y: 70,
+  },
+  {
+    key: "media.profile_images",
+    schema: "media",
+    table: "profile_images",
+    role: "source",
+    description: "Profile-to-media image mapping",
+    freshnessColumn: "updated_at",
+    x: 1440,
+    y: 190,
+  },
+];
+
+const REQUIRED_COLUMN_REQUIREMENTS: ColumnRequirement[] = [
+  {
+    relation: "discovery.profile_preference_thresholds",
+    column: "threshold_reached_at",
+  },
+  {
+    relation: "discovery.profile_preference_thresholds",
+    column: "last_decision_event_at",
+  },
+  {
+    relation: "goals.user_goal_projection_meta",
+    column: "last_recomputed_at",
+  },
+  {
+    relation: "goals.user_goal_projection_meta",
+    column: "rebuild_status",
+  },
+];
+
+const CURATED_FLOW_EDGES: DatabaseGraphEdge[] = [
+  {
+    from: "discovery.profile_interactions",
+    to: "discovery.profile_decisions",
+    edgeType: "flow",
+    label: "projection flow",
+  },
+  {
+    from: "discovery.profile_interactions",
+    to: "discovery.popular_attribute_modes",
+    edgeType: "flow",
+    label: "projection flow",
+  },
+  {
+    from: "discovery.profile_interactions",
+    to: "discovery.profile_preference_thresholds",
+    edgeType: "flow",
+    label: "projection flow",
+  },
+  {
+    from: "discovery.profile_preference_thresholds",
+    to: "goals.user_unlock_state",
+    edgeType: "flow",
+    label: "unlock projection",
+  },
+  {
+    from: "catalog.category_goal_rules",
+    to: "goals.user_category_targets",
+    edgeType: "flow",
+    label: "target derivation",
+  },
+  {
+    from: "discovery.profile_interactions",
+    to: "goals.user_category_targets",
+    edgeType: "flow",
+    label: "source event flow",
+  },
+  {
+    from: "goals.user_category_targets",
+    to: "goals.user_category_target_progress",
+    edgeType: "flow",
+    label: "progress derivation",
+  },
+  {
+    from: "catalog.goal_task_templates",
+    to: "goals.user_goal_tasks",
+    edgeType: "flow",
+    label: "task assignment flow",
+  },
+  {
+    from: "goals.user_category_targets",
+    to: "goals.user_goal_tasks",
+    edgeType: "flow",
+    label: "task targeting",
+  },
+  {
+    from: "goals.user_goal_tasks",
+    to: "goals.user_category_progress",
+    edgeType: "flow",
+    label: "progress rollup",
+  },
+  {
+    from: "goals.user_category_progress",
+    to: "goals.user_global_progress",
+    edgeType: "flow",
+    label: "global rollup",
+  },
+];
+
+@Injectable()
+export class AdminService {
+  private relationNameFromKey(key: DatabaseTableKey) {
+    return key;
+  }
+
+  private async loadPresentRelations(keys: DatabaseTableKey[]) {
+    const relationChecks = await Promise.all(
+      keys.map(async (key) => {
+        const result = await pool.query<{ relation_name: string | null }>(
+          "SELECT to_regclass($1) AS relation_name",
+          [this.relationNameFromKey(key)]
+        );
+        return {
+          key,
+          present: Boolean(result.rows[0]?.relation_name),
+        };
+      })
+    );
+
+    return new Map(relationChecks.map((item) => [item.key, item.present] as const));
+  }
+
+  private async loadRequiredColumnStatus(
+    presentRelations: Map<DatabaseTableKey, boolean>
+  ) {
+    const checks = await Promise.all(
+      REQUIRED_COLUMN_REQUIREMENTS.map(async (requirement) => {
+        const [schema, table] = requirement.relation.split(".");
+        if (!presentRelations.get(requirement.relation)) {
+          return {
+            relation: requirement.relation,
+            column: requirement.column,
+            present: false,
+          };
+        }
+        const result = await pool.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema = $1
+               AND table_name = $2
+               AND column_name = $3
+           ) AS exists`,
+          [schema, table, requirement.column]
+        );
+        return {
+          relation: requirement.relation,
+          column: requirement.column,
+          present: Boolean(result.rows[0]?.exists),
+        };
+      })
+    );
+
+    return checks;
+  }
+
+  private async loadFreshnessForTable(
+    spec: TableSpec,
+    presentRelations: Map<DatabaseTableKey, boolean>
+  ) {
+    if (!presentRelations.get(spec.key) || !spec.freshnessColumn) {
+      return null;
+    }
+
+    const columnExists = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_schema = $1
+           AND table_name = $2
+           AND column_name = $3
+       ) AS exists`,
+      [spec.schema, spec.table, spec.freshnessColumn]
+    );
+    if (!columnExists.rows[0]?.exists) {
+      return null;
+    }
+
+    const result = await pool.query<RecentTimestampRow>(
+      `SELECT MAX(${spec.freshnessColumn}) AS value
+       FROM ${spec.schema}.${spec.table}`
+    );
+    return result.rows[0]?.value || null;
+  }
+
+  private async loadTableStats(presentRelations: Map<DatabaseTableKey, boolean>) {
+    const rows = await Promise.all(
+      APPROVED_TABLE_SPECS.map(async (spec) => {
+        const present = Boolean(presentRelations.get(spec.key));
+        if (!present) {
+          return {
+            key: spec.key,
+            schema: spec.schema,
+            table: spec.table,
+            role: spec.role,
+            present: false,
+            rowCount: null,
+            freshness: null,
+          } satisfies DatabaseTableStat;
+        }
+
+        const [countResult, freshness] = await Promise.all([
+          pool.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM ${spec.schema}.${spec.table}`
+          ),
+          this.loadFreshnessForTable(spec, presentRelations),
+        ]);
+
+        return {
+          key: spec.key,
+          schema: spec.schema,
+          table: spec.table,
+          role: spec.role,
+          present: true,
+          rowCount: Number(countResult.rows[0]?.count || 0),
+          freshness,
+        } satisfies DatabaseTableStat;
+      })
+    );
+
+    return rows;
+  }
+
+  private async loadFkEdges(presentRelations: Map<DatabaseTableKey, boolean>) {
+    const allowed = new Set(
+      APPROVED_TABLE_SPECS.filter((spec) => presentRelations.get(spec.key)).map((spec) => spec.key)
+    );
+
+    const result = await pool.query<{
+      source_schema: string;
+      source_table: string;
+      target_schema: string;
+      target_table: string;
+    }>(
+      `SELECT DISTINCT
+         tc.table_schema AS source_schema,
+         tc.table_name AS source_table,
+         ccu.table_schema AS target_schema,
+         ccu.table_name AS target_table
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.constraint_column_usage ccu
+         ON ccu.constraint_name = tc.constraint_name
+        AND ccu.constraint_schema = tc.constraint_schema
+       WHERE tc.constraint_type = 'FOREIGN KEY'`
+    );
+
+    const edges: DatabaseGraphEdge[] = [];
+    for (const row of result.rows) {
+      const from = `${row.source_schema}.${row.source_table}` as DatabaseTableKey;
+      const to = `${row.target_schema}.${row.target_table}` as DatabaseTableKey;
+      if (!allowed.has(from) || !allowed.has(to)) {
+        continue;
+      }
+      edges.push({
+        from,
+        to,
+        edgeType: "fk",
+        label: "FK",
+      });
+    }
+
+    return edges;
+  }
+
+  private buildGraphNodes(tableStats: DatabaseTableStat[]) {
+    const statsByKey = new Map(tableStats.map((item) => [item.key, item] as const));
+    return APPROVED_TABLE_SPECS.map((spec) => {
+      const stats = statsByKey.get(spec.key);
+      return {
+        key: spec.key,
+        schema: spec.schema,
+        table: spec.table,
+        label: `${spec.schema}.${spec.table}`,
+        role: spec.role,
+        description: spec.description,
+        x: spec.x,
+        y: spec.y,
+        width: GRAPH_NODE_WIDTH,
+        height: GRAPH_NODE_HEIGHT,
+        rowCount: stats?.rowCount ?? null,
+        freshness: stats?.freshness ?? null,
+        present: Boolean(stats?.present),
+      } satisfies DatabaseGraphNode;
+    });
+  }
+
+  private buildGraphEdges(presentRelations: Map<DatabaseTableKey, boolean>, fkEdges: DatabaseGraphEdge[]) {
+    const presentSet = new Set(
+      APPROVED_TABLE_SPECS.filter((spec) => presentRelations.get(spec.key)).map((spec) => spec.key)
+    );
+    const flowEdges = CURATED_FLOW_EDGES.filter(
+      (edge) => presentSet.has(edge.from) && presentSet.has(edge.to)
+    );
+    return [...fkEdges, ...flowEdges];
+  }
+
+  private async loadDatabaseMetricGroups(
+    presentRelations: Map<DatabaseTableKey, boolean>
+  ): Promise<DatabaseMetricGroup[]> {
+    const canRead = (relation: DatabaseTableKey) => Boolean(presentRelations.get(relation));
+    const groups: DatabaseMetricGroup[] = [];
+
+    const tableStats = await this.loadTableStats(presentRelations);
+    groups.push({
+      title: "Key Tables",
+      metrics: tableStats
+        .filter((item) =>
+          [
+            "auth.users",
+            "core.profiles",
+            "core.profile_dummy_metadata",
+            "discovery.profile_interactions",
+            "discovery.profile_decisions",
+            "discovery.profile_preference_thresholds",
+            "goals.user_unlock_state",
+            "goals.user_goal_tasks",
+            "goals.user_goal_projection_meta",
+          ].includes(item.key)
+        )
+        .map((item) => ({
+          label: item.key,
+          value: item.present ? String(item.rowCount ?? 0) : "missing",
+          detail: item.freshness ? `latest: ${new Date(item.freshness).toISOString()}` : null,
+        })),
+    });
+
+    const overview = await this.getOverview();
+    groups.push({
+      title: "Discovery and Unlock",
+      metrics: [
+        { label: "Real users", value: overview.counts.real_users },
+        { label: "Dummy profiles", value: overview.counts.dummy_profiles },
+        { label: "Total decisions", value: overview.counts.total_decisions },
+        { label: "Total likes", value: overview.counts.total_likes },
+        { label: "Total passes", value: overview.counts.total_passes },
+        { label: "Threshold pending", value: overview.counts.users_below_threshold },
+        { label: "Threshold reached", value: overview.counts.users_above_threshold },
+        {
+          label: "Latest decision event",
+          value: overview.counts.latest_decision_event_at
+            ? new Date(overview.counts.latest_decision_event_at).toISOString()
+            : "—",
+        },
+        {
+          label: "Latest goals rebuild",
+          value: overview.counts.latest_projection_rebuild_at
+            ? new Date(overview.counts.latest_projection_rebuild_at).toISOString()
+            : "—",
+        },
+      ],
+    });
+
+    if (canRead("core.profile_dummy_metadata")) {
+      const [batchCounts, dummyBreakdown] = await Promise.all([
+        pool.query<{ label: string; value: string }>(
+          `SELECT
+             CONCAT(dummy_batch_key, ' / gen ', generation_version) AS label,
+             COUNT(*)::text AS value
+           FROM core.profile_dummy_metadata
+           GROUP BY dummy_batch_key, generation_version
+           ORDER BY generation_version DESC, dummy_batch_key DESC
+           LIMIT 8`
+        ),
+        pool.query<{ label: string; value: string }>(
+          `SELECT
+             CASE WHEN p.kind = 'dummy' THEN 'dummy' ELSE 'real' END AS label,
+             COUNT(*)::text AS value
+           FROM core.profiles p
+           GROUP BY 1
+           ORDER BY 1 ASC`
+        ),
+      ]);
+
+      groups.push({
+        title: "Dummy and Batch Distribution",
+        metrics: [
+          ...dummyBreakdown.rows.map((row) => ({
+            label: `${row.label} profiles`,
+            value: row.value,
+          })),
+          ...batchCounts.rows.map((row) => ({
+            label: row.label,
+            value: row.value,
+          })),
+        ],
+      });
+    }
+
+    if (canRead("goals.user_goal_projection_meta")) {
+      const [statusBreakdown, lagStats] = await Promise.all([
+        pool.query<{ label: string; value: string }>(
+          `SELECT rebuild_status AS label, COUNT(*)::text AS value
+           FROM goals.user_goal_projection_meta
+           GROUP BY rebuild_status
+           ORDER BY rebuild_status ASC`
+        ),
+        canRead("discovery.profile_interactions")
+          ? pool.query<{ stale_count: string; latest_source_event_at: string | Date | null }>(
+              `SELECT
+                 COUNT(*) FILTER (
+                   WHERE pi.created_at IS NOT NULL
+                     AND (ugpm.last_recomputed_at IS NULL OR pi.created_at > ugpm.last_recomputed_at)
+                 )::text AS stale_count,
+                 MAX(pi.created_at) AS latest_source_event_at
+               FROM goals.user_goal_projection_meta ugpm
+               LEFT JOIN discovery.profile_interactions pi ON pi.id = ugpm.last_source_event_id`
+            )
+          : Promise.resolve({ rows: [{ stale_count: "0", latest_source_event_at: null }] }),
+      ]);
+
+      groups.push({
+        title: "Goals Projection Health",
+        metrics: [
+          ...statusBreakdown.rows.map((row) => ({
+            label: `rebuild_status:${row.label}`,
+            value: row.value,
+          })),
+          {
+            label: "Stale projection rows",
+            value: lagStats.rows[0]?.stale_count || "0",
+            detail: lagStats.rows[0]?.latest_source_event_at
+              ? `latest source: ${new Date(
+                  lagStats.rows[0].latest_source_event_at
+                ).toISOString()}`
+              : null,
+          },
+        ],
+      });
+    }
+
+    return groups;
+  }
+
+  private async loadDatabaseWarnings(
+    presentRelations: Map<DatabaseTableKey, boolean>,
+    missingRequiredColumns: string[]
+  ) {
+    const warnings: string[] = [];
+
+    if (
+      presentRelations.get("goals.user_unlock_state") &&
+      presentRelations.get("discovery.profile_preference_thresholds") &&
+      presentRelations.get("core.profiles")
+    ) {
+      const result = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM core.profiles p
+         JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+         LEFT JOIN goals.user_unlock_state uus ON uus.user_id = p.user_id
+         WHERE p.kind = 'user'
+           AND pth.threshold_reached = true
+           AND uus.user_id IS NULL`
+      );
+      const count = Number(result.rows[0]?.count || 0);
+      if (count > 0) {
+        warnings.push(`${count} threshold-reached users are missing goals.user_unlock_state`);
+      }
+    }
+
+    if (presentRelations.get("goals.user_goal_projection_meta")) {
+      const result = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM goals.user_goal_projection_meta
+         WHERE rebuild_status <> 'ready'`
+      );
+      const count = Number(result.rows[0]?.count || 0);
+      if (count > 0) {
+        warnings.push(`${count} goals projection rows are not in ready status`);
+      }
+    }
+
+    if (missingRequiredColumns.length > 0) {
+      warnings.push(
+        `Schema mismatch detected in required admin DB columns: ${missingRequiredColumns.join(
+          ", "
+        )}`
+      );
+    }
+
+    return warnings;
+  }
+
+  async getDatabaseView(): Promise<DatabaseView> {
+    const keys = APPROVED_TABLE_SPECS.map((spec) => spec.key);
+    const presentRelations = await this.loadPresentRelations(keys);
+    const missingRequiredRelations = APPROVED_TABLE_SPECS.filter(
+      (spec) => spec.required && !presentRelations.get(spec.key)
+    ).map((spec) => `${spec.schema}.${spec.table}`);
+    const columnChecks = await this.loadRequiredColumnStatus(presentRelations);
+    const missingRequiredColumns = columnChecks
+      .filter((check) => !check.present)
+      .map((check) => `${check.relation}.${check.column}`);
+    const tableStats = await this.loadTableStats(presentRelations);
+    const fkEdges = await this.loadFkEdges(presentRelations);
+    const nodes = this.buildGraphNodes(tableStats);
+    const edges = this.buildGraphEdges(presentRelations, fkEdges);
+    const warnings = await this.loadDatabaseWarnings(
+      presentRelations,
+      missingRequiredColumns
+    );
+    const metricGroups = await this.loadDatabaseMetricGroups(presentRelations);
+
+    return {
+      schemaStatus: {
+        missingRequiredRelations,
+        missingRequiredColumns,
+        warnings,
+      },
+      graph: {
+        schemas: [...GRAPH_SCHEMA_COLUMNS],
+        nodes,
+        edges,
+      },
+      metricGroups,
+      tableStats,
+    };
+  }
+
+  async getOverview() {
+    const [counts, thresholds, batches, activeBatch, genderDistribution] = await Promise.all([
+      pool.query<{
+        real_users: string;
+        dummy_profiles: string;
+        total_decisions: string;
+        total_likes: string;
+        total_passes: string;
+        users_below_threshold: string;
+        users_above_threshold: string;
+        latest_decision_event_at: string | Date | null;
+        latest_projection_rebuild_at: string | Date | null;
+      }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE p.kind = 'user')::text AS real_users,
+           COUNT(*) FILTER (WHERE p.kind = 'dummy')::text AS dummy_profiles,
+           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions), '0') AS total_decisions,
+           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions WHERE interaction_type = 'like'), '0') AS total_likes,
+           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions WHERE interaction_type = 'pass'), '0') AS total_passes,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM core.profiles p2
+             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p2.id
+             WHERE p2.kind = 'user'
+               AND COALESCE(pth.threshold_reached, false) = false
+           ), '0') AS users_below_threshold,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM core.profiles p2
+             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p2.id
+             WHERE p2.kind = 'user'
+               AND COALESCE(pth.threshold_reached, false) = true
+           ), '0') AS users_above_threshold,
+           (SELECT MAX(created_at) FROM discovery.profile_interactions) AS latest_decision_event_at,
+           (SELECT MAX(last_recomputed_at) FROM goals.user_goal_projection_meta) AS latest_projection_rebuild_at
+         FROM core.profiles p`
+      ),
+      pool.query<{ bucket: string; count: string }>(
+        `SELECT
+           CASE
+             WHEN threshold_reached THEN 'reached'
+             WHEN total_likes >= 20 THEN '20-29'
+             WHEN total_likes >= 10 THEN '10-19'
+             WHEN total_likes >= 1 THEN '1-9'
+             ELSE '0'
+           END AS bucket,
+           COUNT(*)::text AS count
+         FROM discovery.profile_preference_thresholds
+         GROUP BY 1
+         ORDER BY 1 ASC`
+      ),
+      pool.query<{ dummy_batch_key: string; generation_version: number; profile_count: string }>(
+        `SELECT dummy_batch_key, generation_version, COUNT(*)::text AS profile_count
+         FROM core.profile_dummy_metadata
+         GROUP BY dummy_batch_key, generation_version
+         ORDER BY dummy_batch_key ASC, generation_version ASC`
+      ),
+      pool.query<{ dummy_batch_key: string; generation_version: number }>(
+        `SELECT dummy_batch_key, generation_version
+         FROM core.profile_dummy_metadata
+         GROUP BY dummy_batch_key, generation_version
+         ORDER BY generation_version DESC, dummy_batch_key DESC
+         LIMIT 1`
+      ),
+      pool.query<{
+        gender_identity: string;
+        dummy_batch_key: string;
+        generation_version: number;
+        profile_count: string;
+      }>(
+        `WITH active_batch AS (
+           SELECT dummy_batch_key, generation_version
+           FROM core.profile_dummy_metadata
+           GROUP BY dummy_batch_key, generation_version
+           ORDER BY generation_version DESC, dummy_batch_key DESC
+           LIMIT 1
+         )
+         SELECT
+           p.gender_identity,
+           pdm.dummy_batch_key,
+           pdm.generation_version,
+           COUNT(*)::text AS profile_count
+         FROM core.profiles p
+         JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+         JOIN active_batch ab
+           ON ab.dummy_batch_key = pdm.dummy_batch_key
+          AND ab.generation_version = pdm.generation_version
+         GROUP BY p.gender_identity, pdm.dummy_batch_key, pdm.generation_version
+         ORDER BY profile_count DESC, p.gender_identity ASC`
+      ),
+    ]);
+
+    return {
+      counts: counts.rows[0] || {
+        real_users: "0",
+        dummy_profiles: "0",
+        total_decisions: "0",
+        total_likes: "0",
+        total_passes: "0",
+        users_below_threshold: "0",
+        users_above_threshold: "0",
+        latest_decision_event_at: null,
+        latest_projection_rebuild_at: null,
+      },
+      thresholds: thresholds.rows,
+      batches: batches.rows,
+      activeBatch: activeBatch.rows[0] || null,
+      genderDistribution: genderDistribution.rows,
+    };
+  }
+
+  async getUsers(filters?: UserListFilters) {
+    const normalizedSearch = `%${String(filters?.q || "").trim().toLowerCase()}%`;
+    const hasSearch = Boolean(String(filters?.q || "").trim());
+    const normalizedKind =
+      filters?.kind === "user" || filters?.kind === "dummy" ? filters.kind : "all";
+    const normalizedThreshold =
+      filters?.threshold === "reached" || filters?.threshold === "pending"
+        ? filters.threshold
+        : "all";
+    const normalizedGenderIdentity = String(filters?.genderIdentity || "").trim();
+    const normalizedSyntheticGroup = String(filters?.syntheticGroup || "").trim();
+    const normalizedDummyBatchKey = String(filters?.dummyBatchKey || "").trim();
+    const normalizedGenerationVersion =
+      typeof filters?.generationVersion === "number" &&
+      Number.isFinite(filters.generationVersion)
+        ? filters.generationVersion
+        : null;
+
+    const result = await pool.query<UserListRow>(
+      `SELECT
+         p.id AS profile_id,
+         p.user_id,
+         p.public_id,
+         p.display_name,
+         p.kind,
+         p.gender_identity,
+         pdm.synthetic_group,
+         pdm.dummy_batch_key,
+         pdm.generation_version,
+         pth.total_likes,
+         pth.total_passes,
+         pth.threshold_reached,
+         (SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = p.id) AS last_decision_at,
+         ugpm.last_recomputed_at
+       FROM core.profiles p
+       LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+       LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+       LEFT JOIN goals.user_goal_projection_meta ugpm ON ugpm.user_id = p.user_id
+       WHERE (
+         $1::boolean = false
+         OR LOWER(p.display_name) LIKE $2
+         OR LOWER(p.public_id) LIKE $2
+         OR LOWER(COALESCE(pdm.dummy_batch_key, '')) LIKE $2
+       )
+       AND ($3::text = 'all' OR p.kind = $3::profile_kind)
+       AND (
+         $4::text = 'all'
+         OR ($4::text = 'reached' AND COALESCE(pth.threshold_reached, false) = true)
+         OR ($4::text = 'pending' AND COALESCE(pth.threshold_reached, false) = false)
+       )
+       AND ($5::text = '' OR LOWER(p.gender_identity) = LOWER($5))
+       AND ($6::text = '' OR LOWER(COALESCE(pdm.synthetic_group, '')) = LOWER($6))
+       AND ($7::text = '' OR LOWER(COALESCE(pdm.dummy_batch_key, '')) = LOWER($7))
+       AND ($8::int IS NULL OR pdm.generation_version = $8)
+       ORDER BY p.kind ASC, p.id ASC`,
+      [
+        hasSearch,
+        normalizedSearch,
+        normalizedKind,
+        normalizedThreshold,
+        normalizedGenderIdentity,
+        normalizedSyntheticGroup,
+        normalizedDummyBatchKey,
+        normalizedGenerationVersion,
+      ]
+    );
+
+    return result.rows;
+  }
+
+  async getUserFilterOptions(): Promise<UserFilterOptions> {
+    const [genderResult, syntheticGroupResult, batchResult, generationResult] =
+      await Promise.all([
+        pool.query<{ value: string }>(
+          `SELECT DISTINCT gender_identity AS value
+           FROM core.profiles
+           WHERE COALESCE(TRIM(gender_identity), '') <> ''
+           ORDER BY value ASC`
+        ),
+        pool.query<{ value: string }>(
+          `SELECT DISTINCT synthetic_group AS value
+           FROM core.profile_dummy_metadata
+           WHERE COALESCE(TRIM(synthetic_group), '') <> ''
+           ORDER BY value ASC`
+        ),
+        pool.query<{ value: string }>(
+          `SELECT DISTINCT dummy_batch_key AS value
+           FROM core.profile_dummy_metadata
+           WHERE COALESCE(TRIM(dummy_batch_key), '') <> ''
+           ORDER BY value ASC`
+        ),
+        pool.query<{ value: number }>(
+          `SELECT DISTINCT generation_version AS value
+           FROM core.profile_dummy_metadata
+           WHERE generation_version IS NOT NULL
+           ORDER BY value ASC`
+        ),
+      ]);
+
+    return {
+      genderIdentities: genderResult.rows.map((row) => row.value).filter(Boolean),
+      syntheticGroups: syntheticGroupResult.rows.map((row) => row.value).filter(Boolean),
+      dummyBatchKeys: batchResult.rows.map((row) => row.value).filter(Boolean),
+      generationVersions: generationResult.rows
+        .map((row) => Number(row.value))
+        .filter((value) => Number.isFinite(value)),
+    };
+  }
+
+  async getUserDetail(identifier: string) {
+    const profileIdMatch = /^profile-(\d+)$/i.exec(String(identifier || "").trim());
+    const numericUserId = Number(identifier);
+
+    let whereClause = "p.user_id = $1";
+    let value: number = numericUserId;
+
+    if (profileIdMatch) {
+      whereClause = "p.id = $1";
+      value = Number(profileIdMatch[1]);
+    }
+
+    const profileResult = await pool.query<{
+      profile_id: number;
+      user_id: number | null;
+      public_id: string;
+      display_name: string;
+      kind: "user" | "dummy";
+      gender_identity: string;
+      synthetic_group: string | null;
+      synthetic_variant: string | null;
+      dummy_batch_key: string | null;
+      generation_version: number | null;
+      total_likes: number | null;
+      total_passes: number | null;
+      threshold_reached: boolean | null;
+      likes_until_unlock: number | null;
+      threshold_reached_at: string | Date | null;
+      last_decision_event_at: string | Date | null;
+      last_decision_interaction_id: number | null;
+      last_recomputed_at: string | Date | null;
+      last_source_event_id: number | null;
+      rebuild_status: string | null;
+      goals_unlock_event_emitted_at: string | Date | null;
+      goals_unlock_message_seen_at: string | Date | null;
+    }>(
+      `SELECT
+         p.id AS profile_id,
+         p.user_id,
+         p.public_id,
+         p.display_name,
+         p.kind,
+         p.gender_identity,
+         pdm.synthetic_group,
+         pdm.synthetic_variant,
+         pdm.dummy_batch_key,
+         pdm.generation_version,
+         pth.total_likes,
+         pth.total_passes,
+         pth.threshold_reached,
+         pth.likes_until_unlock,
+         pth.threshold_reached_at,
+         pth.last_decision_event_at,
+         pth.last_decision_interaction_id,
+         ugpm.last_recomputed_at,
+         ugpm.last_source_event_id,
+         ugpm.rebuild_status,
+         uus.goals_unlock_event_emitted_at,
+         uus.goals_unlock_message_seen_at
+       FROM core.profiles p
+       LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+       LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+       LEFT JOIN goals.user_goal_projection_meta ugpm ON ugpm.user_id = p.user_id
+       LEFT JOIN goals.user_unlock_state uus ON uus.user_id = p.user_id
+       WHERE ${whereClause}
+       LIMIT 1`,
+      [value]
+    );
+
+    const profile = profileResult.rows[0];
+    if (!profile) {
+      return null;
+    }
+
+    const [modes, targets, progress, tasks, recentDecisions] = await Promise.all([
+      pool.query<{
+        category_code: string;
+        current_value_key: string | null;
+        current_count: number;
+        total_likes_considered: number;
+      }>(
+        `SELECT category_code, current_value_key, current_count, total_likes_considered
+         FROM discovery.popular_attribute_modes
+         WHERE actor_profile_id = $1
+         ORDER BY category_code ASC`,
+        [profile.profile_id]
+      ),
+      profile.user_id
+        ? pool.query<{
+            category_code: string;
+            current_value_key: string | null;
+            derived_mode_value_key: string | null;
+            target_value_key: string | null;
+            derivation_status: string;
+          }>(
+            `SELECT category_code, current_value_key, derived_mode_value_key, target_value_key, derivation_status
+             FROM goals.user_category_targets
+             WHERE user_id = $1
+             ORDER BY category_code ASC`,
+            [profile.user_id]
+          )
+        : Promise.resolve({ rows: [] }),
+      profile.user_id
+        ? pool.query<{
+            category_code: string;
+            completion_percent: number;
+            progress_state: string;
+            distance_raw: number;
+          }>(
+            `SELECT category_code, completion_percent, progress_state, distance_raw
+             FROM goals.user_category_target_progress
+             WHERE user_id = $1
+             ORDER BY category_code ASC`,
+            [profile.user_id]
+          )
+        : Promise.resolve({ rows: [] }),
+      profile.user_id
+        ? pool.query<{
+            category_code: string;
+            active_tasks: string;
+            completed_tasks: string;
+          }>(
+            `SELECT
+               category_code,
+               COUNT(*) FILTER (WHERE is_active = true)::text AS active_tasks,
+               COUNT(*) FILTER (WHERE is_active = true AND status = 'completed')::text AS completed_tasks
+             FROM goals.user_goal_tasks
+             WHERE user_id = $1
+             GROUP BY category_code
+             ORDER BY category_code ASC`,
+            [profile.user_id]
+          )
+        : Promise.resolve({ rows: [] }),
+      pool.query<RecentDecisionRow>(
+        `SELECT id, interaction_type, target_profile_public_id, created_at
+         FROM discovery.profile_interactions
+         WHERE actor_profile_id = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT 20`,
+        [profile.profile_id]
+      ),
+    ]);
+
+    return {
+      profile,
+      modes: modes.rows,
+      targets: targets.rows,
+      progress: progress.rows,
+      tasks: tasks.rows,
+      recentDecisions: recentDecisions.rows,
+    };
+  }
+}

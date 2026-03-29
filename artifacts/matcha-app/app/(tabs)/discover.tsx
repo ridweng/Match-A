@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import { usePathname } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -37,7 +38,6 @@ import {
   getTobaccoUseLabel,
 } from "@/constants/profile-options";
 import { useApp } from "@/context/AppContext";
-import { discoverProfiles, type DiscoverProfile } from "@/data/profiles";
 import { getZodiacSignFromIsoDate, getZodiacSignLabel } from "@/utils/dateOfBirth";
 import {
   isDiscoveryImageWarm,
@@ -46,16 +46,46 @@ import {
   warmDiscoveryFrontExtras,
   warmDiscoveryProfileImages,
 } from "@/utils/discoveryPreload";
+import {
+  debugDiscoveryLog,
+  debugDiscoveryWarn,
+  debugDiscoveryVerboseLog,
+  discoveryVerboseDebugEnabled,
+} from "@/utils/debug";
 import { formatPopularAttributeValue } from "@/utils/popularAttributes";
-import type { BaseGender, DiscoveryFilters, TherianMode } from "@/services/auth";
+import type {
+  BaseGender,
+  DiscoveryFeedProfileResponse,
+  DiscoveryFilters,
+  TherianMode,
+} from "@/services/auth";
 
 const { width, height } = Dimensions.get("window");
 const CARD_WIDTH = width - 32;
 const CARD_HEIGHT = height * 0.62;
 const SWIPE_THRESHOLD = 80;
+const SWIPE_FEEDBACK_DISTANCE = 150;
+const SWIPE_FEEDBACK_BUTTON_DURATION = 210;
+const SWIPE_FEEDBACK_COMMIT_HOLD_DURATION = 110;
+const SWIPE_FEEDBACK_RESET_DURATION = 180;
 const INFO_SWIPE_THRESHOLD = 82;
 const IS_WEB = Platform.OS === "web";
 const DISCOVERY_PAGE_SIZE = 12;
+const DISCOVERY_TRACE_PREFIX = "[discover]";
+const DISCOVERY_ISOLATION_MODE: null | "A" | "B" | "C" | "D" = null;
+const DISCOVERY_TRACE_EVENTS = new Set([
+  "gesture_accepted",
+  "gesture_threshold_crossed",
+  "gesture_release",
+  "gesture_terminated",
+  "swipe_blocked",
+  "swipe_animation_start",
+  "swipe_animation_end",
+  "advance_deck_before",
+  "promotion_committed",
+  "advance_deck_after",
+  "state_change_during_animation",
+]);
 
 type SwipeState = "idle" | "like" | "dislike";
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
@@ -69,20 +99,72 @@ type PopularUpdateBanner = {
   body: string;
 };
 type DeckSlotName = "front" | "second" | "third";
+type DeckShellId = "shellA" | "shellB" | "shellC";
 type DeckSlotState = {
-  key: DeckSlotName;
+  shellId: DeckShellId;
   profile: DiscoverProfile | null;
   index: number | null;
   primaryReady: boolean;
   extraPhotosReady: boolean;
 };
 type DeckState = {
-  front: DeckSlotState;
-  second: DeckSlotState;
-  third: DeckSlotState;
+  shells: Record<DeckShellId, DeckSlotState>;
+  order: Record<DeckSlotName, DeckShellId>;
   frontIndex: number;
   queueCursor: number;
 };
+type SwipeDirection = "left" | "right";
+type SwipeCommitOrigin = "gesture" | "button";
+type TraceLayout = {
+  width: number;
+  height: number;
+};
+type PendingNoopReconcile = {
+  requestId: string;
+  direction: SwipeDirection;
+  targetProfileId: number;
+};
+type DiscoverProfile = DiscoveryFeedProfileResponse;
+
+function createTraceId(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function DiscoveryCardTrace({
+  slot,
+  logicalId,
+  renderKey,
+  enabled,
+  trace,
+}: {
+  slot: "front" | "second";
+  logicalId: string | number;
+  renderKey: string;
+  enabled: boolean;
+  trace: (event: string, payload?: Record<string, unknown>) => void;
+}) {
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    trace("card_mount", {
+      slot,
+      logicalId,
+      renderKey,
+    });
+
+    return () => {
+      trace("card_unmount", {
+        slot,
+        logicalId,
+        renderKey,
+      });
+    };
+  }, [enabled, logicalId, renderKey, slot, trace]);
+
+  return null;
+}
 
 const LANGUAGE_FLAG_CODES: Record<string, string> = {
   spanish: "es",
@@ -98,12 +180,6 @@ const LANGUAGE_FLAG_CODES: Record<string, string> = {
 };
 
 const BASE_GENDERS: BaseGender[] = ["male", "female", "non_binary", "fluid"];
-const THERIAN_BY_BASE: Record<BaseGender, string> = {
-  male: "therian_male",
-  female: "therian_female",
-  non_binary: "therian_non_binary",
-  fluid: "therian_fluid",
-};
 
 function AboutRow({
   icon,
@@ -186,18 +262,42 @@ function clampNumber(value: number, min: number, max: number) {
 }
 
 function createDeckSlot(
-  key: DeckSlotName,
+  shellId: DeckShellId,
   profile: DiscoverProfile | null,
   index: number | null,
   primaryReady = false,
   extraPhotosReady = false
 ): DeckSlotState {
   return {
-    key,
+    shellId,
     profile,
     index,
     primaryReady: profile ? primaryReady : true,
     extraPhotosReady: profile ? extraPhotosReady : true,
+  };
+}
+
+function getDeckSlotByRole(deck: DeckState, role: DeckSlotName) {
+  return deck.shells[deck.order[role]];
+}
+
+function updateDeckSlot(
+  deck: DeckState,
+  shellId: DeckShellId,
+  updater: (slot: DeckSlotState) => DeckSlotState
+): DeckState {
+  const current = deck.shells[shellId];
+  const next = updater(current);
+  if (next === current) {
+    return deck;
+  }
+
+  return {
+    ...deck,
+    shells: {
+      ...deck.shells,
+      [shellId]: next,
+    },
   };
 }
 
@@ -216,7 +316,7 @@ function areFrontExtrasReady(profile: DiscoverProfile | null) {
 function getNextDistinctIndex(
   profiles: DiscoverProfile[],
   startIndex: number,
-  excludedIds: Set<string>
+  excludedIds: Set<number>
 ) {
   if (!profiles.length || excludedIds.size >= profiles.length || startIndex >= profiles.length) {
     return null;
@@ -239,9 +339,16 @@ function getNextDistinctIndex(
 function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState {
   if (!profiles.length) {
     return {
-      front: createDeckSlot("front", null, null, true, true),
-      second: createDeckSlot("second", null, null, true, true),
-      third: createDeckSlot("third", null, null, true, true),
+      shells: {
+        shellA: createDeckSlot("shellA", null, null, true, true),
+        shellB: createDeckSlot("shellB", null, null, true, true),
+        shellC: createDeckSlot("shellC", null, null, true, true),
+      },
+      order: {
+        front: "shellA",
+        second: "shellB",
+        third: "shellC",
+      },
       frontIndex: 0,
       queueCursor: 0,
     };
@@ -250,9 +357,16 @@ function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState 
   const safeStart = Math.max(0, startIndex);
   if (safeStart >= profiles.length) {
     return {
-      front: createDeckSlot("front", null, null, true, true),
-      second: createDeckSlot("second", null, null, true, true),
-      third: createDeckSlot("third", null, null, true, true),
+      shells: {
+        shellA: createDeckSlot("shellA", null, null, true, true),
+        shellB: createDeckSlot("shellB", null, null, true, true),
+        shellC: createDeckSlot("shellC", null, null, true, true),
+      },
+      order: {
+        front: "shellA",
+        second: "shellB",
+        third: "shellC",
+      },
       frontIndex: safeStart,
       queueCursor: safeStart,
     };
@@ -267,51 +381,68 @@ function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState 
   const thirdIndex = getNextDistinctIndex(
     profiles,
     (secondIndex ?? safeStart) + 1,
-    new Set([front?.id, second?.id].filter(Boolean) as string[])
+    new Set([front?.id, second?.id].filter((value): value is number => typeof value === "number"))
   );
   const third = thirdIndex == null ? null : profiles[thirdIndex] ?? null;
   const lastAssignedIndex = thirdIndex ?? secondIndex ?? safeStart;
 
   return {
-    front: createDeckSlot(
-      "front",
-      front,
-      safeStart,
-      isPrimaryImageReady(front),
-      areFrontExtrasReady(front)
-    ),
-    second: createDeckSlot("second", second, secondIndex, isPrimaryImageReady(second), false),
-    third: createDeckSlot("third", third, thirdIndex, true, false),
+    shells: {
+      shellA: createDeckSlot(
+        "shellA",
+        front,
+        safeStart,
+        isPrimaryImageReady(front),
+        areFrontExtrasReady(front)
+      ),
+      shellB: createDeckSlot(
+        "shellB",
+        second,
+        secondIndex,
+        isPrimaryImageReady(second),
+        false
+      ),
+      shellC: createDeckSlot("shellC", third, thirdIndex, true, false),
+    },
+    order: {
+      front: "shellA",
+      second: "shellB",
+      third: "shellC",
+    },
     frontIndex: safeStart,
     queueCursor: lastAssignedIndex + 1,
   };
 }
 
+function getAnchoredDeckStartIndex(
+  profiles: DiscoverProfile[],
+  currentFrontProfileId: number | null
+) {
+  if (!profiles.length || !currentFrontProfileId) {
+    return 0;
+  }
+
+  const nextIndex = profiles.findIndex((profile) => profile.id === currentFrontProfileId);
+  return nextIndex >= 0 ? nextIndex : 0;
+}
+
 function advanceDeckState(currentDeck: DeckState, profiles: DiscoverProfile[]): DeckState {
+  const currentFront = getDeckSlotByRole(currentDeck, "front");
+  const currentSecond = getDeckSlotByRole(currentDeck, "second");
+  const currentThird = getDeckSlotByRole(currentDeck, "third");
+
   if (!profiles.length) {
     return buildDeckState(profiles, 0);
   }
 
-  if (!currentDeck.second.profile || currentDeck.second.index == null) {
+  if (!currentSecond.profile || currentSecond.index == null) {
     return buildDeckState(profiles, profiles.length);
   }
 
-  const nextFront = createDeckSlot(
-    "front",
-    currentDeck.second.profile,
-    currentDeck.second.index,
-    currentDeck.second.primaryReady,
-    areFrontExtrasReady(currentDeck.second.profile)
-  );
-  const nextSecond = createDeckSlot(
-    "second",
-    currentDeck.third.profile,
-    currentDeck.third.index,
-    isPrimaryImageReady(currentDeck.third.profile),
-    false
-  );
   const excludedIds = new Set(
-    [nextFront.profile?.id, nextSecond.profile?.id].filter(Boolean) as string[]
+    [currentSecond.profile?.id, currentThird.profile?.id].filter(
+      (value): value is number => typeof value === "number"
+    )
   );
   const nextThirdIndex = getNextDistinctIndex(
     profiles,
@@ -319,18 +450,36 @@ function advanceDeckState(currentDeck: DeckState, profiles: DiscoverProfile[]): 
     excludedIds
   );
   const nextThirdProfile = nextThirdIndex == null ? null : profiles[nextThirdIndex] ?? null;
+  const recycledShellId = currentDeck.order.front;
+  const nextFrontShellId = currentDeck.order.second;
+  const nextSecondShellId = currentDeck.order.third;
 
   return {
-    front: nextFront,
-    second: nextSecond,
-    third: createDeckSlot(
-      "third",
-      nextThirdProfile,
-      nextThirdIndex,
-      true,
-      false
-    ),
-    frontIndex: nextFront.index ?? currentDeck.frontIndex,
+    shells: {
+      ...currentDeck.shells,
+      [nextFrontShellId]: {
+        ...currentDeck.shells[nextFrontShellId],
+        extraPhotosReady: areFrontExtrasReady(currentSecond.profile),
+      },
+      [nextSecondShellId]: {
+        ...currentDeck.shells[nextSecondShellId],
+        primaryReady: isPrimaryImageReady(currentThird.profile),
+        extraPhotosReady: false,
+      },
+      [recycledShellId]: createDeckSlot(
+        recycledShellId,
+        nextThirdProfile,
+        nextThirdIndex,
+        true,
+        false
+      ),
+    },
+    order: {
+      front: nextFrontShellId,
+      second: nextSecondShellId,
+      third: recycledShellId,
+    },
+    frontIndex: currentSecond.index ?? currentDeck.frontIndex,
     queueCursor: nextThirdIndex == null ? currentDeck.queueCursor : nextThirdIndex + 1,
   };
 }
@@ -527,13 +676,21 @@ function AgeRangeFields({
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const netInfo = useNetInfo();
+  const pathname = usePathname();
   const {
     t,
     likeProfile,
+    passProfile,
+    likedProfiles,
+    passedProfiles,
     goals,
     language,
+    discoveryFeed,
     discoveryFilters,
     lastServerSyncAt,
+    recordDiscoverySwipe,
+    refreshDiscoveryCandidates,
+    fetchNextDiscoveryWindow,
     saveDiscoveryFilters,
   } = useApp();
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
@@ -556,29 +713,76 @@ export default function DiscoverScreen() {
   const [isFilterVisible, setIsFilterVisible] = useState(false);
   const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(activeFilters);
   const [isDeckAnimating, setIsDeckAnimating] = useState(false);
+  const [pendingDecisionProfileId, setPendingDecisionProfileId] = useState<number | null>(null);
+  const [pendingNoopReconcile, setPendingNoopReconcile] =
+    useState<PendingNoopReconcile | null>(null);
   const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
   const [, setPreloadRevision] = useState(0);
-  const [deck, setDeck] = useState<DeckState>(() => buildDeckState(discoverProfiles, 0));
+  const [deck, setDeck] = useState<DeckState>(() => buildDeckState([], 0));
   const deckRef = useRef<DeckState>(deck);
+  const screenSessionIdRef = useRef(createTraceId("discover"));
+  const swipeSessionIdRef = useRef<string | null>(null);
+  const swipeDirectionRef = useRef<SwipeDirection | null>(null);
+  const thresholdLoggedRef = useRef(false);
+  const previousLayoutRef = useRef<Record<string, TraceLayout>>({});
+  const previousTraceSnapshotRef = useRef<Record<string, unknown> | null>(null);
+  const deferredDeckRebuildRef = useRef(false);
+  const traceFocused = discoveryVerboseDebugEnabled && pathname.endsWith("/discover");
 
   const position = useRef(new Animated.ValueXY()).current;
+  const swipeFeedbackX = useRef(new Animated.Value(0)).current;
   const flipAnim = useRef(new Animated.Value(0)).current;
   const deckProgress = useRef(new Animated.Value(0)).current;
   const backScrollRef = useRef<ScrollView | null>(null);
+
+  const trace = useCallback(
+    (event: string, payload?: Record<string, unknown>) => {
+      if (!traceFocused || !DISCOVERY_TRACE_EVENTS.has(event)) {
+        return;
+      }
+
+      debugDiscoveryVerboseLog(`${DISCOVERY_TRACE_PREFIX} ${event}`, {
+        screenSessionId: screenSessionIdRef.current,
+        swipeSessionId: swipeSessionIdRef.current,
+        ...payload,
+      });
+    },
+    [traceFocused]
+  );
 
   const rotate = position.x.interpolate({
     inputRange: [-width / 2, 0, width / 2],
     outputRange: ["-12deg", "0deg", "12deg"],
     extrapolate: "clamp",
   });
-  const likeOpacity = position.x.interpolate({
-    inputRange: [0, 60],
+  const likeOpacity = swipeFeedbackX.interpolate({
+    inputRange: [0, SWIPE_FEEDBACK_DISTANCE],
     outputRange: [0, 1],
     extrapolate: "clamp",
   });
-  const dislikeOpacity = position.x.interpolate({
-    inputRange: [-60, 0],
+  const dislikeOpacity = swipeFeedbackX.interpolate({
+    inputRange: [-SWIPE_FEEDBACK_DISTANCE, 0],
     outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
+  const likeStampScale = likeOpacity.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.9, 1.08],
+    extrapolate: "clamp",
+  });
+  const dislikeStampScale = dislikeOpacity.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.9, 1.08],
+    extrapolate: "clamp",
+  });
+  const likeStampTranslateY = likeOpacity.interpolate({
+    inputRange: [0, 1],
+    outputRange: [10, 0],
+    extrapolate: "clamp",
+  });
+  const dislikeStampTranslateY = dislikeOpacity.interpolate({
+    inputRange: [0, 1],
+    outputRange: [10, 0],
     extrapolate: "clamp",
   });
   const frontRotate = flipAnim.interpolate({
@@ -633,43 +837,53 @@ export default function DiscoverScreen() {
   const isOffline =
     netInfo.isConnected === false || netInfo.isInternetReachable === false;
 
+  const feedProfiles = discoveryFeed.profiles ?? [];
   const sourceProfiles = useMemo(
     () =>
-      discoverProfiles.filter((profile) => {
-        const activeBaseGenders = activeFilters.selectedGenders.length
-          ? activeFilters.selectedGenders
-          : BASE_GENDERS;
-        const allowedIdentities =
-          activeFilters.therianMode === "only"
-            ? activeBaseGenders.map((value) => THERIAN_BY_BASE[value])
-            : activeFilters.therianMode === "include"
-              ? activeBaseGenders.flatMap((value) => [value, THERIAN_BY_BASE[value]])
-              : activeBaseGenders;
-
-        if (!allowedIdentities.includes(profile.genderIdentity)) {
-          return false;
-        }
-
-        return (
-          profile.age >= activeFilters.ageMin &&
-          profile.age <= activeFilters.ageMax
-        );
-      }),
-    [activeFilters]
+      feedProfiles.filter(
+        (profile) =>
+          !likedProfiles.includes(profile.id) &&
+          !passedProfiles.includes(profile.id)
+      ),
+    [feedProfiles, likedProfiles, passedProfiles]
   );
   const filteredProfiles = useMemo(
     () => sourceProfiles.slice(0, loadedCount),
     [loadedCount, sourceProfiles]
   );
+  const supply = discoveryFeed.supply;
+  const eligibleCount = Number(supply?.eligibleCount) || 0;
+  const unseenCount = Number(supply?.unseenCount) || 0;
+  const hasMoreServerProfiles = Boolean(discoveryFeed.hasMore);
   const hasFilterMatches = sourceProfiles.length > 0;
-  const frontProfile = deck.front.profile;
-  const secondProfile = deck.second.profile;
-  const thirdProfile = deck.third.profile;
-  const secondReady = secondProfile ? deck.second.primaryReady : true;
+  const hasCatalogMatches = eligibleCount > 0;
+  const frontSlot = getDeckSlotByRole(deck, "front");
+  const secondSlot = getDeckSlotByRole(deck, "second");
+  const thirdSlot = getDeckSlotByRole(deck, "third");
+  const frontShellId = deck.order.front;
+  const secondShellId = deck.order.second;
+  const thirdShellId = deck.order.third;
+  const frontProfile = frontSlot.profile;
+  const secondProfile = secondSlot.profile;
+  const thirdProfile = thirdSlot.profile;
+  const secondReady = secondProfile ? secondSlot.primaryReady : true;
+  const hasPendingDecision = pendingDecisionProfileId !== null;
   const currentImages = frontProfile?.images ?? [];
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
+  const frontCardKey = frontProfile
+    ? `front:${frontProfile.id}:${frontSlot.shellId}`
+    : "front:empty";
+  const secondCardKey = secondProfile
+    ? `second:${secondProfile.id}:${secondSlot.shellId}`
+    : "second:empty";
+  const frontImageKey = frontProfile
+    ? `${frontProfile.id}:${Math.min(activePhotoIndex, Math.max(currentImages.length - 1, 0))}`
+    : "front-image:empty";
+  const secondImageKey = secondProfile
+    ? `${secondProfile.id}:0`
+    : "second-image:empty";
   const pronounLabel = frontProfile
     ? getPronounLabel(frontProfile.pronouns, language)
     : "";
@@ -689,9 +903,10 @@ export default function DiscoverScreen() {
   const canApplyFilters = !filtersEqual(draftFilters, activeFilters);
   const hasDeckProfiles = Boolean(frontProfile);
   const isOfflineDeckExhausted =
-    !hasDeckProfiles && hasFilterMatches && loadedCount < sourceProfiles.length && isOffline;
+    !hasDeckProfiles && hasMoreServerProfiles && isOffline;
   const isOnlineDeckExhausted =
-    !hasDeckProfiles && hasFilterMatches && loadedCount >= sourceProfiles.length;
+    !hasDeckProfiles && unseenCount === 0 && hasCatalogMatches;
+  const isSeenDeckExhausted = false;
   const baseGenderOptions = useMemo(
     () => [
       { value: "male" as const, label: t("Hombre", "Male") },
@@ -716,16 +931,86 @@ export default function DiscoverScreen() {
   );
   const insightLookup = useMemo(() => {
     const map = new Map<string, { es: string; en: string }>();
-    discoverProfiles.forEach((profile) => {
+    [...feedProfiles, ...(lastLikedProfile ? [lastLikedProfile] : [])].forEach((profile) => {
       profile.insightTags.forEach((tag) => {
         map.set(tag.en, tag);
       });
     });
     return map;
-  }, []);
+  }, [feedProfiles, lastLikedProfile]);
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+  const shouldFreezeReadinessWrites =
+    traceFocused && DISCOVERY_ISOLATION_MODE === "A" && isDeckAnimating;
+  const shouldDeferDeckRebuild =
+    traceFocused && DISCOVERY_ISOLATION_MODE === "B" && isDeckAnimating;
+  const shouldSuppressVisualChurn =
+    traceFocused && DISCOVERY_ISOLATION_MODE === "C" && isDeckAnimating;
+  const shouldUseStableSlotImageKeys = DISCOVERY_ISOLATION_MODE === "D";
+
+  const getTraceSnapshot = useCallback(
+    () => ({
+      frontId: frontProfile?.id ?? null,
+      secondId: secondProfile?.id ?? null,
+      thirdId: thirdProfile?.id ?? null,
+      frontCardKey,
+      secondCardKey,
+      frontImageKey,
+      secondImageKey,
+      frontIndex: deck.frontIndex,
+      queueCursor: deck.queueCursor,
+      loadedCount,
+      frontReady: frontSlot.primaryReady,
+      secondReady: secondSlot.primaryReady,
+      frontExtrasReady: frontSlot.extraPhotosReady,
+      activePhotoIndex,
+      isDeckAnimating,
+      isInfoVisible,
+    }),
+    [
+      activePhotoIndex,
+      deck.frontIndex,
+      deck.queueCursor,
+      frontSlot,
+      frontCardKey,
+      frontImageKey,
+      isDeckAnimating,
+      isInfoVisible,
+      loadedCount,
+      secondSlot,
+      secondCardKey,
+      secondImageKey,
+    ]
+  );
+
+  const logLayoutChange = useCallback(
+    (target: "card_stack" | "front_card", next: TraceLayout) => {
+      const previous = previousLayoutRef.current[target];
+      if (previous && previous.width === next.width && previous.height === next.height) {
+        return;
+      }
+
+      previousLayoutRef.current[target] = next;
+      trace("layout_change", {
+        target,
+        width: next.width,
+        height: next.height,
+        changedDuringAnimation: isDeckAnimating,
+      });
+
+      if (isDeckAnimating) {
+        debugDiscoveryVerboseLog(`${DISCOVERY_TRACE_PREFIX} layout_change_during_animation`, {
+          screenSessionId: screenSessionIdRef.current,
+          swipeSessionId: swipeSessionIdRef.current,
+          target,
+          width: next.width,
+          height: next.height,
+        });
+      }
+    },
+    [isDeckAnimating, trace]
+  );
   const lastSyncLabel = useMemo(() => {
     if (!lastServerSyncAt) {
       return null;
@@ -747,8 +1032,109 @@ export default function DiscoverScreen() {
   }, [language, lastServerSyncAt]);
 
   useEffect(() => {
+    trace("filters_changed", {
+      activeFilters,
+    });
+  }, [activeFilters, trace]);
+
+  useEffect(() => {
+    trace("source_profiles_changed", {
+      sourceProfilesLength: sourceProfiles.length,
+    });
+  }, [sourceProfiles.length, trace]);
+
+  useEffect(() => {
+    trace("filtered_profiles_changed", {
+      filteredProfilesLength: filteredProfiles.length,
+    });
+  }, [filteredProfiles.length, trace]);
+
+  useEffect(() => {
+    trace("loaded_count_changed", {
+      loadedCount,
+    });
+  }, [loadedCount, trace]);
+
+  useEffect(() => {
+    trace("network_state_changed", {
+      isOffline,
+      isConnected: netInfo.isConnected,
+      isInternetReachable: netInfo.isInternetReachable,
+    });
+  }, [isOffline, netInfo.isConnected, netInfo.isInternetReachable, trace]);
+
+  useEffect(() => {
+    trace("render_identity_changed", {
+      frontCardKey,
+      secondCardKey,
+      frontImageKey,
+      secondImageKey,
+    });
+  }, [frontCardKey, secondCardKey, frontImageKey, secondImageKey, trace]);
+
+  useEffect(() => {
     deckRef.current = deck;
   }, [deck]);
+
+  useEffect(() => {
+    if (!discoveryVerboseDebugEnabled) {
+      return;
+    }
+
+    debugDiscoveryVerboseLog(`${DISCOVERY_TRACE_PREFIX} mount`, {
+      screenSessionId: screenSessionIdRef.current,
+      pathname,
+      isolationMode: DISCOVERY_ISOLATION_MODE,
+    });
+
+    return () => {
+      debugDiscoveryVerboseLog(`${DISCOVERY_TRACE_PREFIX} unmount`, {
+        screenSessionId: screenSessionIdRef.current,
+        pathname,
+      });
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!discoveryVerboseDebugEnabled) {
+      return;
+    }
+
+    debugDiscoveryVerboseLog(`${DISCOVERY_TRACE_PREFIX} focus_change`, {
+      screenSessionId: screenSessionIdRef.current,
+      focused: traceFocused,
+      pathname,
+    });
+  }, [pathname, traceFocused]);
+
+  useEffect(() => {
+    if (!traceFocused) {
+      return;
+    }
+
+    const nextSnapshot = getTraceSnapshot();
+    const previousSnapshot = previousTraceSnapshotRef.current;
+    if (!previousSnapshot) {
+      previousTraceSnapshotRef.current = nextSnapshot;
+      trace("snapshot_init", nextSnapshot);
+      return;
+    }
+
+    const changedKeys = (Object.keys(nextSnapshot) as Array<keyof typeof nextSnapshot>).filter(
+      (key) => previousSnapshot[key] !== nextSnapshot[key]
+    );
+    if (!changedKeys.length) {
+      return;
+    }
+
+    previousTraceSnapshotRef.current = nextSnapshot;
+    if (isDeckAnimating) {
+      trace("state_change_during_animation", {
+        changedKeys,
+        snapshot: nextSnapshot,
+      });
+    }
+  }, [getTraceSnapshot, isDeckAnimating, trace, traceFocused]);
 
   useEffect(() => {
     if (!popularUpdateBanner) {
@@ -818,20 +1204,120 @@ export default function DiscoverScreen() {
   }, [activeFilters]);
 
   React.useEffect(() => {
-    const nextLoadedCount = Math.min(DISCOVERY_PAGE_SIZE, sourceProfiles.length);
+    trace("deck_rebuild_requested", {
+      sourceProfilesLength: sourceProfiles.length,
+      loadedCount,
+      deferred: shouldDeferDeckRebuild,
+    });
+
+    if (shouldDeferDeckRebuild) {
+      deferredDeckRebuildRef.current = true;
+      return;
+    }
+
+    const currentFrontProfileId =
+      getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null;
+    const nextStartIndex = getAnchoredDeckStartIndex(
+      sourceProfiles,
+      currentFrontProfileId
+    );
+    const nextLoadedCount = Math.min(
+      sourceProfiles.length,
+      Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
+    );
+    trace("deck_rebuild_start", {
+      sourceProfilesLength: sourceProfiles.length,
+      nextLoadedCount,
+      nextStartIndex,
+      currentFrontProfileId,
+    });
     setLoadedCount(nextLoadedCount);
-    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), 0));
+    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), nextStartIndex));
     setActivePhotoIndex(0);
     setSwipeState("idle");
     setIsInfoVisible(false);
     setIsDeckAnimating(false);
     position.setValue({ x: 0, y: 0 });
+    swipeFeedbackX.setValue(0);
     deckProgress.setValue(0);
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [deckProgress, flipAnim, position, sourceProfiles]);
+    trace("deck_rebuild_end", {
+      sourceProfilesLength: sourceProfiles.length,
+      nextLoadedCount,
+    });
+  }, [
+    deckProgress,
+    flipAnim,
+    loadedCount,
+    position,
+    swipeFeedbackX,
+    shouldDeferDeckRebuild,
+    sourceProfiles,
+    sourceProfiles.length,
+    trace,
+  ]);
 
   React.useEffect(() => {
+    if (
+      !traceFocused ||
+      DISCOVERY_ISOLATION_MODE !== "B" ||
+      isDeckAnimating ||
+      !deferredDeckRebuildRef.current
+    ) {
+      return;
+    }
+
+    deferredDeckRebuildRef.current = false;
+    const currentFrontProfileId =
+      getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null;
+    const nextStartIndex = getAnchoredDeckStartIndex(
+      sourceProfiles,
+      currentFrontProfileId
+    );
+    const nextLoadedCount = Math.min(
+      sourceProfiles.length,
+      Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
+    );
+    trace("deck_rebuild_deferred_commit", {
+      sourceProfilesLength: sourceProfiles.length,
+      nextLoadedCount,
+      nextStartIndex,
+      currentFrontProfileId,
+    });
+    setLoadedCount(nextLoadedCount);
+    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), nextStartIndex));
+    setActivePhotoIndex(0);
+    setSwipeState("idle");
+    setIsInfoVisible(false);
+    setIsDeckAnimating(false);
+    position.setValue({ x: 0, y: 0 });
+    swipeFeedbackX.setValue(0);
+    deckProgress.setValue(0);
+    flipAnim.setValue(0);
+    backScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [
+    deckProgress,
+    flipAnim,
+    isDeckAnimating,
+    loadedCount,
+    position,
+    swipeFeedbackX,
+    sourceProfiles,
+    sourceProfiles.length,
+    trace,
+    traceFocused,
+  ]);
+
+  React.useEffect(() => {
+    trace("loaded_count_guard_check", {
+      loadedCount,
+      sourceProfilesLength: sourceProfiles.length,
+      frontIndex: deck.frontIndex,
+      isOffline,
+      hasFrontProfile: Boolean(frontProfile),
+    });
+
     if (isOffline || loadedCount >= sourceProfiles.length || !frontProfile) {
       return;
     }
@@ -847,6 +1333,32 @@ export default function DiscoverScreen() {
   }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceProfiles.length]);
 
   React.useEffect(() => {
+    if (
+      isOffline ||
+      !hasMoreServerProfiles ||
+      loadedCount < sourceProfiles.length ||
+      sourceProfiles.length - (deck.frontIndex + 1) > 2
+    ) {
+      return;
+    }
+
+    void fetchNextDiscoveryWindow();
+  }, [
+    deck.frontIndex,
+    fetchNextDiscoveryWindow,
+    hasMoreServerProfiles,
+    isOffline,
+    loadedCount,
+    sourceProfiles.length,
+  ]);
+
+  React.useEffect(() => {
+    trace("loaded_count_recovery_check", {
+      loadedCount,
+      sourceProfilesLength: sourceProfiles.length,
+      isOffline,
+      hasDeckProfiles,
+    });
     if (
       isOffline ||
       hasDeckProfiles ||
@@ -866,76 +1378,130 @@ export default function DiscoverScreen() {
       return;
     }
 
+    trace("warm_deck_start", {
+      frontId: frontProfile?.id ?? null,
+      secondId: secondProfile?.id ?? null,
+      thirdId: thirdProfile?.id ?? null,
+    });
     void warmDiscoveryDeck([
-      deck.front.profile,
-      deck.second.profile,
-      deck.third.profile,
+      frontProfile,
+      secondProfile,
+      thirdProfile,
     ]).then(() => {
-      setDeck((currentDeck) => ({
-        ...currentDeck,
-        front: {
-          ...currentDeck.front,
-          primaryReady: isPrimaryImageReady(currentDeck.front.profile),
-        },
-        second: {
-          ...currentDeck.second,
-          primaryReady: isPrimaryImageReady(currentDeck.second.profile),
-        },
-      }));
+      trace("warm_deck_finish", {
+        frontId: frontProfile?.id ?? null,
+        secondId: secondProfile?.id ?? null,
+        thirdId: thirdProfile?.id ?? null,
+        skippedDuringAnimation: shouldFreezeReadinessWrites,
+      });
+      if (shouldFreezeReadinessWrites) {
+        return;
+      }
+      setDeck((currentDeck) => {
+        const currentFront = getDeckSlotByRole(currentDeck, "front");
+        const currentSecond = getDeckSlotByRole(currentDeck, "second");
+        let nextDeck = currentDeck;
+
+        if (currentFront.profile) {
+          nextDeck = updateDeckSlot(nextDeck, currentFront.shellId, (slot) => ({
+            ...slot,
+            primaryReady: isPrimaryImageReady(slot.profile),
+          }));
+        }
+
+        if (currentSecond.profile) {
+          nextDeck = updateDeckSlot(nextDeck, currentSecond.shellId, (slot) => ({
+            ...slot,
+            primaryReady: isPrimaryImageReady(slot.profile),
+          }));
+        }
+
+        return nextDeck;
+      });
       setPreloadRevision((value) => value + 1);
     });
   }, [
-    deck.front.profile,
-    deck.second.profile,
-    deck.third.profile,
     filteredProfiles,
+    frontProfile,
+    secondProfile,
+    thirdProfile,
+    shouldFreezeReadinessWrites,
+    trace,
   ]);
 
   React.useEffect(() => {
-    if (!frontProfile || deck.front.extraPhotosReady) {
+    if (!frontProfile || frontSlot.extraPhotosReady) {
       return;
     }
 
     let cancelled = false;
 
+    trace("warm_front_extras_start", {
+      frontId: frontProfile.id,
+      imageCount: frontProfile.images.length,
+    });
     void warmDiscoveryFrontExtras(frontProfile).then(() => {
       if (cancelled) {
         return;
       }
 
+      trace("warm_front_extras_finish", {
+        frontId: frontProfile.id,
+        skippedDuringAnimation: shouldFreezeReadinessWrites || shouldSuppressVisualChurn,
+      });
+      if (shouldFreezeReadinessWrites || shouldSuppressVisualChurn) {
+        return;
+      }
+
       setDeck((currentDeck) => {
-        if (currentDeck.front.profile?.id !== frontProfile.id) {
+        const currentFront = getDeckSlotByRole(currentDeck, "front");
+        if (currentFront.profile?.id !== frontProfile.id) {
           return currentDeck;
         }
 
         const nextReady = areFrontExtrasReady(frontProfile);
-        if (currentDeck.front.extraPhotosReady === nextReady) {
+        if (currentFront.extraPhotosReady === nextReady) {
           return currentDeck;
         }
 
-        return {
-          ...currentDeck,
-          front: {
-            ...currentDeck.front,
-            extraPhotosReady: nextReady,
-          },
-        };
+        return updateDeckSlot(currentDeck, currentFront.shellId, (slot) => ({
+          ...slot,
+          extraPhotosReady: nextReady,
+        }));
       });
     });
 
     return () => {
       cancelled = true;
     };
-  }, [deck.front.extraPhotosReady, frontProfile]);
+  }, [
+    frontProfile,
+    frontSlot.extraPhotosReady,
+    shouldFreezeReadinessWrites,
+    shouldSuppressVisualChurn,
+    trace,
+  ]);
 
   const resetPosition = useCallback(() => {
-    Animated.spring(position, {
-      toValue: { x: 0, y: 0 },
+    position.setValue({ x: 0, y: 0 });
+    Animated.timing(swipeFeedbackX, {
+      toValue: 0,
+      duration: SWIPE_FEEDBACK_RESET_DURATION,
       useNativeDriver: false,
     }).start();
-  }, [position]);
+  }, [position, swipeFeedbackX]);
 
   const setInfoVisible = useCallback((nextVisible: boolean) => {
+    if (shouldSuppressVisualChurn) {
+      trace("info_visibility_suppressed", {
+        nextVisible,
+      });
+      return;
+    }
+
+    trace("info_visibility_change", {
+      nextVisible,
+    });
     setIsInfoVisible(nextVisible);
     if (nextVisible) {
       backScrollRef.current?.scrollTo({ y: 0, animated: false });
@@ -946,7 +1512,7 @@ export default function DiscoverScreen() {
       tension: 60,
       useNativeDriver: true,
     }).start();
-  }, [flipAnim]);
+  }, [flipAnim, shouldSuppressVisualChurn, trace]);
 
   const toggleInfo = () => {
     Haptics.selectionAsync().catch(() => {});
@@ -954,64 +1520,149 @@ export default function DiscoverScreen() {
   };
 
   const resetCardState = useCallback(() => {
+    trace("reset_card_state", getTraceSnapshot());
     setSwipeState("idle");
     setIsDeckAnimating(false);
     position.setValue({ x: 0, y: 0 });
+    swipeFeedbackX.setValue(0);
     deckProgress.setValue(0);
     setActivePhotoIndex(0);
     setIsInfoVisible(false);
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [deckProgress, flipAnim, position]);
+    swipeSessionIdRef.current = null;
+    swipeDirectionRef.current = null;
+    thresholdLoggedRef.current = false;
+  }, [deckProgress, flipAnim, getTraceSnapshot, position, swipeFeedbackX, trace]);
 
-  const markSlotReady = useCallback((slotName: DeckSlotName, profileId: string) => {
-    setDeck((currentDeck) => {
-      const slot = currentDeck[slotName];
-      if (!slot.profile || slot.profile.id !== profileId || slot.primaryReady) {
-        return currentDeck;
-      }
+  useEffect(() => {
+    if (!pendingNoopReconcile) {
+      return;
+    }
 
-      return {
-        ...currentDeck,
-        [slotName]: {
-          ...slot,
-          primaryReady: true,
-        },
-      };
+    resetCardState();
+    setPendingDecisionProfileId(null);
+    debugDiscoveryLog("swipe_noop_reconciled", {
+      requestId: pendingNoopReconcile.requestId,
+      direction: pendingNoopReconcile.direction,
+      targetProfileId: pendingNoopReconcile.targetProfileId,
+      fetchedAt: discoveryFeed.supply?.fetchedAt ?? null,
+      nextFrontProfileId: getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null,
     });
-  }, []);
+    setPendingNoopReconcile(null);
+  }, [discoveryFeed.supply?.fetchedAt, pendingNoopReconcile, resetCardState]);
 
-  const advanceDeck = useCallback(() => {
+  const settleCardVisualState = useCallback(() => {
+    setSwipeState("idle");
+    setIsDeckAnimating(false);
+    position.setValue({ x: 0, y: 0 });
+    swipeFeedbackX.setValue(0);
+    deckProgress.setValue(0);
     setActivePhotoIndex(0);
     setIsInfoVisible(false);
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
-    setDeck((currentDeck) => advanceDeckState(currentDeck, filteredProfiles));
-    requestAnimationFrame(() => {
-      resetCardState();
+  }, [deckProgress, flipAnim, position, swipeFeedbackX]);
+
+  const restoreDeckAfterDecisionFailure = useCallback(
+    (previousDeck: DeckState) => {
+      settleCardVisualState();
+      deckRef.current = previousDeck;
+      setDeck(previousDeck);
+      swipeSessionIdRef.current = null;
+      swipeDirectionRef.current = null;
+      thresholdLoggedRef.current = false;
+    },
+    [settleCardVisualState]
+  );
+
+  const markSlotReady = useCallback((slotName: DeckSlotName, profileId: number) => {
+    trace("slot_ready_mark", {
+      slotName,
+      profileId,
+      skippedDuringAnimation: shouldFreezeReadinessWrites,
     });
-  }, [filteredProfiles, flipAnim, resetCardState]);
+    if (shouldFreezeReadinessWrites) {
+      return;
+    }
+
+    setDeck((currentDeck) => {
+      const slot = getDeckSlotByRole(currentDeck, slotName);
+      if (!slot.profile || slot.profile.id !== profileId || slot.primaryReady) {
+        return currentDeck;
+      }
+
+      return updateDeckSlot(currentDeck, slot.shellId, (currentSlot) => ({
+        ...currentSlot,
+        primaryReady: true,
+      }));
+    });
+  }, [shouldFreezeReadinessWrites, trace]);
+
+  const advanceDeck = useCallback(() => {
+    const currentDeck = deckRef.current;
+    const nextDeck = advanceDeckState(currentDeck, filteredProfiles);
+    const currentFront = getDeckSlotByRole(currentDeck, "front");
+    const currentSecond = getDeckSlotByRole(currentDeck, "second");
+    const currentThird = getDeckSlotByRole(currentDeck, "third");
+    const nextFront = getDeckSlotByRole(nextDeck, "front");
+    const nextSecond = getDeckSlotByRole(nextDeck, "second");
+    const nextThird = getDeckSlotByRole(nextDeck, "third");
+    trace("advance_deck_before", {
+      current: {
+        frontId: currentFront.profile?.id ?? null,
+        secondId: currentSecond.profile?.id ?? null,
+        thirdId: currentThird.profile?.id ?? null,
+      },
+      next: {
+        frontId: nextFront.profile?.id ?? null,
+        secondId: nextSecond.profile?.id ?? null,
+        thirdId: nextThird.profile?.id ?? null,
+      },
+    });
+    settleCardVisualState();
+    trace("promotion_committed", {
+      promotedFrontId: nextFront.profile?.id ?? null,
+      previousFrontId: currentFront.profile?.id ?? null,
+      swipeDirection: swipeDirectionRef.current,
+    });
+    deckRef.current = nextDeck;
+    setDeck(nextDeck);
+    trace("advance_deck_after", {
+      nextFrontId: nextFront.profile?.id ?? null,
+      nextSecondId: nextSecond.profile?.id ?? null,
+      nextThirdId: nextThird.profile?.id ?? null,
+    });
+    swipeSessionIdRef.current = null;
+    swipeDirectionRef.current = null;
+    thresholdLoggedRef.current = false;
+  }, [filteredProfiles, settleCardVisualState, trace]);
 
   const syncFrontExtraPhotoState = useCallback((profile: DiscoverProfile) => {
     const nextReady = areFrontExtrasReady(profile);
     setDeck((currentDeck) => {
-      if (currentDeck.front.profile?.id !== profile.id) {
+      const currentFront = getDeckSlotByRole(currentDeck, "front");
+      if (currentFront.profile?.id !== profile.id) {
         return currentDeck;
       }
-      if (currentDeck.front.extraPhotosReady === nextReady) {
+      if (currentFront.extraPhotosReady === nextReady) {
         return currentDeck;
       }
-      return {
-        ...currentDeck,
-        front: {
-          ...currentDeck.front,
-          extraPhotosReady: nextReady,
-        },
-      };
+      return updateDeckSlot(currentDeck, currentFront.shellId, (slot) => ({
+        ...slot,
+        extraPhotosReady: nextReady,
+      }));
     });
   }, []);
 
   const stepPhoto = useCallback((direction: "prev" | "next") => {
+    if (shouldSuppressVisualChurn) {
+      trace("photo_step_suppressed", {
+        direction,
+      });
+      return;
+    }
+
     if (!frontProfile || currentImages.length <= 1) {
       return;
     }
@@ -1028,6 +1679,12 @@ export default function DiscoverScreen() {
     Haptics.selectionAsync().catch(() => {});
 
     const nextUri = frontProfile.images[nextIndex];
+    trace("photo_step", {
+      direction,
+      currentIndex: activePhotoIndex,
+      nextIndex,
+      nextUri,
+    });
     if (!nextUri || isDiscoveryImageWarm(nextUri)) {
       setActivePhotoIndex(nextIndex);
       syncFrontExtraPhotoState(frontProfile);
@@ -1038,7 +1695,7 @@ export default function DiscoverScreen() {
     void warmDiscoveryProfileImages(frontProfile, 1, nextIndex).then(() => {
       syncFrontExtraPhotoState(frontProfile);
       if (
-        deckRef.current.front.profile?.id === frontProfileId &&
+        getDeckSlotByRole(deckRef.current, "front").profile?.id === frontProfileId &&
         isDiscoveryImageWarm(nextUri)
       ) {
         setActivePhotoIndex(nextIndex);
@@ -1048,7 +1705,9 @@ export default function DiscoverScreen() {
     activePhotoIndex,
     currentImages.length,
     frontProfile,
+    shouldSuppressVisualChurn,
     syncFrontExtraPhotoState,
+    trace,
   ]);
 
   const toggleBaseGender = (value: BaseGender) => {
@@ -1107,110 +1766,200 @@ export default function DiscoverScreen() {
       return;
     }
 
-    setLoadedCount((current) =>
-      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
-    );
-  }, [isOffline, sourceProfiles.length]);
-
-  const swipeRight = useCallback(() => {
-    if (!frontProfile || isDeckAnimating) {
-      return false;
-    }
-    if (!secondReady) {
-      resetPosition();
-      setSwipeState("idle");
-      return false;
-    }
-    const profile = frontProfile;
-    setIsDeckAnimating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    Animated.parallel([
-      Animated.timing(position, {
-        toValue: { x: width + 100, y: 0 },
-        duration: 300,
-        useNativeDriver: false,
-      }),
-      Animated.timing(deckProgress, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (!finished) {
-        resetCardState();
+    void refreshDiscoveryCandidates().then((ok) => {
+      if (!ok) {
         return;
       }
-      advanceDeck();
-      void (async () => {
-        const result = await likeProfile(profile.id);
-        setLastLikedProfile(profile);
+      resetCardState();
+    });
+  }, [isOffline, refreshDiscoveryCandidates, resetCardState]);
 
-        if (result?.shouldShowDiscoveryUpdate && result.changedCategories.length) {
-          const message = buildPopularUpdateMessage(result.changedCategories);
-          setPopularUpdateBanner({
-            id: Date.now(),
-            title: message.title,
-            body: message.body,
-          });
-          setShowInsight(true);
+  const handleResetSeenProfiles = useCallback(() => {
+    void refreshDiscoveryCandidates().then((ok) => {
+      if (!ok) {
+        return;
+      }
+      resetCardState();
+    });
+  }, [refreshDiscoveryCandidates, resetCardState]);
+
+  const animateButtonSwipeFeedback = useCallback(
+    (direction: SwipeDirection, onComplete: () => void) => {
+      const target = direction === "right" ? SWIPE_FEEDBACK_DISTANCE : -SWIPE_FEEDBACK_DISTANCE;
+      swipeFeedbackX.setValue(0);
+      Animated.sequence([
+        Animated.timing(swipeFeedbackX, {
+          toValue: target,
+          duration: SWIPE_FEEDBACK_BUTTON_DURATION,
+          useNativeDriver: false,
+        }),
+        Animated.delay(SWIPE_FEEDBACK_COMMIT_HOLD_DURATION),
+      ]).start(({ finished }) => {
+        if (!finished) {
+          resetCardState();
           return;
         }
-      })();
-    });
-    return true;
-  }, [
-    advanceDeck,
-    buildPopularUpdateMessage,
-    deckProgress,
-    frontProfile,
-    isDeckAnimating,
-    likeProfile,
-    position,
-    resetPosition,
-    resetCardState,
-    secondReady,
-  ]);
+        onComplete();
+      });
+    },
+    [resetCardState, swipeFeedbackX]
+  );
 
-  const swipeLeft = useCallback(() => {
-    if (!frontProfile || isDeckAnimating) {
-      return false;
-    }
-    if (!secondReady) {
-      resetPosition();
-      setSwipeState("idle");
-      return false;
-    }
-    setIsDeckAnimating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    Animated.parallel([
-      Animated.timing(position, {
-        toValue: { x: -width - 100, y: 0 },
-        duration: 300,
-        useNativeDriver: false,
-      }),
-      Animated.timing(deckProgress, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (!finished) {
-        resetCardState();
-        return;
+  const holdGestureSwipeFeedback = useCallback(
+    (onComplete: () => void) => {
+      Animated.delay(SWIPE_FEEDBACK_COMMIT_HOLD_DURATION).start(({ finished }) => {
+        if (!finished) {
+          resetCardState();
+          return;
+        }
+        onComplete();
+      });
+    },
+    [resetCardState]
+  );
+
+  const commitDiscoverySwipe = useCallback(
+    (direction: SwipeDirection, origin: SwipeCommitOrigin = "button") => {
+      if (!frontProfile || isDeckAnimating || hasPendingDecision) {
+        return false;
       }
-      advanceDeck();
-    });
-    return true;
-  }, [
-    advanceDeck,
-    deckProgress,
-    frontProfile,
-    isDeckAnimating,
-    position,
-    resetPosition,
-    resetCardState,
-    secondReady,
-  ]);
+      if (!secondReady) {
+        swipeDirectionRef.current = direction;
+        trace("swipe_blocked", {
+          swipeDirection: direction,
+          reason: "second_not_ready",
+        });
+        resetPosition();
+        setSwipeState("idle");
+        return false;
+      }
+
+      swipeDirectionRef.current = direction;
+      trace("swipe_animation_start", {
+        swipeDirection: direction,
+        frontId: frontProfile.id,
+        secondId: secondProfile?.id ?? null,
+      });
+      const profile = frontProfile;
+      const previousDeck = deckRef.current;
+      const requestId = createTraceId(
+        `${direction === "right" ? "discovery_like" : "discovery_pass"}_${profile.id}`
+      );
+      const requestDecision = direction === "right" ? likeProfile : passProfile;
+      setIsDeckAnimating(true);
+      Haptics.impactAsync(
+        direction === "right"
+          ? Haptics.ImpactFeedbackStyle.Medium
+          : Haptics.ImpactFeedbackStyle.Light
+      ).catch(() => {});
+
+      const commitSwipe = () => {
+        setPendingDecisionProfileId(profile.id);
+        setPendingNoopReconcile(null);
+        debugDiscoveryLog("swipe_commit", {
+          requestId,
+          direction,
+          targetProfileId: profile.id,
+          screenSessionId: screenSessionIdRef.current,
+          pendingDecisionProfileId: profile.id,
+        });
+        trace("swipe_animation_end", {
+          swipeDirection: direction,
+          frontId: profile.id,
+        });
+        advanceDeck();
+        void (async () => {
+          const result = await requestDecision(profile, { requestId });
+          if (!result) {
+            setPendingDecisionProfileId(null);
+            debugDiscoveryWarn("swipe_restore_after_failure", {
+              requestId,
+              direction,
+              targetProfileId: profile.id,
+            });
+            restoreDeckAfterDecisionFailure(previousDeck);
+            return;
+          }
+          if (!result.decisionApplied) {
+            debugDiscoveryLog("swipe_reconcile_after_noop", {
+              requestId,
+              direction,
+              targetProfileId: profile.id,
+              decisionRejectedReason: result.decisionRejectedReason ?? null,
+            });
+            setPendingNoopReconcile({
+              requestId,
+              direction,
+              targetProfileId: profile.id,
+            });
+            return;
+          }
+
+          recordDiscoverySwipe(direction, {
+            requestId,
+            targetProfileId: profile.id,
+          });
+          if (direction === "right") {
+            setLastLikedProfile(profile);
+          }
+          setPendingDecisionProfileId(null);
+          debugDiscoveryLog("swipe_applied", {
+            requestId,
+            direction,
+            targetProfileId: profile.id,
+          });
+
+          if (
+            direction === "right" &&
+            result.shouldShowDiscoveryUpdate &&
+            result.changedCategories.length
+          ) {
+            const message = buildPopularUpdateMessage(result.changedCategories);
+            setPopularUpdateBanner({
+              id: Date.now(),
+              title: message.title,
+              body: message.body,
+            });
+            setShowInsight(true);
+          }
+        })();
+      };
+
+      if (origin === "button") {
+        animateButtonSwipeFeedback(direction, commitSwipe);
+      } else {
+        holdGestureSwipeFeedback(commitSwipe);
+      }
+      return true;
+    },
+    [
+      advanceDeck,
+      animateButtonSwipeFeedback,
+      buildPopularUpdateMessage,
+      frontProfile,
+      hasPendingDecision,
+      holdGestureSwipeFeedback,
+      isDeckAnimating,
+      likeProfile,
+      passProfile,
+      recordDiscoverySwipe,
+      resetPosition,
+      restoreDeckAfterDecisionFailure,
+      secondReady,
+      secondProfile?.id,
+      trace,
+    ]
+  );
+
+  const swipeRight = useCallback(
+    (origin: SwipeCommitOrigin = "button") => commitDiscoverySwipe("right", origin),
+    [commitDiscoverySwipe]
+  );
+
+  const swipeLeft = useCallback(
+    (origin: SwipeCommitOrigin = "button") => commitDiscoverySwipe("left", origin),
+    [commitDiscoverySwipe]
+  );
 
   const panResponder = useMemo(
     () =>
@@ -1226,10 +1975,32 @@ export default function DiscoverScreen() {
             Math.abs(gesture.dy) > Math.abs(gesture.dx);
           return horizontalIntent || upwardInfoIntent;
         },
+        onPanResponderGrant: () => {
+          swipeSessionIdRef.current = createTraceId("swipe");
+          swipeDirectionRef.current = null;
+          thresholdLoggedRef.current = false;
+          swipeFeedbackX.setValue(0);
+          trace("gesture_accepted", getTraceSnapshot());
+        },
         onPanResponderMove: (_, gesture) => {
           const horizontalIntent = Math.abs(gesture.dx) >= Math.abs(gesture.dy);
           if (horizontalIntent) {
-            position.setValue({ x: gesture.dx, y: gesture.dy * 0.18 });
+            swipeFeedbackX.setValue(
+              clampNumber(gesture.dx, -SWIPE_FEEDBACK_DISTANCE, SWIPE_FEEDBACK_DISTANCE)
+            );
+            const nextDirection: SwipeDirection | null =
+              gesture.dx > 0 ? "right" : gesture.dx < 0 ? "left" : null;
+            if (nextDirection) {
+              swipeDirectionRef.current = nextDirection;
+            }
+            if (!thresholdLoggedRef.current && Math.abs(gesture.dx) >= SWIPE_THRESHOLD) {
+              thresholdLoggedRef.current = true;
+              trace("gesture_threshold_crossed", {
+                swipeDirection: swipeDirectionRef.current,
+                dx: gesture.dx,
+                dy: gesture.dy,
+              });
+            }
             if (gesture.dx > 40) setSwipeState("like");
             else if (gesture.dx < -40) setSwipeState("dislike");
             else setSwipeState("idle");
@@ -1237,26 +2008,41 @@ export default function DiscoverScreen() {
           }
 
           if (!isInfoVisible && gesture.dy < 0) {
+            swipeFeedbackX.setValue(0);
             position.setValue({ x: 0, y: gesture.dy * 0.4 });
             setSwipeState("idle");
           }
         },
         onPanResponderRelease: (_, gesture) => {
+          trace("gesture_release", {
+            swipeDirection: swipeDirectionRef.current,
+            dx: gesture.dx,
+            dy: gesture.dy,
+          });
           const horizontalIntent = Math.abs(gesture.dx) >= Math.abs(gesture.dy);
           if (horizontalIntent) {
             if (gesture.dx > SWIPE_THRESHOLD) {
-              if (!swipeRight()) {
+              if (!swipeRight("gesture")) {
                 resetPosition();
                 setSwipeState("idle");
+                swipeSessionIdRef.current = null;
+                swipeDirectionRef.current = null;
+                thresholdLoggedRef.current = false;
               }
             } else if (gesture.dx < -SWIPE_THRESHOLD) {
-              if (!swipeLeft()) {
+              if (!swipeLeft("gesture")) {
                 resetPosition();
                 setSwipeState("idle");
+                swipeSessionIdRef.current = null;
+                swipeDirectionRef.current = null;
+                thresholdLoggedRef.current = false;
               }
             } else {
               resetPosition();
               setSwipeState("idle");
+              swipeSessionIdRef.current = null;
+              swipeDirectionRef.current = null;
+              thresholdLoggedRef.current = false;
             }
             return;
           }
@@ -1272,18 +2058,39 @@ export default function DiscoverScreen() {
               useNativeDriver: false,
             }).start();
             setInfoVisible(true);
+            swipeSessionIdRef.current = null;
+            swipeDirectionRef.current = null;
+            thresholdLoggedRef.current = false;
             return;
           }
 
           resetPosition();
           setSwipeState("idle");
+          swipeSessionIdRef.current = null;
+          swipeDirectionRef.current = null;
+          thresholdLoggedRef.current = false;
         },
         onPanResponderTerminate: () => {
+          trace("gesture_terminated", {
+            swipeDirection: swipeDirectionRef.current,
+          });
           resetPosition();
           setSwipeState("idle");
+          swipeSessionIdRef.current = null;
+          swipeDirectionRef.current = null;
+          thresholdLoggedRef.current = false;
         },
       }),
-    [isInfoVisible, resetPosition, setInfoVisible, swipeLeft, swipeRight]
+    [
+      getTraceSnapshot,
+      isInfoVisible,
+      resetPosition,
+      setInfoVisible,
+      swipeFeedbackX,
+      swipeLeft,
+      swipeRight,
+      trace,
+    ]
   );
 
   return (
@@ -1357,8 +2164,18 @@ export default function DiscoverScreen() {
 
       {hasDeckProfiles && frontProfile ? (
         <>
-          <View style={styles.cardStack}>
+          <View
+            style={styles.cardStack}
+            onLayout={(event) => {
+              const { width: nextWidth, height: nextHeight } = event.nativeEvent.layout;
+              logLayoutChange("card_stack", {
+                width: nextWidth,
+                height: nextHeight,
+              });
+            }}
+          >
             <Animated.View
+              key={thirdShellId}
               pointerEvents="none"
               style={[
                 styles.cardBase,
@@ -1377,6 +2194,7 @@ export default function DiscoverScreen() {
             </Animated.View>
 
             <Animated.View
+              key={secondShellId}
               pointerEvents="none"
               style={[
                 styles.cardBase,
@@ -1392,23 +2210,59 @@ export default function DiscoverScreen() {
               ]}
             >
               {secondProfile ? (
-                <ExpoImage
-                  source={{ uri: secondProfile.images[0] }}
-                  recyclingKey={secondProfile.id}
-                  style={[
-                    styles.cardImage,
-                    !deck.second.primaryReady && styles.cardImagePending,
-                  ]}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  transition={0}
-                  onLoadEnd={() => markSlotReady("second", secondProfile.id)}
-                  onError={() => markSlotReady("second", secondProfile.id)}
-                />
+                <>
+                  <DiscoveryCardTrace
+                    slot="second"
+                    logicalId={secondProfile.id}
+                    renderKey={secondCardKey}
+                    enabled={traceFocused}
+                    trace={trace}
+                  />
+                  <ExpoImage
+                    source={{ uri: secondProfile.images[0] }}
+                    recyclingKey={
+                      shouldUseStableSlotImageKeys ? "second-slot" : secondImageKey
+                    }
+                    style={[
+                      styles.cardImage,
+                      !secondSlot.primaryReady && styles.cardImagePending,
+                    ]}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={0}
+                    onLoadStart={() => {
+                      trace("image_load_start", {
+                        slot: "second",
+                        profileId: secondProfile.id,
+                        imageKey: secondImageKey,
+                        uri: secondProfile.images[0],
+                      });
+                    }}
+                    onLoadEnd={() => {
+                      trace("image_load_end", {
+                        slot: "second",
+                        profileId: secondProfile.id,
+                        imageKey: secondImageKey,
+                        uri: secondProfile.images[0],
+                      });
+                      markSlotReady("second", secondProfile.id);
+                    }}
+                    onError={() => {
+                      trace("image_load_error", {
+                        slot: "second",
+                        profileId: secondProfile.id,
+                        imageKey: secondImageKey,
+                        uri: secondProfile.images[0],
+                      });
+                      markSlotReady("second", secondProfile.id);
+                    }}
+                  />
+                </>
               ) : null}
             </Animated.View>
 
             <Animated.View
+              key={frontShellId}
               {...panResponder.panHandlers}
               style={[
                 styles.cardBase,
@@ -1421,7 +2275,21 @@ export default function DiscoverScreen() {
                   ],
                 },
               ]}
+              onLayout={(event) => {
+                const { width: nextWidth, height: nextHeight } = event.nativeEvent.layout;
+                logLayoutChange("front_card", {
+                  width: nextWidth,
+                  height: nextHeight,
+                });
+              }}
             >
+              <DiscoveryCardTrace
+                slot="front"
+                logicalId={frontProfile.id}
+                renderKey={frontCardKey}
+                enabled={traceFocused}
+                trace={trace}
+              />
               <Animated.View
                 pointerEvents={isInfoVisible ? "none" : "auto"}
                 style={[
@@ -1439,13 +2307,39 @@ export default function DiscoverScreen() {
               >
                 <ExpoImage
                   source={{ uri: currentImage }}
-                  recyclingKey={`${frontProfile.id}:${activePhotoIndex}`}
+                  recyclingKey={
+                    shouldUseStableSlotImageKeys ? "front-slot" : frontImageKey
+                  }
                   style={styles.cardImage}
                   contentFit="cover"
                   cachePolicy="memory-disk"
                   transition={0}
-                  onLoadEnd={() => markSlotReady("front", frontProfile.id)}
-                  onError={() => markSlotReady("front", frontProfile.id)}
+                  onLoadStart={() => {
+                    trace("image_load_start", {
+                      slot: "front",
+                      profileId: frontProfile.id,
+                      imageKey: frontImageKey,
+                      uri: currentImage,
+                    });
+                  }}
+                  onLoadEnd={() => {
+                    trace("image_load_end", {
+                      slot: "front",
+                      profileId: frontProfile.id,
+                      imageKey: frontImageKey,
+                      uri: currentImage,
+                    });
+                    markSlotReady("front", frontProfile.id);
+                  }}
+                  onError={() => {
+                    trace("image_load_error", {
+                      slot: "front",
+                      profileId: frontProfile.id,
+                      imageKey: frontImageKey,
+                      uri: currentImage,
+                    });
+                    markSlotReady("front", frontProfile.id);
+                  }}
                 />
 
                 <View style={styles.photoTapLayer} pointerEvents="box-none">
@@ -1465,10 +2359,19 @@ export default function DiscoverScreen() {
                     style={StyleSheet.absoluteFillObject}
                   />
                   <View style={styles.stampContainer}>
-                    <View style={styles.likeStamp}>
-                      <Feather name="heart" size={28} color="#fff" />
-                      <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
-                    </View>
+                    <Animated.View
+                      style={{
+                        transform: [
+                          { scale: likeStampScale },
+                          { translateY: likeStampTranslateY },
+                        ],
+                      }}
+                    >
+                      <View style={styles.likeStamp}>
+                        <Feather name="heart" size={28} color="#fff" />
+                        <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
+                      </View>
+                    </Animated.View>
                   </View>
                 </Animated.View>
 
@@ -1480,10 +2383,19 @@ export default function DiscoverScreen() {
                     style={StyleSheet.absoluteFillObject}
                   />
                   <View style={styles.stampContainer}>
-                    <View style={styles.dislikeStamp}>
-                      <Feather name="x" size={28} color="#fff" />
-                      <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
-                    </View>
+                    <Animated.View
+                      style={{
+                        transform: [
+                          { scale: dislikeStampScale },
+                          { translateY: dislikeStampTranslateY },
+                        ],
+                      }}
+                    >
+                      <View style={styles.dislikeStamp}>
+                        <Feather name="x" size={28} color="#fff" />
+                        <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
+                      </View>
+                    </Animated.View>
                   </View>
                 </Animated.View>
 
@@ -1701,7 +2613,7 @@ export default function DiscoverScreen() {
 
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
             <Pressable
-              onPress={swipeLeft}
+              onPress={() => swipeLeft("button")}
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
@@ -1730,7 +2642,7 @@ export default function DiscoverScreen() {
             </Pressable>
 
             <Pressable
-              onPress={swipeRight}
+              onPress={() => swipeRight("button")}
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
@@ -1798,21 +2710,94 @@ export default function DiscoverScreen() {
             </Text>
             <Text style={styles.emptyCardCopy}>
               {t(
-                "Ya viste todos los perfiles disponibles con esta selección.",
-                "You have seen all available profiles for this selection."
+                "Ya viste todos los perfiles disponibles con esta selección. Busca perfiles nuevos o limpia filtros para ampliar la búsqueda.",
+                "You have seen all available profiles for this selection. Check for new profiles or clear filters to broaden the search."
               )}
             </Text>
-            <Pressable
-              onPress={clearFilters}
-              style={({ pressed }) => [
-                styles.emptyCardButton,
-                pressed && { opacity: 0.84 },
-              ]}
-            >
-              <Text style={styles.emptyCardButtonText}>
-                {t("Limpiar filtros", "Clear filters")}
-              </Text>
-            </Pressable>
+            <View style={styles.emptyCardActions}>
+              <Pressable
+                onPress={handleResetSeenProfiles}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text style={styles.emptyCardButtonText}>
+                  {t("Buscar nuevos perfiles", "Check for new profiles")}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={clearFilters}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  styles.emptyCardButtonSecondary,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.emptyCardButtonText,
+                    styles.emptyCardButtonTextSecondary,
+                  ]}
+                >
+                  {t("Limpiar filtros", "Clear filters")}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : isSeenDeckExhausted ? (
+        <View style={styles.cardStack}>
+          <View style={[styles.cardBase, styles.emptyCard]}>
+            <View style={styles.emptyCardIconWrap}>
+              <Feather name="refresh-ccw" size={24} color={Colors.info} />
+            </View>
+            <Text style={styles.emptyCardTitle}>
+              {t(
+                "Ya viste todos los perfiles de este filtro",
+                "You have already seen every profile in this filter"
+              )}
+            </Text>
+            <Text style={styles.emptyCardCopy}>
+              {t(
+                "Mantén este filtro y revisa si hay perfiles nuevos disponibles, o cambia los valores para descubrir gente nueva.",
+                "Keep this filter and check for newly available profiles, or change the values to discover new people."
+              )}
+            </Text>
+            <View style={styles.emptyCardActions}>
+              <Pressable
+                onPress={handleResetSeenProfiles}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text style={styles.emptyCardButtonText}>
+                  {t("Buscar nuevos perfiles", "Check for new profiles")}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={clearFilters}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  styles.emptyCardButtonSecondary,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.emptyCardButtonText,
+                    styles.emptyCardButtonTextSecondary,
+                  ]}
+                >
+                  {t("Limpiar filtros", "Clear filters")}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       ) : (
@@ -1830,17 +2815,38 @@ export default function DiscoverScreen() {
                 "We could not find profiles with that combination."
               )}
             </Text>
-            <Pressable
-              onPress={clearFilters}
-              style={({ pressed }) => [
-                styles.emptyCardButton,
-                pressed && { opacity: 0.84 },
-              ]}
-            >
-              <Text style={styles.emptyCardButtonText}>
-                {t("Limpiar filtros", "Clear filters")}
-              </Text>
-            </Pressable>
+            <View style={styles.emptyCardActions}>
+              <Pressable
+                onPress={handleRetryDiscovery}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text style={styles.emptyCardButtonText}>
+                  {t("Volver a cargar", "Reload")}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={clearFilters}
+                style={({ pressed }) => [
+                  styles.emptyCardButton,
+                  styles.emptyCardButtonInline,
+                  styles.emptyCardButtonSecondary,
+                  pressed && { opacity: 0.84 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.emptyCardButtonText,
+                    styles.emptyCardButtonTextSecondary,
+                  ]}
+                >
+                  {t("Limpiar filtros", "Clear filters")}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       )}
@@ -2441,10 +3447,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  emptyCardActions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 22,
+  },
+  emptyCardButtonInline: {
+    flex: 1,
+    marginTop: 0,
+  },
   emptyCardButtonText: {
     fontFamily: "Inter_700Bold",
     fontSize: 14,
     color: "#fff",
+  },
+  emptyCardButtonSecondary: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  emptyCardButtonTextSecondary: {
+    color: Colors.text,
   },
   emptyCardButtonDisabled: {
     backgroundColor: Colors.surface,

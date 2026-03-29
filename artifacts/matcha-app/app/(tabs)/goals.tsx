@@ -29,7 +29,6 @@ import {
   type GoalCategory,
   useApp,
 } from "@/context/AppContext";
-import { discoverProfiles } from "@/data/profiles";
 import { formatPopularAttributeValue } from "@/utils/popularAttributes";
 
 type GoalsFilter = "all" | GoalCategory;
@@ -606,7 +605,11 @@ export default function GoalsScreen() {
     heightUnit,
     completeGoalTask,
     reorderGoalTasks,
+    sessionSwipeCounts,
+    lifetimeDiscoveryCounts,
+    discoveryThreshold,
     popularAttributesByCategory,
+    discoveryFeed,
   } = useApp();
   const [activeFilter, setActiveFilter] = useState<GoalsFilter>("all");
   const [expandedCategory, setExpandedCategory] = useState<GoalCategory | null>(null);
@@ -623,16 +626,21 @@ export default function GoalsScreen() {
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 96);
   const emptyLabel = t("Sin definir", "Not set");
+  const goalsLocked = !discoveryThreshold.thresholdReached;
+  const unlockProgress = Math.min(
+    100,
+    Math.round((discoveryThreshold.totalLikes / discoveryThreshold.likeThreshold) * 100)
+  );
 
   const insightLookup = useMemo(() => {
     const map = new Map<string, { es: string; en: string }>();
-    discoverProfiles.forEach((profile) => {
+    discoveryFeed.profiles.forEach((profile) => {
       profile.insightTags.forEach((tag) => {
         map.set(tag.en, tag);
       });
     });
     return map;
-  }, []);
+  }, [discoveryFeed.profiles]);
 
   const categoryModules = useMemo<CategoryModule[]>(() => {
     const goalsByCategory = new Map<GoalCategory, Goal[]>();
@@ -809,6 +817,46 @@ export default function GoalsScreen() {
 
             <ProgressBar progress={avgProgress} color={Colors.primaryLight} large />
 
+            <View style={styles.summarySessionRow}>
+              <Text style={styles.summarySessionLabel}>
+                {t("Reacciones de esta sesión", "Session reactions")}
+              </Text>
+              <View style={styles.summarySessionStats}>
+                <View style={styles.summarySessionPill}>
+                  <Feather name="heart" size={12} color={Colors.like} />
+                  <Text style={styles.summarySessionValue}>
+                    {sessionSwipeCounts.likes}
+                  </Text>
+                </View>
+                <View style={styles.summarySessionPill}>
+                  <Feather name="x" size={12} color={Colors.dislike} />
+                  <Text style={styles.summarySessionValue}>
+                    {sessionSwipeCounts.dislikes}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.summarySessionRow}>
+              <Text style={styles.summarySessionLabel}>
+                {t("Totales históricos", "Lifetime totals")}
+              </Text>
+              <View style={styles.summarySessionStats}>
+                <View style={styles.summarySessionPill}>
+                  <Feather name="heart" size={12} color={Colors.like} />
+                  <Text style={styles.summarySessionValue}>
+                    {lifetimeDiscoveryCounts.likes}
+                  </Text>
+                </View>
+                <View style={styles.summarySessionPill}>
+                  <Feather name="x" size={12} color={Colors.dislike} />
+                  <Text style={styles.summarySessionValue}>
+                    {lifetimeDiscoveryCounts.passes}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
             <Text style={styles.summaryCopy}>
               {t(
                 "Cada categoría aporta a una trayectoria más equilibrada. Completar una tarea mueve el conjunto.",
@@ -818,38 +866,78 @@ export default function GoalsScreen() {
           </View>
         </View>
 
-        <ScrollView
+        {goalsLocked ? (
+          <View style={styles.lockedWrap}>
+            <View style={styles.lockedCard}>
+              <View style={styles.lockedBadge}>
+                <Feather name="lock" size={14} color={Colors.primary} />
+                <Text style={styles.lockedBadgeText}>
+                  {t("Desbloquea Mis Metas", "Unlock My Goals")}
+                </Text>
+              </View>
+              <Text style={styles.lockedTitle}>
+                {t(
+                  "Tus metas se activan con 30 likes",
+                  "Your goals unlock at 30 likes"
+                )}
+              </Text>
+              <Text style={styles.lockedCopy}>
+                {t(
+                  "Sigue descubriendo perfiles. Cuando llegues a 30 likes, aquí verás tus tendencias y objetivos personalizados.",
+                  "Keep discovering profiles. Once you reach 30 likes, your trends and personalized goals will appear here."
+                )}
+              </Text>
+              <View style={styles.lockedProgressRow}>
+                <Text style={styles.lockedProgressValue}>
+                  {discoveryThreshold.totalLikes} / {discoveryThreshold.likeThreshold}
+                </Text>
+                <Text style={styles.lockedProgressHint}>
+                  {t(
+                    `${discoveryThreshold.likesUntilUnlock} likes más`,
+                    `${discoveryThreshold.likesUntilUnlock} likes left`
+                  )}
+                </Text>
+              </View>
+              <ProgressBar progress={unlockProgress} color={Colors.primary} large />
+            </View>
+          </View>
+        ) : null}
+
+        {!goalsLocked ? (
+          <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
-        >
-          {filters.map((filter) => {
-            const active = activeFilter === filter.key;
-            return (
-              <Pressable
-                key={filter.key}
-                onPress={() => setActiveFilter(filter.key)}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-              >
-                <Feather
-                  name={filter.icon}
-                  size={13}
-                  color={active ? Colors.textInverted : Colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    active && styles.filterChipTextActive,
-                  ]}
+          >
+            {filters.map((filter) => {
+              const active = activeFilter === filter.key;
+              return (
+                <Pressable
+                  key={filter.key}
+                  onPress={() => setActiveFilter(filter.key)}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
                 >
-                  {filter.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+                  <Feather
+                    name={filter.icon}
+                    size={13}
+                    color={active ? Colors.textInverted : Colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      active && styles.filterChipTextActive,
+                    ]}
+                  >
+                    {filter.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
 
-        <View style={styles.sectionHeader}>
+        {!goalsLocked ? (
+          <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             {t("Ruta por categoría", "Category path")}
           </Text>
@@ -859,9 +947,11 @@ export default function GoalsScreen() {
               "Each module combines clarity, progress, and one concrete next action so you can move forward without feeling pressured."
             )}
           </Text>
-        </View>
+          </View>
+        ) : null}
 
-        <View style={styles.moduleStack}>
+        {!goalsLocked ? (
+          <View style={styles.moduleStack}>
           {visibleModules.map((item) => (
             <CategoryProgressCard
               key={item.key}
@@ -878,9 +968,11 @@ export default function GoalsScreen() {
               t={t}
             />
           ))}
-        </View>
+          </View>
+        ) : null}
 
-        <View style={styles.sectionHeader}>
+        {!goalsLocked ? (
+          <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             {t("Comparativa", "Comparison")}
           </Text>
@@ -890,9 +982,11 @@ export default function GoalsScreen() {
               "Your profile defines who you are today. Popular attributes blend simulated profiles and your interactions to add context."
             )}
           </Text>
-        </View>
+          </View>
+        ) : null}
 
-        <View style={styles.tableCard}>
+        {!goalsLocked ? (
+          <View style={styles.tableCard}>
           <LinearGradient
             colors={["rgba(255,255,255,0.04)", "rgba(255,255,255,0.01)"]}
             style={StyleSheet.absoluteFillObject}
@@ -938,7 +1032,8 @@ export default function GoalsScreen() {
               </Text>
             </View>
           ))}
-        </View>
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -1016,6 +1111,95 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     fontSize: 13,
     lineHeight: 19,
+    color: Colors.textSecondary,
+  },
+  summarySessionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  summarySessionLabel: {
+    flex: 1,
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.textSecondary,
+  },
+  summarySessionStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  summarySessionPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.07)",
+  },
+  summarySessionValue: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.text,
+  },
+  lockedWrap: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+  },
+  lockedCard: {
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 20,
+    gap: 12,
+  },
+  lockedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(82,183,136,0.12)",
+  },
+  lockedBadgeText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.primary,
+  },
+  lockedTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 22,
+    color: Colors.text,
+    letterSpacing: -0.6,
+  },
+  lockedCopy: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    lineHeight: 21,
+    color: Colors.textSecondary,
+  },
+  lockedProgressRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  lockedProgressValue: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 28,
+    color: Colors.primaryLight,
+    letterSpacing: -0.8,
+  },
+  lockedProgressHint: {
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
     color: Colors.textSecondary,
   },
   filterRow: {

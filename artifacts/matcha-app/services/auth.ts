@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
-import { getDiscoverProfilePopularInput } from "@/data/profiles";
+import { discoverProfiles, getDiscoverProfilePopularInput } from "@/data/profiles";
 import type { UserProfilePhoto } from "@/utils/profilePhotos";
 import {
   calculatePopularAttributesFromLikes,
@@ -118,6 +118,7 @@ export type ViewerProfileResponse = {
   name: string;
   age: string;
   dateOfBirth: string;
+  updatedAt?: string | null;
   location: string;
   profession: string;
   genderIdentity: string;
@@ -150,7 +151,7 @@ export type ViewerBootstrapResponse = {
   settings: UserSettingsResponse["settings"];
   photos: ProfileMediaItemResponse[];
   goals: GoalItemResponse[];
-  discovery: DiscoveryPreferencesResponse;
+  discovery: DiscoveryStateResponse;
   syncedAt: string;
   bootstrapGeneratedAt: string;
   viewerVersion: string;
@@ -168,20 +169,148 @@ export type ViewerBootstrapResponse = {
 export type ProviderAvailability = Record<AuthProvider, boolean>;
 
 export type DiscoveryPreferencesResponse = {
-  likedProfileIds: string[];
+  likedProfileIds: number[];
+  passedProfileIds: number[];
+  currentDecisionCounts: {
+    likes: number;
+    passes: number;
+  };
   popularAttributesByCategory: Record<
     PopularAttributeCategory,
     PopularAttributeSnapshot
   >;
   totalLikesCount: number;
+  lifetimeCounts: {
+    likes: number;
+    passes: number;
+  };
+  threshold: {
+    likeThreshold: number;
+    totalLikes: number;
+    totalPasses: number;
+    likesUntilUnlock: number;
+    thresholdReached: boolean;
+    thresholdReachedAt: string | null;
+    lastDecisionEventAt: string | null;
+    lastDecisionInteractionId: number | null;
+  };
+  goalsUnlock: {
+    available: boolean;
+    justUnlocked: boolean;
+    unlockMessagePending: boolean;
+    goalsUnlockEventEmittedAt: string | null;
+    goalsUnlockMessageSeenAt: string | null;
+  };
   lastNotifiedPopularModeChangeAtLikeCount: number;
   filters: DiscoveryFilters;
+  feed?: DiscoveryFeedResponse;
 };
 
+export type DiscoveryFeedProfileResponse = {
+  id: number;
+  publicId: string;
+  name: string;
+  age: number;
+  dateOfBirth: string;
+  pronouns: string;
+  genderIdentity: string;
+  location: string;
+  occupation: {
+    es: string;
+    en: string;
+  };
+  attributes: {
+    bodyType: string;
+    height: string;
+    interests: string[];
+  };
+  about: {
+    bio: {
+      es: string;
+      en: string;
+    };
+    relationshipGoals: string;
+    education: string;
+    childrenPreference: string;
+    languagesSpoken: string[];
+  };
+  lifestyle: {
+    physicalActivity: string;
+    alcoholUse: string;
+    tobaccoUse: string;
+    politicalInterest: string;
+    religionImportance: string;
+    religion: string;
+  };
+  physical: {
+    bodyType: string;
+    height: string;
+    hairColor: string;
+    ethnicity: string;
+  };
+  images: string[];
+  insightTags: Array<{
+    es: string;
+    en: string;
+  }>;
+  goalFeedback: Array<{
+    goalId: string;
+    reason: {
+      es: string;
+      en: string;
+    };
+  }>;
+  categoryValues: PopularAttributeInputByCategory;
+};
+
+export type DiscoveryFeedResponse = {
+  queueVersion?: number;
+  generatedAt?: string;
+  windowSize?: number;
+  reserveCount?: number;
+  profiles: DiscoveryFeedProfileResponse[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  supply: {
+    eligibleCount: number;
+    unseenCount: number;
+    decidedCount: number;
+    exhausted: boolean;
+    fetchedAt: string;
+  };
+};
+
+export type DiscoveryDecisionRequestPayload = {
+  targetProfileId: number;
+  action: "like" | "pass";
+  categoryValues?: PopularAttributeInputByCategory | null;
+  requestId?: string;
+  queueVersion?: number | null;
+  presentedPosition?: number | null;
+};
+
+export type DiscoveryStateResponse = DiscoveryPreferencesResponse;
+
+export type DiscoveryDecisionNoopReason =
+  | "duplicate_request_id"
+  | "same_state_existing_decision";
+
 export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
+  decisionApplied: boolean;
+  decisionState: "like" | "pass";
+  targetProfileId: number;
   changedCategories: PopularAttributeChange[];
   shouldShowDiscoveryUpdate: boolean;
-};
+} & (
+    | {
+        decisionApplied: true;
+        decisionRejectedReason: null;
+      }
+    | {
+        decisionApplied: false;
+        decisionRejectedReason: DiscoveryDecisionNoopReason;
+      }
+  );
 
 export type ProfileMediaItemResponse = {
   profileImageId: number;
@@ -220,13 +349,54 @@ const DEMO_SETTINGS: UserSettingsResponse["settings"] = {
 let DEMO_HAS_COMPLETED_ONBOARDING = true;
 const DEMO_DISCOVERY_PREFERENCES: DiscoveryPreferencesResponse = {
   likedProfileIds: [],
+  passedProfileIds: [],
+  currentDecisionCounts: {
+    likes: 0,
+    passes: 0,
+  },
   popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
   totalLikesCount: 0,
+  lifetimeCounts: {
+    likes: 0,
+    passes: 0,
+  },
+  threshold: {
+    likeThreshold: 30,
+    totalLikes: 0,
+    totalPasses: 0,
+    likesUntilUnlock: 30,
+    thresholdReached: false,
+    thresholdReachedAt: null,
+    lastDecisionEventAt: null,
+    lastDecisionInteractionId: null,
+  },
+  goalsUnlock: {
+    available: false,
+    justUnlocked: false,
+    unlockMessagePending: false,
+    goalsUnlockEventEmittedAt: null,
+    goalsUnlockMessageSeenAt: null,
+  },
   lastNotifiedPopularModeChangeAtLikeCount: 0,
   filters: {
     ...DEFAULT_DISCOVERY_FILTERS,
   },
 };
+const DEMO_DISCOVERY_PROFILE_KEY_BY_ID = new Map<number, string>();
+const DEMO_DISCOVERY_PROFILES: DiscoveryFeedProfileResponse[] = discoverProfiles.map(
+  (profile, index) => {
+    const backendId = index + 1;
+    DEMO_DISCOVERY_PROFILE_KEY_BY_ID.set(backendId, profile.id);
+    return {
+      ...profile,
+      id: backendId,
+      publicId: profile.id,
+      categoryValues: getDiscoverProfilePopularInput(profile.id)!,
+    };
+  }
+);
+const DEMO_DISCOVERY_DEFAULT_LIMIT = 3;
+let DEMO_DISCOVERY_QUEUE_VERSION = 1;
 const DEMO_GOALS: GoalItemResponse[] = [
   {
     id: "1",
@@ -259,6 +429,7 @@ const DEMO_VIEWER_PROFILE: ViewerProfileResponse = {
   name: DEMO_USER.name,
   age: "",
   dateOfBirth: DEMO_USER.dateOfBirth || "",
+  updatedAt: new Date().toISOString(),
   location: "",
   profession: DEMO_USER.profession || "",
   genderIdentity: "",
@@ -394,11 +565,6 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     });
     throw new ApiError(data.error || "REQUEST_FAILED", data.message || data.error);
   }
-  debugLog("[api] request ok", {
-    path,
-    method: options.method || "GET",
-    status: response.status,
-  });
   return data as T;
 }
 
@@ -517,7 +683,10 @@ export async function getViewerBootstrap(accessToken: string) {
       settings: DEMO_SETTINGS,
       photos: [],
       goals: DEMO_GOALS,
-      discovery: DEMO_DISCOVERY_PREFERENCES,
+      discovery: {
+        ...DEMO_DISCOVERY_PREFERENCES,
+        feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+      },
       syncedAt: now,
       bootstrapGeneratedAt: now,
       viewerVersion: "viewer-bootstrap-v1",
@@ -724,7 +893,7 @@ export function mergeRemotePhotosWithLocal(
     .map((remote) => {
       const local = bySort.get(remote.sortOrder);
       return {
-        localUri: local?.localUri || "",
+        localUri: local?.status === "error" ? "" : local?.localUri || "",
         remoteUrl: normalizeRemoteMediaUrl(remote.remoteUrl),
         mediaAssetId: remote.mediaAssetId,
         profileImageId: remote.profileImageId,
@@ -743,61 +912,296 @@ export async function getDiscoveryPreferences(accessToken: string) {
   });
 }
 
-export async function likeDiscoveryProfile(
+function buildDemoDiscoveryFeed(cursor?: string | null, limit = DEMO_DISCOVERY_DEFAULT_LIMIT) {
+  const excludedIds = new Set([
+    ...DEMO_DISCOVERY_PREFERENCES.likedProfileIds,
+    ...DEMO_DISCOVERY_PREFERENCES.passedProfileIds,
+  ]);
+  const unseenProfiles = DEMO_DISCOVERY_PROFILES.filter((profile) => !excludedIds.has(profile.id));
+  const normalizedLimit = Math.max(1, Math.min(60, Math.floor(limit || DEMO_DISCOVERY_DEFAULT_LIMIT)));
+  const startIndex = cursor ? Number(cursor) : 0;
+  const safeStart = Number.isFinite(startIndex) && startIndex >= 0 ? startIndex : 0;
+  const windowProfiles = unseenProfiles.slice(safeStart, safeStart + normalizedLimit);
+  const now = new Date().toISOString();
+
+  return {
+    queueVersion: DEMO_DISCOVERY_QUEUE_VERSION,
+    generatedAt: now,
+    windowSize: windowProfiles.length,
+    reserveCount: Math.min(unseenProfiles.length, 12),
+    profiles: windowProfiles,
+    nextCursor: null,
+    hasMore: false,
+    supply: {
+      eligibleCount: DEMO_DISCOVERY_PROFILES.length,
+      unseenCount: unseenProfiles.length,
+      decidedCount: excludedIds.size,
+      exhausted: unseenProfiles.length === 0,
+      fetchedAt: now,
+    },
+  } satisfies DiscoveryFeedResponse;
+}
+
+export async function getDiscoveryFeedWindow(
   accessToken: string,
-  payload: { likedProfileId: string; categoryValues?: PopularAttributeInputByCategory | null }
+  options?: { cursor?: string | null; limit?: number; size?: number }
 ) {
   if (isDemoToken(accessToken)) {
+    return buildDemoDiscoveryFeed(options?.cursor, options?.size ?? options?.limit);
+  }
+
+  const params = new URLSearchParams();
+  const requestedSize = options?.size ?? options?.limit;
+  if (Number.isFinite(requestedSize)) {
+    params.set("size", String(requestedSize));
+  }
+
+  return request<DiscoveryFeedResponse>(
+    `/api/discovery/window${params.toString() ? `?${params.toString()}` : ""}`,
+    {
+      accessToken,
+    }
+  );
+}
+
+export async function getDiscoveryFeed(accessToken: string) {
+  return getDiscoveryFeedWindow(accessToken);
+}
+
+export async function refreshDiscoveryFeed(accessToken: string, limit?: number) {
+  if (isDemoToken(accessToken)) {
+    return buildDemoDiscoveryFeed(null, limit);
+  }
+
+  return request<DiscoveryFeedResponse>(
+    `/api/discovery/window${limit ? `?size=${encodeURIComponent(String(limit))}` : ""}`,
+    {
+      accessToken,
+    }
+  );
+}
+
+export async function getNextDiscoveryFeedWindow(
+  accessToken: string,
+  cursor: string,
+  limit?: number
+) {
+  return getDiscoveryFeedWindow(accessToken, {
+    cursor,
+    size: limit,
+  });
+}
+
+export async function submitDiscoveryDecision(
+  accessToken: string,
+  payload: DiscoveryDecisionRequestPayload
+): Promise<DiscoveryLikeResponse> {
+  if (isDemoToken(accessToken)) {
+    return payload.action === "like"
+      ? likeDiscoveryProfile(accessToken, payload)
+      : passDiscoveryProfile(accessToken, payload);
+  }
+
+  return request<DiscoveryLikeResponse>("/api/discovery/decision", {
+    accessToken,
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function likeDiscoveryProfile(
+  accessToken: string,
+  payload: {
+    targetProfileId: number;
+    categoryValues?: PopularAttributeInputByCategory | null;
+    requestId?: string;
+    queueVersion?: number | null;
+    presentedPosition?: number | null;
+  }
+): Promise<DiscoveryLikeResponse> {
+  if (isDemoToken(accessToken)) {
     const existing = new Set(DEMO_DISCOVERY_PREFERENCES.likedProfileIds);
-    if (existing.has(payload.likedProfileId)) {
+    if (existing.has(payload.targetProfileId)) {
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
+        decisionApplied: false,
+        decisionState: "like",
+        targetProfileId: payload.targetProfileId,
+        decisionRejectedReason: "same_state_existing_decision",
         changedCategories: [],
         shouldShowDiscoveryUpdate: false,
+        feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
       } satisfies DiscoveryLikeResponse;
     }
 
+    const demoProfileKey = DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(payload.targetProfileId);
     const categoryValues =
-      payload.categoryValues || getDiscoverProfilePopularInput(payload.likedProfileId);
+      payload.categoryValues ||
+      (demoProfileKey ? getDiscoverProfilePopularInput(demoProfileKey) : null);
     if (!categoryValues) {
       throw new ApiError("UNKNOWN_DISCOVERY_PROFILE");
     }
 
     const previous = DEMO_DISCOVERY_PREFERENCES.popularAttributesByCategory;
+    const nextPassedProfileIds = DEMO_DISCOVERY_PREFERENCES.passedProfileIds.filter(
+      (profileId) => profileId !== payload.targetProfileId
+    );
     const nextLikedProfileIds = [
-      ...DEMO_DISCOVERY_PREFERENCES.likedProfileIds,
-      payload.likedProfileId,
+      ...DEMO_DISCOVERY_PREFERENCES.likedProfileIds.filter(
+        (profileId) => profileId !== payload.targetProfileId
+      ),
+      payload.targetProfileId,
     ];
     const nextSnapshots = calculatePopularAttributesFromLikes(
       nextLikedProfileIds.map((likedProfileId) => ({
-        likedProfileId,
-        categoryValues: getDiscoverProfilePopularInput(likedProfileId)!,
+        likedProfileId: String(likedProfileId),
+        categoryValues: getDiscoverProfilePopularInput(
+          DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(likedProfileId) || ""
+        )!,
       }))
     );
     const changedCategories = diffPopularAttributeSnapshots(previous, nextSnapshots);
-    const totalLikesCount = nextLikedProfileIds.length;
+    const nextLifetimeLikes = DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes + 1;
+    const crossedThreshold =
+      DEMO_DISCOVERY_PREFERENCES.threshold.thresholdReached === false && nextLifetimeLikes >= 30;
     const shouldShowDiscoveryUpdate =
-      totalLikesCount >= 30 && changedCategories.length > 0;
+      nextLifetimeLikes >= 30 && changedCategories.length > 0;
+    const now = new Date().toISOString();
 
     DEMO_DISCOVERY_PREFERENCES.likedProfileIds = nextLikedProfileIds;
+    DEMO_DISCOVERY_PREFERENCES.passedProfileIds = nextPassedProfileIds;
+    DEMO_DISCOVERY_PREFERENCES.currentDecisionCounts = {
+      likes: nextLikedProfileIds.length,
+      passes: nextPassedProfileIds.length,
+    };
     DEMO_DISCOVERY_PREFERENCES.popularAttributesByCategory = nextSnapshots;
-    DEMO_DISCOVERY_PREFERENCES.totalLikesCount = totalLikesCount;
+    DEMO_DISCOVERY_PREFERENCES.totalLikesCount = nextLifetimeLikes;
+    DEMO_DISCOVERY_PREFERENCES.lifetimeCounts = {
+      likes: nextLifetimeLikes,
+      passes: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.passes,
+    };
+    DEMO_DISCOVERY_PREFERENCES.threshold = {
+      likeThreshold: 30,
+      totalLikes: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes,
+      totalPasses: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.passes,
+      likesUntilUnlock: Math.max(0, 30 - DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes),
+      thresholdReached: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes >= 30,
+      thresholdReachedAt:
+        DEMO_DISCOVERY_PREFERENCES.threshold.thresholdReachedAt ||
+        (DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes >= 30 ? now : null),
+      lastDecisionEventAt: now,
+      lastDecisionInteractionId: payload.targetProfileId,
+    };
+    DEMO_DISCOVERY_PREFERENCES.goalsUnlock = {
+      available: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes >= 30,
+      justUnlocked: crossedThreshold,
+      unlockMessagePending:
+        crossedThreshold || DEMO_DISCOVERY_PREFERENCES.goalsUnlock.unlockMessagePending,
+      goalsUnlockEventEmittedAt:
+        DEMO_DISCOVERY_PREFERENCES.goalsUnlock.goalsUnlockEventEmittedAt ||
+        (DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes >= 30 ? now : null),
+      goalsUnlockMessageSeenAt: DEMO_DISCOVERY_PREFERENCES.goalsUnlock.goalsUnlockMessageSeenAt,
+    };
     DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount =
       shouldShowDiscoveryUpdate
-        ? totalLikesCount
+        ? DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes
         : DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount;
+    DEMO_DISCOVERY_QUEUE_VERSION += 1;
 
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
+      decisionApplied: true,
+      decisionState: "like",
+      targetProfileId: payload.targetProfileId,
+      decisionRejectedReason: null,
       changedCategories,
       shouldShowDiscoveryUpdate,
+      feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
     } satisfies DiscoveryLikeResponse;
   }
 
-  return request<DiscoveryLikeResponse>("/api/discovery/like", {
-    method: "POST",
-    accessToken,
-    body: payload,
+  return submitDiscoveryDecision(accessToken, {
+    ...payload,
+    action: "like",
+  });
+}
+
+export async function passDiscoveryProfile(
+  accessToken: string,
+  payload: {
+    targetProfileId: number;
+    categoryValues?: PopularAttributeInputByCategory | null;
+    requestId?: string;
+    queueVersion?: number | null;
+    presentedPosition?: number | null;
+  }
+): Promise<DiscoveryLikeResponse> {
+  if (isDemoToken(accessToken)) {
+    const existing = new Set(DEMO_DISCOVERY_PREFERENCES.passedProfileIds);
+    if (existing.has(payload.targetProfileId)) {
+      return {
+        ...DEMO_DISCOVERY_PREFERENCES,
+        decisionApplied: false,
+        decisionState: "pass",
+        targetProfileId: payload.targetProfileId,
+        decisionRejectedReason: "same_state_existing_decision",
+        changedCategories: [],
+        shouldShowDiscoveryUpdate: false,
+        feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+      } satisfies DiscoveryLikeResponse;
+    }
+
+    const nextLikedProfileIds = DEMO_DISCOVERY_PREFERENCES.likedProfileIds.filter(
+      (profileId) => profileId !== payload.targetProfileId
+    );
+    const nextPassedProfileIds = [
+      ...DEMO_DISCOVERY_PREFERENCES.passedProfileIds.filter(
+        (profileId) => profileId !== payload.targetProfileId
+      ),
+      payload.targetProfileId,
+    ];
+    DEMO_DISCOVERY_PREFERENCES.likedProfileIds = nextLikedProfileIds;
+    DEMO_DISCOVERY_PREFERENCES.passedProfileIds = nextPassedProfileIds;
+    DEMO_DISCOVERY_PREFERENCES.currentDecisionCounts = {
+      likes: nextLikedProfileIds.length,
+      passes: nextPassedProfileIds.length,
+    };
+    DEMO_DISCOVERY_PREFERENCES.lifetimeCounts = {
+      likes: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes,
+      passes: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.passes + 1,
+    };
+    DEMO_DISCOVERY_PREFERENCES.totalLikesCount = DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes;
+    DEMO_DISCOVERY_PREFERENCES.threshold = {
+      likeThreshold: 30,
+      totalLikes: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes,
+      totalPasses: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.passes,
+      likesUntilUnlock: Math.max(0, 30 - DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes),
+      thresholdReached: DEMO_DISCOVERY_PREFERENCES.lifetimeCounts.likes >= 30,
+      thresholdReachedAt: DEMO_DISCOVERY_PREFERENCES.threshold.thresholdReachedAt,
+      lastDecisionEventAt: new Date().toISOString(),
+      lastDecisionInteractionId: payload.targetProfileId,
+    };
+    DEMO_DISCOVERY_PREFERENCES.goalsUnlock = {
+      ...DEMO_DISCOVERY_PREFERENCES.goalsUnlock,
+      justUnlocked: false,
+    };
+    DEMO_DISCOVERY_QUEUE_VERSION += 1;
+
+    return {
+      ...DEMO_DISCOVERY_PREFERENCES,
+      decisionApplied: true,
+      decisionState: "pass",
+      targetProfileId: payload.targetProfileId,
+      decisionRejectedReason: null,
+      changedCategories: [],
+      shouldShowDiscoveryUpdate: false,
+      feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+    } satisfies DiscoveryLikeResponse;
+  }
+
+  return submitDiscoveryDecision(accessToken, {
+    ...payload,
+    action: "pass",
   });
 }
 
@@ -807,6 +1211,7 @@ export async function updateDiscoveryPreferences(
 ) {
   if (isDemoToken(accessToken)) {
     DEMO_DISCOVERY_PREFERENCES.filters = filters;
+    DEMO_DISCOVERY_QUEUE_VERSION += 1;
     return DEMO_DISCOVERY_PREFERENCES;
   }
 
@@ -817,12 +1222,74 @@ export async function updateDiscoveryPreferences(
   });
 }
 
+export async function resetDiscoveryHistory(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    DEMO_DISCOVERY_PREFERENCES.likedProfileIds = [];
+    DEMO_DISCOVERY_PREFERENCES.passedProfileIds = [];
+    DEMO_DISCOVERY_PREFERENCES.currentDecisionCounts = {
+      likes: 0,
+      passes: 0,
+    };
+    DEMO_DISCOVERY_PREFERENCES.popularAttributesByCategory =
+      createEmptyPopularAttributesByCategory();
+    DEMO_DISCOVERY_PREFERENCES.totalLikesCount = 0;
+    DEMO_DISCOVERY_PREFERENCES.lifetimeCounts = {
+      likes: 0,
+      passes: 0,
+    };
+    DEMO_DISCOVERY_PREFERENCES.threshold = {
+      likeThreshold: 30,
+      totalLikes: 0,
+      totalPasses: 0,
+      likesUntilUnlock: 30,
+      thresholdReached: false,
+      thresholdReachedAt: null,
+      lastDecisionEventAt: null,
+      lastDecisionInteractionId: null,
+    };
+    DEMO_DISCOVERY_PREFERENCES.goalsUnlock = {
+      available: false,
+      justUnlocked: false,
+      unlockMessagePending: false,
+      goalsUnlockEventEmittedAt: null,
+      goalsUnlockMessageSeenAt: null,
+    };
+    DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount = 0;
+    DEMO_DISCOVERY_QUEUE_VERSION += 1;
+    return DEMO_DISCOVERY_PREFERENCES;
+  }
+
+  return request<DiscoveryPreferencesResponse>("/api/discovery/reset", {
+    method: "POST",
+    accessToken,
+  });
+}
+
 export async function getGoals(accessToken: string) {
   if (isDemoToken(accessToken)) {
     return { goals: DEMO_GOALS };
   }
 
   return request<{ goals: GoalItemResponse[] }>("/api/me/goals", {
+    accessToken,
+  });
+}
+
+export async function acknowledgeGoalsUnlockSeen(accessToken: string) {
+  if (isDemoToken(accessToken)) {
+    const now = new Date().toISOString();
+    DEMO_DISCOVERY_PREFERENCES.goalsUnlock = {
+      ...DEMO_DISCOVERY_PREFERENCES.goalsUnlock,
+      justUnlocked: false,
+      unlockMessagePending: false,
+      goalsUnlockMessageSeenAt:
+        DEMO_DISCOVERY_PREFERENCES.goalsUnlock.goalsUnlockMessageSeenAt || now,
+    };
+    return DEMO_DISCOVERY_PREFERENCES.goalsUnlock;
+  }
+
+  return request<DiscoveryPreferencesResponse["goalsUnlock"]>("/api/me/goals/unlock/seen", {
+    method: "POST",
     accessToken,
   });
 }

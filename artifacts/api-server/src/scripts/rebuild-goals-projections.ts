@@ -11,13 +11,15 @@ async function main() {
   const userId = Number(process.env.USER_ID || "");
 
   if (Number.isFinite(userId) && userId > 0) {
-    const result = await goalsService.rebuildUserProgress(userId);
-    console.log("[api-server] rebuilt goals projections", result);
+    const result = await goalsService.rebuildUserGoalTargets(userId, undefined, {
+      refreshPreferences: true,
+    });
+    console.log("[api-server] rebuilt goal targets", result);
     return;
   }
 
-  const result = await goalsService.rebuildAllUserProgress();
-  console.log("[api-server] rebuilt goals projections", result);
+  const result = await goalsService.rebuildAllUserGoalTargets();
+  console.log("[api-server] rebuilt goal targets", result);
 }
 
 main().catch((error) => {

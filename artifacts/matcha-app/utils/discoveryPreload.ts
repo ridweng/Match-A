@@ -1,6 +1,6 @@
 import { Image } from "expo-image";
 
-import type { DiscoverProfile } from "@/data/profiles";
+import type { DiscoveryFeedProfileResponse as DiscoverProfile } from "@/services/auth";
 
 export const DISCOVERY_PRELOAD_QUEUE_LENGTH = 3;
 export const DISCOVERY_PRELOAD_IMAGE_LIMITS_BY_SLOT = [1, 1, 0] as const;

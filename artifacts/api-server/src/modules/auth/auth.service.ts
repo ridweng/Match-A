@@ -974,6 +974,10 @@ export class AuthService {
         ]
       );
 
+      await this.goalsService.rebuildUserGoalTargets(userId, client, {
+        refreshPreferences: false,
+      });
+
       await client.query("COMMIT");
       return (await this.findUserSettings(userId))!;
     } catch (error) {

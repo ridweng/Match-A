@@ -6,34 +6,114 @@ export type GoalCategoryCode =
   | "language"
   | "studies";
 
+export type GoalComparisonModel = "ordinal" | "equivalence" | "exact";
+export type PreferenceValueSeed = {
+  categoryCode: GoalCategoryCode;
+  valueKey: string;
+  labelEs: string;
+  labelEn: string;
+  sortOrder: number;
+  ordinalRank?: number;
+};
+
 export const GOAL_CATEGORIES: Array<{
   code: GoalCategoryCode;
   labelEs: string;
   labelEn: string;
   sortOrder: number;
+  comparisonModel: GoalComparisonModel;
+  supportsModeDisplay: boolean;
+  supportsGoalDerivation: boolean;
+  supportsProgressCalculation: boolean;
+  supportsTaskGeneration: boolean;
+  thresholdLikeCount: number;
+  goalEngineEnabled: boolean;
 }> = [
-  { code: "physical", labelEs: "Físicas", labelEn: "Physical", sortOrder: 0 },
+  {
+    code: "physical",
+    labelEs: "Físicas",
+    labelEn: "Physical",
+    sortOrder: 0,
+    comparisonModel: "ordinal",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: true,
+    supportsProgressCalculation: true,
+    supportsTaskGeneration: true,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: true,
+  },
   {
     code: "personality",
     labelEs: "Personalidad",
     labelEn: "Personality",
     sortOrder: 1,
+    comparisonModel: "equivalence",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: false,
+    supportsProgressCalculation: false,
+    supportsTaskGeneration: false,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: false,
   },
-  { code: "family", labelEs: "Familia", labelEn: "Family", sortOrder: 2 },
+  {
+    code: "family",
+    labelEs: "Familia",
+    labelEn: "Family",
+    sortOrder: 2,
+    comparisonModel: "exact",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: true,
+    supportsProgressCalculation: true,
+    supportsTaskGeneration: true,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: true,
+  },
   {
     code: "expectations",
     labelEs: "Expectativas",
     labelEn: "Expectations",
     sortOrder: 3,
+    comparisonModel: "exact",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: true,
+    supportsProgressCalculation: true,
+    supportsTaskGeneration: true,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: true,
   },
-  { code: "language", labelEs: "Idioma", labelEn: "Language", sortOrder: 4 },
-  { code: "studies", labelEs: "Estudios", labelEn: "Studies", sortOrder: 5 },
+  {
+    code: "language",
+    labelEs: "Idioma",
+    labelEn: "Language",
+    sortOrder: 4,
+    comparisonModel: "exact",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: true,
+    supportsProgressCalculation: true,
+    supportsTaskGeneration: true,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: true,
+  },
+  {
+    code: "studies",
+    labelEs: "Estudios",
+    labelEn: "Studies",
+    sortOrder: 5,
+    comparisonModel: "ordinal",
+    supportsModeDisplay: true,
+    supportsGoalDerivation: true,
+    supportsProgressCalculation: true,
+    supportsTaskGeneration: true,
+    thresholdLikeCount: 30,
+    goalEngineEnabled: true,
+  },
 ];
 
 export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "1",
     categoryCode: "physical",
+    taskTemplateGroupKey: "default",
     titleEs: "Resistencia cardiovascular",
     titleEn: "Cardiovascular endurance",
     defaultSortOrder: 0,
@@ -45,6 +125,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "2",
     categoryCode: "personality",
+    taskTemplateGroupKey: "default",
     titleEs: "Confianza social",
     titleEn: "Social confidence",
     defaultSortOrder: 0,
@@ -56,6 +137,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "3",
     categoryCode: "physical",
+    taskTemplateGroupKey: "default",
     titleEs: "Cuidado personal consistente",
     titleEn: "Consistent grooming routine",
     defaultSortOrder: 2,
@@ -67,6 +149,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "4",
     categoryCode: "personality",
+    taskTemplateGroupKey: "default",
     titleEs: "Inteligencia emocional",
     titleEn: "Emotional intelligence",
     defaultSortOrder: 2,
@@ -78,6 +161,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "5",
     categoryCode: "physical",
+    taskTemplateGroupKey: "default",
     titleEs: "Postura corporal",
     titleEn: "Body posture",
     defaultSortOrder: 1,
@@ -89,6 +173,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "6",
     categoryCode: "language",
+    taskTemplateGroupKey: "default",
     titleEs: "Habilidades de conversación",
     titleEn: "Conversation skills",
     defaultSortOrder: 0,
@@ -100,6 +185,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "7",
     categoryCode: "personality",
+    taskTemplateGroupKey: "default",
     titleEs: "Límites personales claros",
     titleEn: "Clear personal boundaries",
     defaultSortOrder: 1,
@@ -111,6 +197,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "8",
     categoryCode: "family",
+    taskTemplateGroupKey: "default",
     titleEs: "Visión familiar clara",
     titleEn: "Clear family vision",
     defaultSortOrder: 0,
@@ -122,6 +209,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "9",
     categoryCode: "family",
+    taskTemplateGroupKey: "default",
     titleEs: "Conversación sobre hijxs",
     titleEn: "Children conversation",
     defaultSortOrder: 1,
@@ -133,6 +221,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "10",
     categoryCode: "family",
+    taskTemplateGroupKey: "default",
     titleEs: "Ritmo de estabilidad",
     titleEn: "Pace of stability",
     defaultSortOrder: 2,
@@ -144,6 +233,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "11",
     categoryCode: "expectations",
+    taskTemplateGroupKey: "default",
     titleEs: "Claridad romántica",
     titleEn: "Relationship clarity",
     defaultSortOrder: 0,
@@ -155,6 +245,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "12",
     categoryCode: "expectations",
+    taskTemplateGroupKey: "default",
     titleEs: "No negociables sanos",
     titleEn: "Healthy non-negotiables",
     defaultSortOrder: 2,
@@ -166,6 +257,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "13",
     categoryCode: "expectations",
+    taskTemplateGroupKey: "default",
     titleEs: "Ritmo consciente",
     titleEn: "Intentional pacing",
     defaultSortOrder: 1,
@@ -177,6 +269,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "14",
     categoryCode: "language",
+    taskTemplateGroupKey: "default",
     titleEs: "Presentación natural",
     titleEn: "Natural self-introduction",
     defaultSortOrder: 2,
@@ -188,6 +281,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "15",
     categoryCode: "language",
+    taskTemplateGroupKey: "default",
     titleEs: "Escucha activa verbal",
     titleEn: "Verbal active listening",
     defaultSortOrder: 1,
@@ -199,6 +293,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "16",
     categoryCode: "studies",
+    taskTemplateGroupKey: "default",
     titleEs: "Historia profesional clara",
     titleEn: "Clear learning story",
     defaultSortOrder: 2,
@@ -210,6 +305,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "17",
     categoryCode: "studies",
+    taskTemplateGroupKey: "default",
     titleEs: "Plan de crecimiento",
     titleEn: "Growth plan",
     defaultSortOrder: 0,
@@ -221,6 +317,7 @@ export const DEFAULT_GOAL_TEMPLATES = [
   {
     goalKey: "18",
     categoryCode: "studies",
+    taskTemplateGroupKey: "default",
     titleEs: "Mostrar tu especialidad",
     titleEn: "Show your expertise",
     defaultSortOrder: 1,
@@ -230,3 +327,55 @@ export const DEFAULT_GOAL_TEMPLATES = [
     impactEn: "Helps you stand out naturally",
   },
 ] as const;
+
+export const DEFAULT_PREFERENCE_VALUES: PreferenceValueSeed[] = [
+  { categoryCode: "physical", valueKey: "slim", labelEs: "Delgado", labelEn: "Slim", sortOrder: 0, ordinalRank: 0 },
+  { categoryCode: "physical", valueKey: "lean", labelEs: "Esbelto", labelEn: "Lean", sortOrder: 1, ordinalRank: 1 },
+  { categoryCode: "physical", valueKey: "athletic", labelEs: "Atlético", labelEn: "Athletic", sortOrder: 2, ordinalRank: 2 },
+  { categoryCode: "physical", valueKey: "muscular", labelEs: "Musculoso", labelEn: "Muscular", sortOrder: 3, ordinalRank: 3 },
+  { categoryCode: "physical", valueKey: "medium_build", labelEs: "Complexión media", labelEn: "Medium build", sortOrder: 4, ordinalRank: 4 },
+  { categoryCode: "physical", valueKey: "compact_build", labelEs: "Compacto", labelEn: "Compact build", sortOrder: 5, ordinalRank: 5 },
+  { categoryCode: "physical", valueKey: "curvy", labelEs: "Curvilíneo", labelEn: "Curvy", sortOrder: 6, ordinalRank: 6 },
+  { categoryCode: "physical", valueKey: "rounded_build", labelEs: "Cuerpo redondeado", labelEn: "Rounded build", sortOrder: 7, ordinalRank: 7 },
+  { categoryCode: "physical", valueKey: "sturdy", labelEs: "Robusto", labelEn: "Sturdy", sortOrder: 8, ordinalRank: 8 },
+  { categoryCode: "physical", valueKey: "large_build", labelEs: "Complexión grande", labelEn: "Large build", sortOrder: 9, ordinalRank: 9 },
+  { categoryCode: "physical", valueKey: "plus_size", labelEs: "Plus-size", labelEn: "Plus size", sortOrder: 10, ordinalRank: 10 },
+
+  { categoryCode: "family", valueKey: "want_children", labelEs: "Quiere hijos", labelEn: "Wants children", sortOrder: 0 },
+  { categoryCode: "family", valueKey: "have_and_want_more", labelEs: "Tiene y quiere más", labelEn: "Has and wants more", sortOrder: 1 },
+  { categoryCode: "family", valueKey: "have_and_dont_want_more", labelEs: "Tiene y no quiere más", labelEn: "Has and does not want more", sortOrder: 2 },
+  { categoryCode: "family", valueKey: "not_sure", labelEs: "No está seguro", labelEn: "Not sure", sortOrder: 3 },
+  { categoryCode: "family", valueKey: "dont_want_children", labelEs: "No quiere hijos", labelEn: "Does not want children", sortOrder: 4 },
+
+  { categoryCode: "expectations", valueKey: "stable_relationship", labelEs: "Relación estable", labelEn: "Stable relationship", sortOrder: 0 },
+  { categoryCode: "expectations", valueKey: "still_figuring_it_out", labelEs: "Aún lo está descubriendo", labelEn: "Still figuring it out", sortOrder: 1 },
+  { categoryCode: "expectations", valueKey: "making_friends", labelEs: "Hacer amistades", labelEn: "Making friends", sortOrder: 2 },
+  { categoryCode: "expectations", valueKey: "nothing_serious", labelEs: "Nada serio", labelEn: "Nothing serious", sortOrder: 3 },
+
+  { categoryCode: "language", valueKey: "es", labelEs: "Español", labelEn: "Spanish", sortOrder: 0 },
+  { categoryCode: "language", valueKey: "en", labelEs: "Inglés", labelEn: "English", sortOrder: 1 },
+  { categoryCode: "language", valueKey: "fr", labelEs: "Francés", labelEn: "French", sortOrder: 2 },
+  { categoryCode: "language", valueKey: "de", labelEs: "Alemán", labelEn: "German", sortOrder: 3 },
+  { categoryCode: "language", valueKey: "it", labelEs: "Italiano", labelEn: "Italian", sortOrder: 4 },
+  { categoryCode: "language", valueKey: "pt", labelEs: "Portugués", labelEn: "Portuguese", sortOrder: 5 },
+  { categoryCode: "language", valueKey: "ca", labelEs: "Catalán", labelEn: "Catalan", sortOrder: 6 },
+  { categoryCode: "language", valueKey: "ja", labelEs: "Japonés", labelEn: "Japanese", sortOrder: 7 },
+
+  { categoryCode: "studies", valueKey: "high_school", labelEs: "Secundaria", labelEn: "High school", sortOrder: 0, ordinalRank: 0 },
+  { categoryCode: "studies", valueKey: "technical_school", labelEs: "Formación técnica", labelEn: "Technical school", sortOrder: 1, ordinalRank: 1 },
+  { categoryCode: "studies", valueKey: "university_student", labelEs: "Estudiante universitario", labelEn: "University student", sortOrder: 2, ordinalRank: 2 },
+  { categoryCode: "studies", valueKey: "bachelors_degree", labelEs: "Licenciatura", labelEn: "Bachelor's degree", sortOrder: 3, ordinalRank: 3 },
+  { categoryCode: "studies", valueKey: "masters_degree", labelEs: "Máster", labelEn: "Master's degree", sortOrder: 4, ordinalRank: 4 },
+  { categoryCode: "studies", valueKey: "doctorate", labelEs: "Doctorado", labelEn: "Doctorate", sortOrder: 5, ordinalRank: 5 },
+];
+
+export const DEFAULT_CATEGORY_GOAL_RULES = GOAL_CATEGORIES.map((category) => ({
+  categoryCode: category.code,
+  ruleKey: "default",
+  gapMin: 0,
+  gapMax: 1000,
+  targetSelectionStrategy: "mode_value",
+  progressFormulaType: "category_default",
+  taskTemplateGroupKey: "default",
+  isActive: true,
+}));

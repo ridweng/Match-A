@@ -77,6 +77,7 @@ import {
   isStoredProfilePhoto,
   saveProfilePhotoLocally,
 } from "@/utils/profilePhotos";
+import type { ProfileEditableField, ProfileFieldSaveState } from "@/context/AppContext";
 
 const MAX_SPOKEN_LANGUAGES = 7;
 
@@ -101,12 +102,16 @@ function SelectField({
   options,
   onChange,
   getOptionLabel,
+  saveState,
+  t,
 }: {
   label: string;
   value: string;
   options: string[];
   onChange: (value: string) => void;
   getOptionLabel?: (value: string) => string;
+  saveState?: ProfileFieldSaveState;
+  t: (es: string, en: string) => string;
 }) {
   const [open, setOpen] = React.useState(false);
 
@@ -151,8 +156,19 @@ function SelectField({
           </View>
         ) : null}
       </View>
+      <FieldSaveStateText state={saveState} t={t} />
     </View>
   );
+}
+
+function FieldSaveStateText({
+  state,
+  t,
+}: {
+  state?: ProfileFieldSaveState;
+  t: (es: string, en: string) => string;
+}) {
+  return null;
 }
 
 function normalizeHeightInput(value: string) {
@@ -223,9 +239,10 @@ export default function ProfileScreen() {
     accountProfile,
     heightUnit,
     language,
+    profileSaveStates,
     removeProfilePhoto,
     setProfilePhoto,
-    updateProfile,
+    updateProfileField,
   } = useApp();
 
   const placeholder = t("Ninguno", "None");
@@ -296,13 +313,25 @@ export default function ProfileScreen() {
     }
 
     const targetUri = await saveProfilePhotoLocally(index, sourceUri);
-
     const previousPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
-    if (previousPhoto?.localUri && isStoredProfilePhoto(previousPhoto.localUri)) {
+    const nextPhoto = await setProfilePhoto(index, targetUri);
+    if (nextPhoto?.status === "error") {
+      Alert.alert(
+        t("No se pudo subir la foto", "Couldn't upload photo"),
+        t(
+          "La foto quedó como pendiente con error. Puedes volver a intentarlo o eliminarla.",
+          "The photo stayed in an error state. You can retry or remove it."
+        )
+      );
+    }
+    if (
+      nextPhoto?.status !== "error" &&
+      previousPhoto?.localUri &&
+      previousPhoto.localUri !== targetUri &&
+      isStoredProfilePhoto(previousPhoto.localUri)
+    ) {
       deleteStoredProfilePhoto(previousPhoto.localUri).catch(() => {});
     }
-
-    await setProfilePhoto(index, targetUri);
   };
 
   const requestAndPickPhoto = async (index: number) => {
@@ -359,8 +388,9 @@ export default function ProfileScreen() {
   };
 
   const openMainPhotoPicker = (index: number) => {
+    const currentPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
     Alert.alert(
-      t("Foto principal", "Main photo"),
+      index === 0 ? t("Foto principal", "Main photo") : t("Editar foto", "Edit photo"),
       t(
         "Elige si quieres usar una foto de tu galería o tomar una nueva.",
         "Choose whether to use a photo from your library or take a new one."
@@ -382,6 +412,20 @@ export default function ProfileScreen() {
             requestAndCapturePhoto(index).catch(() => {});
           },
         },
+        ...(currentPhoto
+          ? [
+              {
+                text: t("Eliminar", "Remove"),
+                style: "destructive" as const,
+                onPress: () => {
+                  if (isStoredProfilePhoto(currentPhoto.localUri)) {
+                    deleteStoredProfilePhoto(currentPhoto.localUri).catch(() => {});
+                  }
+                  removeProfilePhoto(index).catch(() => {});
+                },
+              },
+            ]
+          : []),
       ]
     );
   };
@@ -389,54 +433,17 @@ export default function ProfileScreen() {
   const handlePhotoPress = (index: number) => {
     const currentPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
     if (!currentPhoto) {
-      if (index === 0) {
-        openMainPhotoPicker(index);
-        return;
-      }
-      requestAndPickPhoto(index).catch(() => {});
+      openMainPhotoPicker(index);
       return;
     }
-
-    Alert.alert(
-      t("Editar foto", "Edit photo"),
-      t(
-        "Puedes reemplazar o eliminar esta foto.",
-        "You can replace or remove this photo."
-      ),
-      [
-        {
-          text: t("Cancelar", "Cancel"),
-          style: "cancel",
-        },
-        {
-          text: t("Eliminar", "Remove"),
-          style: "destructive",
-          onPress: () => {
-            if (isStoredProfilePhoto(currentPhoto.localUri)) {
-              deleteStoredProfilePhoto(currentPhoto.localUri).catch(() => {});
-            }
-            removeProfilePhoto(index).catch(() => {});
-          },
-        },
-        {
-          text: t("Reemplazar", "Replace"),
-          onPress: () => {
-            if (index === 0) {
-              openMainPhotoPicker(index);
-              return;
-            }
-            requestAndPickPhoto(index).catch(() => {});
-          },
-        },
-      ]
-    );
+    openMainPhotoPicker(index);
   };
 
-  const update = (key: keyof UserProfile, value: string | string[]) => {
-    updateProfile({
-      [key]: value,
-    } as Partial<UserProfile>);
+  const update = <K extends ProfileEditableField>(key: K, value: UserProfile[K]) => {
+    updateProfileField(key, value);
   };
+
+  const getFieldState = (field: ProfileEditableField) => profileSaveStates[field];
 
   const openLanguagesModal = () => {
     setDraftLanguages(spokenLanguages);
@@ -613,6 +620,20 @@ export default function ProfileScreen() {
                       <Text style={styles.mainBadgeText}>{t("Principal", "Main")}</Text>
                     </View>
                   ) : null}
+                  {photo?.status === "pending" ? (
+                    <View style={styles.photoStateBadge}>
+                      <Text style={styles.photoStateBadgeText}>
+                        {t("Subiendo", "Uploading")}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {photo?.status === "error" ? (
+                    <View style={[styles.photoStateBadge, styles.photoStateBadgeError]}>
+                      <Text style={styles.photoStateBadgeText}>
+                        {t("Error", "Error")}
+                      </Text>
+                    </View>
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -634,6 +655,7 @@ export default function ProfileScreen() {
                 numberOfLines={5}
                 textAlignVertical="top"
               />
+              <FieldSaveStateText state={getFieldState("bio")} t={t} />
             </View>
             <SelectField
               label={t("Metas de tu relación", "Your relationship goals")}
@@ -641,6 +663,8 @@ export default function ProfileScreen() {
               options={RELATIONSHIP_GOALS}
               onChange={(value) => update("relationshipGoals", value)}
               getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
+              saveState={getFieldState("relationshipGoals")}
+              t={t}
             />
             <SelectField
               label={t("Educación", "Education")}
@@ -648,6 +672,8 @@ export default function ProfileScreen() {
               options={EDUCATION_LEVELS}
               onChange={(value) => update("education", value)}
               getOptionLabel={(value) => getEducationLabel(value, t)}
+              saveState={getFieldState("education")}
+              t={t}
             />
             <SelectField
               label={t("Quiero tener hijxs", "Having children")}
@@ -655,6 +681,8 @@ export default function ProfileScreen() {
               options={CHILDREN_PREFERENCES}
               onChange={(value) => update("childrenPreference", value)}
               getOptionLabel={(value) => getChildrenPreferenceLabel(value, t)}
+              saveState={getFieldState("childrenPreference")}
+              t={t}
             />
             <View style={styles.editField}>
               <Text style={styles.editLabel}>{t("Idiomas que hablo", "Languages I speak")}</Text>
@@ -695,6 +723,7 @@ export default function ProfileScreen() {
                   ))}
                 </View>
               ) : null}
+              <FieldSaveStateText state={getFieldState("languagesSpoken")} t={t} />
             </View>
           </View>
         </View>
@@ -708,6 +737,8 @@ export default function ProfileScreen() {
               options={PHYSICAL_ACTIVITY_OPTIONS}
               onChange={(value) => update("physicalActivity", value)}
               getOptionLabel={(value) => getPhysicalActivityLabel(value, t)}
+              saveState={getFieldState("physicalActivity")}
+              t={t}
             />
             <SelectField
               label={t("Bebida", "Drink")}
@@ -715,6 +746,8 @@ export default function ProfileScreen() {
               options={ALCOHOL_USE_OPTIONS}
               onChange={(value) => update("alcoholUse", value)}
               getOptionLabel={(value) => getAlcoholUseLabel(value, t)}
+              saveState={getFieldState("alcoholUse")}
+              t={t}
             />
             <SelectField
               label={t("Tabaco", "Smoke")}
@@ -722,6 +755,8 @@ export default function ProfileScreen() {
               options={TOBACCO_USE_OPTIONS}
               onChange={(value) => update("tobaccoUse", value)}
               getOptionLabel={(value) => getTobaccoUseLabel(value, t)}
+              saveState={getFieldState("tobaccoUse")}
+              t={t}
             />
             <SelectField
               label={t("Interés en la política", "Interest in politics")}
@@ -729,6 +764,8 @@ export default function ProfileScreen() {
               options={POLITICAL_INTEREST_OPTIONS}
               onChange={(value) => update("politicalInterest", value)}
               getOptionLabel={(value) => getPoliticalInterestLabel(value, t)}
+              saveState={getFieldState("politicalInterest")}
+              t={t}
             />
             <SelectField
               label={t(
@@ -739,6 +776,8 @@ export default function ProfileScreen() {
               options={RELIGION_IMPORTANCE_OPTIONS}
               onChange={(value) => update("religionImportance", value)}
               getOptionLabel={(value) => getReligionImportanceLabel(value, t)}
+              saveState={getFieldState("religionImportance")}
+              t={t}
             />
             <SelectField
               label={t("Religión", "Religion")}
@@ -746,6 +785,8 @@ export default function ProfileScreen() {
               options={RELIGION_OPTIONS}
               onChange={(value) => update("religion", value)}
               getOptionLabel={(value) => getReligionLabel(value, t)}
+              saveState={getFieldState("religion")}
+              t={t}
             />
           </View>
         </View>
@@ -761,6 +802,8 @@ export default function ProfileScreen() {
               options={BODY_TYPES}
               onChange={(value) => update("bodyType", value)}
               getOptionLabel={(value) => getBodyTypeLabel(value, t)}
+              saveState={getFieldState("bodyType")}
+              t={t}
             />
             <View style={styles.editField}>
               <Text style={styles.editLabel}>{t("Altura", "Height")}</Text>
@@ -784,6 +827,7 @@ export default function ProfileScreen() {
                   {heightUnitLabel}
                 </Text>
               ) : null}
+              <FieldSaveStateText state={getFieldState("height")} t={t} />
             </View>
             <SelectField
               label={t("Color de cabello", "Hair color")}
@@ -791,6 +835,8 @@ export default function ProfileScreen() {
               options={HAIR_COLORS}
               onChange={(value) => update("hairColor", value)}
               getOptionLabel={(value) => getHairColorLabel(value, t)}
+              saveState={getFieldState("hairColor")}
+              t={t}
             />
             <SelectField
               label={t("Etnia", "Ethnicity")}
@@ -798,6 +844,8 @@ export default function ProfileScreen() {
               options={ETHNICITIES}
               onChange={(value) => update("ethnicity", value)}
               getOptionLabel={(value) => getEthnicityLabel(value, t)}
+              saveState={getFieldState("ethnicity")}
+              t={t}
             />
           </View>
         </View>
@@ -829,6 +877,7 @@ export default function ProfileScreen() {
                 );
               })}
             </View>
+            <FieldSaveStateText state={getFieldState("interests")} t={t} />
           </View>
         </View>
 
@@ -1134,6 +1183,18 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: 14,
   },
+  saveStateText: {
+    marginTop: 8,
+    fontFamily: "Inter_500Medium",
+    fontSize: 12,
+    color: Colors.textMuted,
+  },
+  saveStateTextSaved: {
+    color: Colors.primaryLight,
+  },
+  saveStateTextError: {
+    color: Colors.error,
+  },
   photoGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1175,6 +1236,23 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15,26,20,0.72)",
   },
   mainBadgeText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 11,
+    color: Colors.text,
+  },
+  photoStateBadge: {
+    position: "absolute",
+    right: 8,
+    bottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(15,26,20,0.76)",
+  },
+  photoStateBadgeError: {
+    backgroundColor: "rgba(194,65,76,0.92)",
+  },
+  photoStateBadgeText: {
     fontFamily: "Inter_600SemiBold",
     fontSize: 11,
     color: Colors.text,

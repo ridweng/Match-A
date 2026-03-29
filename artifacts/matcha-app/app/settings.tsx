@@ -3,7 +3,9 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -422,6 +424,7 @@ export default function SettingsScreen() {
     user,
     logout,
     saveSettings,
+    settingsSaveState,
     deleteAccount,
     setBiometricsEnabled,
     t,
@@ -461,12 +464,32 @@ export default function SettingsScreen() {
   const [biometricPending, setBiometricPending] = useState(false);
   const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
   const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
+  const [pendingNavigationAfterSave, setPendingNavigationAfterSave] = useState(false);
 
   useEffect(() => {
     setLocal(settingsSeed);
     setLocalHeightUnit(heightUnit);
     setLocalLanguage(language);
   }, [heightUnit, language, settingsSeed]);
+
+  useEffect(() => {
+    if (!pendingNavigationAfterSave) {
+      return;
+    }
+
+    if (settingsSaveState === "error") {
+      setPendingNavigationAfterSave(false);
+      return;
+    }
+
+    if (settingsSaveState !== "idle") {
+      return;
+    }
+
+    setPendingNavigationAfterSave(false);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.replace("/(tabs)/profile");
+  }, [pendingNavigationAfterSave, settingsSaveState]);
 
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
@@ -488,6 +511,7 @@ export default function SettingsScreen() {
 
   const handleSave = async () => {
     if (!hasChanges) return;
+    Keyboard.dismiss();
     const saved = await saveSettings({
       name: local.name.trim(),
       dateOfBirth: local.dateOfBirth,
@@ -502,8 +526,11 @@ export default function SettingsScreen() {
       heightUnit: localHeightUnit,
     });
     if (!saved) return;
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setPendingNavigationAfterSave(true);
   };
+
+  const isSavePending =
+    settingsSaveState === "queued" || settingsSaveState === "saving";
 
   const handleBiometricToggle = async (enabled: boolean) => {
     setBiometricPending(true);
@@ -606,23 +633,38 @@ export default function SettingsScreen() {
         <Text style={s.headerTitle}>{t("Ajustes", "Settings")}</Text>
         <Pressable
           onPress={handleSave}
-          disabled={!hasChanges || authBusy}
+          disabled={!hasChanges || authBusy || isSavePending}
           style={({ pressed }) => [
             s.saveIconBtn,
-            hasChanges && !authBusy && s.saveIconBtnActive,
-            (!hasChanges || authBusy) && s.saveIconBtnDisabled,
-            pressed && hasChanges && !authBusy && { opacity: 0.82 },
+            hasChanges && !authBusy && !isSavePending && s.saveIconBtnActive,
+            (!hasChanges || authBusy || isSavePending) && s.saveIconBtnDisabled,
+            pressed &&
+              hasChanges &&
+              !authBusy &&
+              !isSavePending && { opacity: 0.82 },
           ]}
         >
-          <Feather
-            name="check"
-            size={22}
-            color={hasChanges && !authBusy ? colors.textInverted : colors.textMuted}
-          />
+          {isSavePending ? (
+            <ActivityIndicator
+              size="small"
+              color={colors.textInverted}
+              style={s.saveSpinner}
+            />
+          ) : (
+            <Feather
+              name="check"
+              size={22}
+              color={
+                hasChanges && !authBusy && !isSavePending
+                  ? colors.textInverted
+                  : colors.textMuted
+              }
+            />
+          )}
           <Text
             style={[
               s.saveIconBtnText,
-              (!hasChanges || authBusy) && s.saveIconBtnTextDisabled,
+              (!hasChanges || authBusy || isSavePending) && s.saveIconBtnTextDisabled,
             ]}
           >
             {t("Guardar", "Save")}
@@ -812,6 +854,11 @@ const s = StyleSheet.create({
   },
   saveIconBtnTextDisabled: {
     color: colors.textMuted,
+  },
+  saveSpinner: {
+    width: 22,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
     position: "absolute",

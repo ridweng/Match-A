@@ -17,6 +17,11 @@ export const runtimeConfig = {
   emailVerificationTtlMinutes: env.AUTH_EMAIL_VERIFICATION_TTL_MINUTES,
   onboardingRolloutAt: env.AUTH_ONBOARDING_ROLLOUT_AT,
   passwordResetUrlBase: env.AUTH_PASSWORD_RESET_URL_BASE,
+  admin: {
+    enabled: env.ADMIN_DASHBOARD_ENABLED,
+    username: env.ADMIN_BASIC_AUTH_USERNAME,
+    password: env.ADMIN_BASIC_AUTH_PASSWORD,
+  },
   email: {
     enabled: env.SMTP_ENABLED,
     logOnly: env.EMAIL_LOG_ONLY,

@@ -29,6 +29,27 @@
       "when": 1774687200000,
       "tag": "0003_server_first_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774716225300,
+      "tag": "0004_strange_cargill",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774728000000,
+      "tag": "0005_threshold_unlock_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1774746000000,
+      "tag": "0006_discovery_actor_queue",
+      "breakpoints": true
     }
   ]
 }

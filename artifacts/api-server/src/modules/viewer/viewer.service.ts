@@ -7,6 +7,7 @@ import { MediaService } from "../media/media.service";
 
 type ProfileRow = {
   id: number;
+  updated_at: string | Date | null;
   display_name: string;
   date_of_birth: string | null;
   location: string;
@@ -112,6 +113,7 @@ export class ViewerService {
         pool.query<FreshnessRow>(
           `SELECT GREATEST(
              COALESCE((SELECT p.updated_at FROM core.profiles p WHERE p.id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pcv.updated_at) FROM core.profile_category_values pcv WHERE pcv.profile_id = $1), ${epochExpression}),
              COALESCE((SELECT MAX(pl.updated_at) FROM core.profile_languages pl WHERE pl.profile_id = $1), ${epochExpression}),
              COALESCE((SELECT MAX(pi.updated_at) FROM core.profile_interests pi WHERE pi.profile_id = $1), ${epochExpression})
            ) AS updated_at`,
@@ -146,16 +148,23 @@ export class ViewerService {
           `SELECT GREATEST(
              COALESCE((SELECT MAX(ugt.updated_at) FROM goals.user_goal_tasks ugt WHERE ugt.user_id = $1), ${epochExpression}),
              COALESCE((SELECT MAX(ucp.updated_at) FROM goals.user_category_progress ucp WHERE ucp.user_id = $1), ${epochExpression}),
-             COALESCE((SELECT ugp.updated_at FROM goals.user_global_progress ugp WHERE ugp.user_id = $1), ${epochExpression})
+             COALESCE((SELECT ugp.updated_at FROM goals.user_global_progress ugp WHERE ugp.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(uct.computed_at) FROM goals.user_category_targets uct WHERE uct.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(uctp.computed_at) FROM goals.user_category_target_progress uctp WHERE uctp.user_id = $1), ${epochExpression}),
+             COALESCE((SELECT ugpm.last_recomputed_at FROM goals.user_goal_projection_meta ugpm WHERE ugpm.user_id = $1), ${epochExpression})
            ) AS updated_at`,
           [userId]
         ),
         pool.query<FreshnessRow>(
           `SELECT GREATEST(
              COALESCE((SELECT fp.updated_at FROM discovery.filter_preferences fp WHERE fp.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT ast.updated_at FROM discovery.actor_state ast WHERE ast.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(aq.updated_at) FROM discovery.actor_queue aq WHERE aq.actor_profile_id = $1), ${epochExpression}),
              COALESCE((SELECT MAX(pm.updated_at) FROM discovery.popular_attribute_modes pm WHERE pm.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT pth.computed_at FROM discovery.profile_preference_thresholds pth WHERE pth.actor_profile_id = $1), ${epochExpression}),
              COALESCE((SELECT MAX(dcm.created_at) FROM discovery.discovery_change_messages dcm WHERE dcm.actor_profile_id = $1), ${epochExpression}),
-             COALESCE((SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = $1), ${epochExpression})
+             COALESCE((SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = $1), ${epochExpression}),
+             COALESCE((SELECT MAX(pd.updated_at) FROM discovery.profile_decisions pd WHERE pd.actor_profile_id = $1), ${epochExpression})
            ) AS updated_at`,
           [profileId]
         ),
@@ -183,6 +192,7 @@ export class ViewerService {
       name: row.display_name || "",
       age: "",
       dateOfBirth: row.date_of_birth || "",
+      updatedAt: this.toIsoTimestamp(row.updated_at),
       location: row.location || "",
       profession: row.profession || "",
       genderIdentity: row.gender_identity || "",
@@ -214,6 +224,7 @@ export class ViewerService {
       pool.query<ProfileRow>(
         `SELECT
            id,
+           updated_at,
            display_name,
            date_of_birth,
            location,
@@ -397,6 +408,10 @@ export class ViewerService {
         [userId]
       );
 
+      await this.goalsService.rebuildUserGoalTargets(userId, client, {
+        refreshPreferences: false,
+      });
+
       await client.query("COMMIT");
       return this.getProfile(userId);
     } catch (error) {
@@ -422,9 +437,21 @@ export class ViewerService {
       }),
       this.mediaService.listProfileImages(userId),
       this.goalsService.getUserGoals(userId),
-      this.discoveryService.getPreferences(userId).catch(() =>
-        this.discoveryService.getEmptyPreferences()
-      ),
+      this.discoveryService.getBootstrapState(userId).catch(() => ({
+        ...this.discoveryService.getEmptyPreferences(),
+        feed: {
+          profiles: [],
+          nextCursor: null,
+          hasMore: false,
+          supply: {
+            eligibleCount: 0,
+            unseenCount: 0,
+            decidedCount: 0,
+            exhausted: false,
+            fetchedAt: new Date().toISOString(),
+          },
+        },
+      })),
       this.getBootstrapFreshness(userId, profileId),
     ]);
 

@@ -242,6 +242,16 @@ export class ViewerController {
     }
   }
 
+  @Post("me/goals/unlock/seen")
+  async markGoalsUnlockSeen(@Req() req: Request, @Res() res: Response) {
+    try {
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      return res.json(await this.goalsService.markGoalsUnlockSeen(auth.user.id));
+    } catch (error) {
+      return this.sendAuthError(res, error);
+    }
+  }
+
   @Get("me/discovery/preferences")
   async getDiscoveryPreferences(@Req() req: Request, @Res() res: Response) {
     try {

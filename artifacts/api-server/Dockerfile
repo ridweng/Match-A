@@ -11,7 +11,6 @@ RUN pnpm --dir artifacts/api-server build
 
 FROM base AS runtime
 WORKDIR /app
-ENV NODE_ENV=production
 COPY --from=builder /app /app
 EXPOSE 8082
 CMD ["node", "artifacts/api-server/dist/index.cjs"]

@@ -31,6 +31,7 @@ services:
     environment:
       APP_NAME: Matcha
       APP_ENV: development
+      NODE_ENV: development
       APP_PORT: 8082
       API_BASE_URL: http://localhost:8082
       FRONTEND_BASE_URL: http://localhost:8080
@@ -54,6 +55,10 @@ services:
       SMTP_CONNECTION_TIMEOUT_MS: 10000
       SMTP_SOCKET_TIMEOUT_MS: 20000
       SMTP_VERIFY_ON_STARTUP: "false"
+      ADMIN_DASHBOARD_ENABLED: "true"
+      ADMIN_BASIC_AUTH_USERNAME: admin
+      ADMIN_BASIC_AUTH_PASSWORD: change-me-now
+
     command: >
       sh -lc "pnpm db:migrate &&
       pnpm db:seed &&

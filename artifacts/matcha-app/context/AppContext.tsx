@@ -1,4 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Location from "expo-location";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as SecureStore from "expo-secure-store";
@@ -14,10 +16,14 @@ import React, {
 import { AppState, Keyboard, Platform } from "react-native";
 
 import {
+  acknowledgeGoalsUnlockSeen as acknowledgeGoalsUnlockSeenRequest,
   type AuthCallbackPayload,
   type AuthUser,
   type DiscoveryFilters,
+  type DiscoveryFeedResponse,
+  type DiscoveryFeedProfileResponse,
   type DiscoveryLikeResponse,
+  type DiscoveryPreferencesResponse,
   type ViewerBootstrapResponse,
   type ProviderAvailability,
   type AuthProvider,
@@ -27,9 +33,13 @@ import {
   deleteAccount as deleteAccountRequest,
   deleteProfilePhoto as deleteProfilePhotoRequest,
   fetchProviderAvailability,
+  getNextDiscoveryFeedWindow,
   getViewerBootstrap,
   isInvalidRefreshError,
   likeDiscoveryProfile,
+  passDiscoveryProfile,
+  refreshDiscoveryFeed,
+  resetDiscoveryHistory as resetDiscoveryHistoryRequest,
   completeOnboarding as completeOnboardingRequest,
   mergeRemotePhotosWithLocal,
   reorderGoals as reorderGoalsRequest,
@@ -47,23 +57,52 @@ import {
   uploadProfilePhoto as uploadProfilePhotoRequest,
   ApiError,
 } from "@/services/auth";
-import { getDiscoverProfilePopularInput } from "@/data/profiles";
 import {
   deleteStoredProfilePhoto,
   ensureLocalProfilePhoto,
   getProfilePhotoBySortOrder,
+  isStoredProfilePhoto,
   normalizeStoredProfilePhotos,
   type UserProfilePhoto,
 } from "@/utils/profilePhotos";
 import { normalizeIsoDateString } from "@/utils/dateOfBirth";
 import {
+  ATOMIC_PROFILE_FIELD_GROUPS,
+  DEBOUNCED_PROFILE_FIELDS,
+  EMPTY_CANONICAL_PROFILE,
+  mapApiProfileToCanonicalProfile,
+  mapCanonicalProfileToProfilePatch,
+  normalizeCanonicalProfileField,
+  PROFILE_FIELD_OWNERSHIP,
+  reconcileCanonicalProfileFields,
+  type AtomicProfileFieldGroup,
+  type CanonicalProfile,
+  type ProfileEditableField,
+  type ProfileFieldSaveState,
+} from "@/utils/profileCanonical";
+import {
   createEmptyPopularAttributesByCategory,
   type PopularAttributeCategory,
   type PopularAttributeSnapshot,
 } from "@/utils/popularAttributes";
-import { debugLog, debugWarn } from "@/utils/debug";
+import {
+  clearMutationQueueForUser,
+  enqueueMutation,
+  getReplayableMutationsForUser,
+  removeCompletedMutationsForUser,
+  updateMutationQueueItem,
+  type MutationQueueItem,
+  type MutationQueueStatus,
+} from "@/utils/mutationQueue";
+import {
+  debugDiscoveryLog,
+  debugDiscoveryWarn,
+  debugLog,
+  debugWarn,
+} from "@/utils/debug";
 
 export type { AuthUser };
+export type { ProfileEditableField, ProfileFieldSaveState };
 
 export type GoalCategory =
   | "physical"
@@ -87,33 +126,7 @@ export type Goal = {
   impactEn: string;
 };
 
-export type UserProfile = {
-  name: string;
-  age: string;
-  dateOfBirth: string;
-  location: string;
-  profession: string;
-  genderIdentity: string;
-  pronouns: string;
-  personality: string;
-  relationshipGoals: string;
-  languagesSpoken: string[];
-  education: string;
-  childrenPreference: string;
-  physicalActivity: string;
-  alcoholUse: string;
-  tobaccoUse: string;
-  politicalInterest: string;
-  religionImportance: string;
-  religion: string;
-  bio: string;
-  bodyType: string;
-  height: string;
-  hairColor: string;
-  ethnicity: string;
-  interests: string[];
-  photos: UserProfilePhoto[];
-};
+export type UserProfile = CanonicalProfile;
 
 export type AccountProfile = UserProfile & {
   email: string;
@@ -385,33 +398,7 @@ const DEFAULT_GOALS: Goal[] = [
   },
 ];
 
-const DEFAULT_PROFILE: UserProfile = {
-  name: "",
-  age: "",
-  dateOfBirth: "",
-  location: "",
-  profession: "",
-  genderIdentity: "",
-  pronouns: "",
-  personality: "",
-  relationshipGoals: "",
-  languagesSpoken: [],
-  education: "",
-  childrenPreference: "",
-  physicalActivity: "",
-  alcoholUse: "",
-  tobaccoUse: "",
-  politicalInterest: "",
-  religionImportance: "",
-  religion: "",
-  bio: "",
-  bodyType: "",
-  height: "",
-  hairColor: "",
-  ethnicity: "",
-  interests: [],
-  photos: [],
-};
+const DEFAULT_PROFILE: UserProfile = EMPTY_CANONICAL_PROFILE;
 const DEFAULT_DISCOVERY_VIEW_PREFERENCES: DiscoveryViewPreferences = {
   selectedTab: "discover",
   cardDensity: "comfortable",
@@ -419,14 +406,7 @@ const DEFAULT_DISCOVERY_VIEW_PREFERENCES: DiscoveryViewPreferences = {
 };
 
 function normalizeStoredProfile(input: Partial<UserProfile> | null | undefined): UserProfile {
-  return {
-    ...DEFAULT_PROFILE,
-    ...(input || {}),
-    dateOfBirth: normalizeIsoDateString(input?.dateOfBirth),
-    interests: Array.isArray(input?.interests) ? input.interests : [],
-    photos: normalizeStoredProfilePhotos(input?.photos),
-    languagesSpoken: Array.isArray(input?.languagesSpoken) ? input.languagesSpoken : [],
-  };
+  return mapApiProfileToCanonicalProfile(input);
 }
 
 function recalculateGoalProgress(goals: Goal[]): Goal[] {
@@ -567,6 +547,7 @@ type AppContextType = {
     language: "es" | "en";
     heightUnit: HeightUnit;
   }) => Promise<boolean>;
+  settingsSaveState: ProfileFieldSaveState;
   deleteAccount: () => Promise<boolean>;
   t: (es: string, en: string) => string;
   goals: Goal[];
@@ -576,12 +557,30 @@ type AppContextType = {
     fromIndex: number,
     toIndex: number
   ) => void;
+  sessionSwipeCounts: {
+    likes: number;
+    dislikes: number;
+  };
+  lifetimeDiscoveryCounts: {
+    likes: number;
+    passes: number;
+  };
+  discoveryThreshold: DiscoveryThresholdState;
+  goalsUnlockState: GoalsUnlockState;
+  goalsUnlockPromptVisible: boolean;
+  recordDiscoverySwipe: (
+    direction: "left" | "right",
+    options?: { requestId?: string; targetProfileId?: number }
+  ) => void;
+  dismissGoalsUnlockPrompt: () => Promise<boolean>;
   popularAttributesByCategory: Record<
     PopularAttributeCategory,
     PopularAttributeSnapshot
   >;
   totalLikesCount: number;
-  likedProfiles: string[];
+  likedProfiles: number[];
+  passedProfiles: number[];
+  discoveryFeed: DiscoveryFeedResponse;
   discoveryFilters: DiscoveryFilters;
   discoveryViewPreferences: DiscoveryViewPreferences;
   lastServerSyncAt: string | null;
@@ -590,10 +589,24 @@ type AppContextType = {
   setDiscoveryViewPreferences: (
     updates: Partial<DiscoveryViewPreferences>
   ) => Promise<void>;
-  likeProfile: (profileId: string) => Promise<DiscoveryLikeResponse | null>;
+  likeProfile: (
+    profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+    options?: DiscoveryDecisionOptions
+  ) => Promise<DiscoveryLikeResponse | null>;
+  passProfile: (
+    profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+    options?: DiscoveryDecisionOptions
+  ) => Promise<DiscoveryLikeResponse | null>;
+  refreshDiscoveryCandidates: () => Promise<boolean>;
+  fetchNextDiscoveryWindow: () => Promise<boolean>;
+  resetDiscoveryHistory: () => Promise<boolean>;
   profile: UserProfile;
   accountProfile: AccountProfile;
-  updateProfile: (updates: Partial<UserProfile>) => void;
+  profileSaveStates: Partial<Record<ProfileEditableField, ProfileFieldSaveState>>;
+  updateProfileField: <K extends ProfileEditableField>(
+    field: K,
+    value: UserProfile[K]
+  ) => void;
   setProfilePhoto: (index: number, uri: string) => Promise<UserProfilePhoto | null>;
   removeProfilePhoto: (index: number) => Promise<void>;
 };
@@ -613,6 +626,63 @@ type ViewerBootstrapMetadata = Pick<
   ViewerBootstrapCache,
   "syncedAt" | "bootstrapGeneratedAt" | "viewerVersion" | "updatedAtByDomain"
 >;
+type DiscoveryThresholdState = DiscoveryPreferencesResponse["threshold"];
+type GoalsUnlockState = DiscoveryPreferencesResponse["goalsUnlock"];
+type LifetimeDiscoveryCounts = DiscoveryPreferencesResponse["lifetimeCounts"];
+type DiscoveryFeedState = DiscoveryFeedResponse;
+
+type ProfileTargetKey = ProfileEditableField | AtomicProfileFieldGroup;
+type SettingsSavePayload = {
+  profileFields: readonly ProfileEditableField[];
+  profilePatch: Parameters<typeof updateViewerProfile>[1];
+  settingsPatch: Parameters<typeof updateSettings>[1];
+  mePatch: Parameters<typeof updateMe>[1];
+  completed: {
+    profile: boolean;
+    settings: boolean;
+    account: boolean;
+  };
+  resolvedProfile: Pick<
+    UserProfile,
+    "name" | "dateOfBirth" | "profession" | "genderIdentity" | "pronouns" | "personality"
+  >;
+  resolvedSettings: {
+    language: "es" | "en";
+    heightUnit: HeightUnit;
+  };
+};
+
+type ProfileFieldQueuePayload = {
+  fields: readonly ProfileEditableField[];
+  patch: Parameters<typeof updateViewerProfile>[1];
+  revision: number;
+};
+
+type ProfilePhotoUploadPayload = {
+  slot: number;
+  localUri: string;
+};
+
+type ProfilePhotoDeletePayload = {
+  slot: number;
+  profileImageId: number | null;
+  localUri: string;
+};
+
+type DiscoveryDecisionAction = "like" | "pass";
+type DiscoveryDecisionOptions = {
+  requestId?: string;
+};
+type DiscoveryDecisionRequester = typeof likeDiscoveryProfile;
+type DiscoveryDecisionSnapshot = {
+  totalLikesCount: number;
+  lifetimeLikes: number;
+  lifetimePasses: number;
+  thresholdTotalLikes: number;
+  thresholdTotalPasses: number;
+  unlockAvailable: boolean;
+  unlockPending: boolean;
+};
 
 function getViewerBootstrapStorageKey(userId: number) {
   return `${VIEWER_BOOTSTRAP_STORAGE_PREFIX}${userId}`;
@@ -634,6 +704,155 @@ function createDefaultBootstrapMetadata(): ViewerBootstrapMetadata {
       discovery: now,
     },
   };
+}
+
+function createEmptyLifetimeDiscoveryCounts(): LifetimeDiscoveryCounts {
+  return {
+    likes: 0,
+    passes: 0,
+  };
+}
+
+function createEmptyDiscoveryThreshold(): DiscoveryThresholdState {
+  return {
+    likeThreshold: 30,
+    totalLikes: 0,
+    totalPasses: 0,
+    likesUntilUnlock: 30,
+    thresholdReached: false,
+    thresholdReachedAt: null,
+    lastDecisionEventAt: null,
+    lastDecisionInteractionId: null,
+  };
+}
+
+function createEmptyGoalsUnlockState(): GoalsUnlockState {
+  return {
+    available: false,
+    justUnlocked: false,
+    unlockMessagePending: false,
+    goalsUnlockEventEmittedAt: null,
+    goalsUnlockMessageSeenAt: null,
+  };
+}
+
+function createEmptyDiscoveryFeed(): DiscoveryFeedState {
+  return {
+    queueVersion: 0,
+    generatedAt: "",
+    windowSize: 0,
+    reserveCount: 0,
+    profiles: [],
+    nextCursor: null,
+    hasMore: false,
+    supply: {
+      eligibleCount: 0,
+      unseenCount: 0,
+      decidedCount: 0,
+      exhausted: false,
+      fetchedAt: "",
+    },
+  };
+}
+
+function createDiscoveryDecisionRequestId(
+  action: DiscoveryDecisionAction,
+  targetProfileId: number
+) {
+  return `discovery_${action}_${targetProfileId}_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function getAuthoritativeTotalLikesCount(
+  input: Pick<DiscoveryPreferencesResponse, "totalLikesCount" | "lifetimeCounts" | "threshold">
+) {
+  if (Number.isFinite(input.lifetimeCounts?.likes)) {
+    return Number(input.lifetimeCounts.likes);
+  }
+  if (Number.isFinite(input.threshold?.totalLikes)) {
+    return Number(input.threshold.totalLikes);
+  }
+  return Number(input.totalLikesCount) || 0;
+}
+
+function getDiscoveryDecisionSnapshot(
+  input: Pick<
+    DiscoveryPreferencesResponse,
+    "totalLikesCount" | "lifetimeCounts" | "threshold" | "goalsUnlock"
+  >
+): DiscoveryDecisionSnapshot {
+  return {
+    totalLikesCount: getAuthoritativeTotalLikesCount(input),
+    lifetimeLikes: input.lifetimeCounts.likes,
+    lifetimePasses: input.lifetimeCounts.passes,
+    thresholdTotalLikes: input.threshold.totalLikes,
+    thresholdTotalPasses: input.threshold.totalPasses,
+    unlockAvailable: input.goalsUnlock.available,
+    unlockPending: input.goalsUnlock.unlockMessagePending,
+  };
+}
+
+function pruneDiscoveryFeedWindow(
+  feed: DiscoveryFeedResponse,
+  targetProfileId: number
+): DiscoveryFeedResponse {
+  const nextProfiles = feed.profiles.filter((profile) => profile.id !== targetProfileId);
+  const removedCount = feed.profiles.length - nextProfiles.length;
+
+  if (removedCount <= 0) {
+    return feed;
+  }
+
+  const currentSupply = feed.supply || createEmptyDiscoveryFeed().supply;
+  return {
+    ...feed,
+    profiles: nextProfiles,
+    supply: {
+      ...currentSupply,
+      unseenCount: Math.max(0, currentSupply.unseenCount - removedCount),
+      decidedCount: currentSupply.decidedCount + removedCount,
+      exhausted: Math.max(0, currentSupply.unseenCount - removedCount) === 0,
+      fetchedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function getProfileTargetKey(field: ProfileEditableField): ProfileTargetKey {
+  if (ATOMIC_PROFILE_FIELD_GROUPS.includes(field as AtomicProfileFieldGroup)) {
+    return field as AtomicProfileFieldGroup;
+  }
+  return field;
+}
+
+function getProfileMutationTargetStorageKey(targetKey: ProfileTargetKey) {
+  return `profile:${targetKey}`;
+}
+
+function getPhotoMutationTargetStorageKey(slot: number) {
+  return `photo:${slot}`;
+}
+
+function isRetryableQueueError(error: any) {
+  const code = error?.code || error?.message || "";
+  return (
+    code === "NETWORK_REQUEST_FAILED" ||
+    code === "INTERNAL_SERVER_ERROR" ||
+    code === "REQUEST_FAILED"
+  );
+}
+
+function mapQueueStatusToVisibleState(status: MutationQueueStatus): ProfileFieldSaveState {
+  if (status === "saving") {
+    return "saving";
+  }
+  if (status === "queued") {
+    return "queued";
+  }
+  if (status === "retryable_error" || status === "permanent_error") {
+    return "error";
+  }
+  return "idle";
 }
 
 async function checkBiometricHardware(): Promise<boolean> {
@@ -661,8 +880,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     normalizeStoredGoals(DEFAULT_GOALS)
   );
   const goalsRef = useRef<Goal[]>(normalizeStoredGoals(DEFAULT_GOALS));
-  const [likedProfiles, setLikedProfiles] = useState<string[]>([]);
-  const likedProfilesRef = useRef<string[]>([]);
+  const [sessionSwipeCounts, setSessionSwipeCounts] = useState({
+    likes: 0,
+    dislikes: 0,
+  });
+  const [lifetimeDiscoveryCounts, setLifetimeDiscoveryCounts] =
+    useState<LifetimeDiscoveryCounts>(createEmptyLifetimeDiscoveryCounts());
+  const lifetimeDiscoveryCountsRef = useRef<LifetimeDiscoveryCounts>(
+    createEmptyLifetimeDiscoveryCounts()
+  );
+  const [discoveryThreshold, setDiscoveryThreshold] = useState<DiscoveryThresholdState>(
+    createEmptyDiscoveryThreshold()
+  );
+  const discoveryThresholdRef = useRef<DiscoveryThresholdState>(
+    createEmptyDiscoveryThreshold()
+  );
+  const [goalsUnlockState, setGoalsUnlockState] = useState<GoalsUnlockState>(
+    createEmptyGoalsUnlockState()
+  );
+  const goalsUnlockStateRef = useRef<GoalsUnlockState>(createEmptyGoalsUnlockState());
+  const [goalsUnlockPromptVisible, setGoalsUnlockPromptVisible] = useState(false);
+  const [likedProfiles, setLikedProfiles] = useState<number[]>([]);
+  const likedProfilesRef = useRef<number[]>([]);
+  const [passedProfiles, setPassedProfiles] = useState<number[]>([]);
+  const passedProfilesRef = useRef<number[]>([]);
+  const [discoveryFeed, setDiscoveryFeed] = useState<DiscoveryFeedResponse>(
+    createEmptyDiscoveryFeed()
+  );
+  const discoveryFeedRef = useRef<DiscoveryFeedResponse>(createEmptyDiscoveryFeed());
   const [discoveryFilters, setDiscoveryFilters] =
     useState<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
   const discoveryFiltersRef = useRef<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
@@ -680,11 +925,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sessionOfflineFallback, setSessionOfflineFallback] = useState(false);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const profileRef = useRef<UserProfile>(DEFAULT_PROFILE);
+  const confirmedProfileRef = useRef<UserProfile>(DEFAULT_PROFILE);
+  const [profileSaveStates, setProfileSaveStates] = useState<
+    Partial<Record<ProfileEditableField, ProfileFieldSaveState>>
+  >({});
+  const profileFieldRevisionRef = useRef<
+    Partial<Record<ProfileEditableField, number>>
+  >({});
+  const profileFieldTimersRef = useRef<
+    Partial<Record<ProfileEditableField, ReturnType<typeof setTimeout>>>
+  >({});
+  const profileFieldStateTimersRef = useRef<
+    Partial<Record<ProfileEditableField, ReturnType<typeof setTimeout>>>
+  >({});
   const viewerBootstrapMetaRef = useRef<ViewerBootstrapMetadata>(
     createDefaultBootstrapMetadata()
   );
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [settingsSaveState, setSettingsSaveState] =
+    useState<ProfileFieldSaveState>("idle");
   const [authFormPrefill, setAuthFormPrefill] = useState<AuthFormPrefill | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [pendingVerificationPassword, setPendingVerificationPassword] = useState<string | null>(
@@ -704,10 +964,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     facebook: false,
     apple: false,
   });
-  const profileSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isQueueReplayingRef = useRef(false);
+  const replayMutationQueueRef = useRef<() => Promise<void>>(async () => {});
+  const requestQueueReplay = useCallback(() => {
+    void replayMutationQueueRef.current();
+  }, []);
   const resetClientState = useCallback(() => {
     const emptyPopularAttributes = createEmptyPopularAttributesByCategory();
     const defaultGoals = normalizeStoredGoals(DEFAULT_GOALS);
+
+    Object.values(profileFieldTimersRef.current).forEach((timer) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    });
+    Object.values(profileFieldStateTimersRef.current).forEach((timer) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    });
+    profileFieldTimersRef.current = {};
+    profileFieldStateTimersRef.current = {};
 
     setUser(null);
     userRef.current = null;
@@ -725,16 +1002,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setVerificationStatus("idle");
     setLikedProfiles([]);
     likedProfilesRef.current = [];
+    setPassedProfiles([]);
+    passedProfilesRef.current = [];
+    setDiscoveryFeed(createEmptyDiscoveryFeed());
+    discoveryFeedRef.current = createEmptyDiscoveryFeed();
     setDiscoveryFilters(DEFAULT_DISCOVERY_FILTERS);
     discoveryFiltersRef.current = DEFAULT_DISCOVERY_FILTERS;
     setPopularAttributesByCategory(emptyPopularAttributes);
     popularAttributesByCategoryRef.current = emptyPopularAttributes;
     setTotalLikesCount(0);
     totalLikesCountRef.current = 0;
+    setLifetimeDiscoveryCounts(createEmptyLifetimeDiscoveryCounts());
+    lifetimeDiscoveryCountsRef.current = createEmptyLifetimeDiscoveryCounts();
+    setDiscoveryThreshold(createEmptyDiscoveryThreshold());
+    discoveryThresholdRef.current = createEmptyDiscoveryThreshold();
+    setGoalsUnlockState(createEmptyGoalsUnlockState());
+    goalsUnlockStateRef.current = createEmptyGoalsUnlockState();
+    setGoalsUnlockPromptVisible(false);
     setLastServerSyncAt(null);
     setSessionOfflineFallback(false);
+    confirmedProfileRef.current = DEFAULT_PROFILE;
     profileRef.current = DEFAULT_PROFILE;
     setProfile(DEFAULT_PROFILE);
+    setProfileSaveStates({});
+    setSettingsSaveState("idle");
+    profileFieldRevisionRef.current = {};
     goalsRef.current = defaultGoals;
     setGoals(defaultGoals);
     viewerBootstrapMetaRef.current = createDefaultBootstrapMetadata();
@@ -744,6 +1036,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     profileRef.current = nextProfile;
     setProfile(nextProfile);
   }, []);
+
+  const clearProfileFieldTimer = useCallback((field: ProfileEditableField) => {
+    const timer = profileFieldTimersRef.current[field];
+    if (timer) {
+      clearTimeout(timer);
+      delete profileFieldTimersRef.current[field];
+    }
+  }, []);
+
+  const clearProfileFieldStateTimer = useCallback((field: ProfileEditableField) => {
+    const timer = profileFieldStateTimersRef.current[field];
+    if (timer) {
+      clearTimeout(timer);
+      delete profileFieldStateTimersRef.current[field];
+    }
+  }, []);
+
+  const setProfileFieldSaveState = useCallback(
+    (field: ProfileEditableField, state: ProfileFieldSaveState) => {
+      clearProfileFieldStateTimer(field);
+      setProfileSaveStates((current) => {
+        if (current[field] === state) {
+          return current;
+        }
+        return {
+          ...current,
+          [field]: state,
+        };
+      });
+    },
+    [clearProfileFieldStateTimer]
+  );
 
   const persistDiscoveryFiltersForUser = useCallback(
     async (userId: number, filters: DiscoveryFilters) => {
@@ -780,6 +1104,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     removals.push(AsyncStorage.removeItem(getViewerBootstrapStorageKey(userId)));
+    removals.push(clearMutationQueueForUser(userId));
 
     const [allKeys, filtersRaw] = await Promise.all([
       AsyncStorage.getAllKeys(),
@@ -823,7 +1148,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const nextProfile = normalizeStoredProfile({
-        ...(overrides?.profile || profileRef.current),
+        ...(overrides?.profile || confirmedProfileRef.current),
       });
       const nextSettings = {
         language:
@@ -837,12 +1162,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         pronouns: overrides?.settings?.pronouns ?? nextProfile.pronouns,
         personality: overrides?.settings?.personality ?? nextProfile.personality,
       };
-      const nextDiscovery = overrides?.discovery ?? {
-        likedProfileIds: likedProfilesRef.current,
-        popularAttributesByCategory: popularAttributesByCategoryRef.current,
-        totalLikesCount: totalLikesCountRef.current,
-        lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
-        filters: discoveryFiltersRef.current,
+      const nextDiscovery = {
+        likedProfileIds:
+          overrides?.discovery?.likedProfileIds ?? likedProfilesRef.current,
+        passedProfileIds:
+          overrides?.discovery?.passedProfileIds ?? passedProfilesRef.current,
+        currentDecisionCounts:
+          overrides?.discovery?.currentDecisionCounts ?? {
+            likes: likedProfilesRef.current.length,
+            passes: passedProfilesRef.current.length,
+          },
+        popularAttributesByCategory:
+          overrides?.discovery?.popularAttributesByCategory ??
+          popularAttributesByCategoryRef.current,
+        totalLikesCount: getAuthoritativeTotalLikesCount({
+          totalLikesCount:
+            overrides?.discovery?.totalLikesCount ?? totalLikesCountRef.current,
+          lifetimeCounts:
+            overrides?.discovery?.lifetimeCounts ?? lifetimeDiscoveryCountsRef.current,
+          threshold:
+            overrides?.discovery?.threshold ?? discoveryThresholdRef.current,
+        }),
+        lifetimeCounts:
+          overrides?.discovery?.lifetimeCounts ?? lifetimeDiscoveryCountsRef.current,
+        threshold:
+          overrides?.discovery?.threshold ?? discoveryThresholdRef.current,
+        goalsUnlock:
+          overrides?.discovery?.goalsUnlock ?? goalsUnlockStateRef.current,
+        lastNotifiedPopularModeChangeAtLikeCount:
+          overrides?.discovery?.lastNotifiedPopularModeChangeAtLikeCount ??
+          totalLikesCountRef.current,
+        filters: overrides?.discovery?.filters ?? discoveryFiltersRef.current,
+        feed: overrides?.discovery?.feed ?? discoveryFeedRef.current,
       };
       const nextGoals = normalizeStoredGoals(
         (overrides?.goals as Goal[] | undefined) ?? goalsRef.current
@@ -901,7 +1252,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
       const nextProfile = normalizeStoredProfile({
         ...bootstrap.profile,
-        photos: mergeRemotePhotosWithLocal(profileRef.current.photos, bootstrap.photos),
+        photos: mergeRemotePhotosWithLocal(confirmedProfileRef.current.photos, bootstrap.photos),
       });
 
       userRef.current = normalizedBootstrapUser;
@@ -928,12 +1279,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       languageRef.current = bootstrap.settings.language;
       setHeightUnitState(bootstrap.settings.heightUnit);
       heightUnitRef.current = bootstrap.settings.heightUnit;
+      Object.values(profileFieldTimersRef.current).forEach((timer) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+      Object.values(profileFieldStateTimersRef.current).forEach((timer) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+      profileFieldTimersRef.current = {};
+      profileFieldStateTimersRef.current = {};
+      setProfileSaveStates({});
+      setSettingsSaveState("idle");
+      profileFieldRevisionRef.current = {};
+      confirmedProfileRef.current = nextProfile;
       profileRef.current = nextProfile;
       setProfile(nextProfile);
       goalsRef.current = normalizeStoredGoals(bootstrap.goals as Goal[]);
       setGoals(goalsRef.current);
-      likedProfilesRef.current = bootstrap.discovery.likedProfileIds;
-      setLikedProfiles(bootstrap.discovery.likedProfileIds);
+      const normalizedLikedProfileIds = (bootstrap.discovery.likedProfileIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const normalizedPassedProfileIds = (bootstrap.discovery.passedProfileIds || [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      likedProfilesRef.current = normalizedLikedProfileIds;
+      setLikedProfiles(normalizedLikedProfileIds);
+      passedProfilesRef.current = normalizedPassedProfileIds;
+      setPassedProfiles(normalizedPassedProfileIds);
+      discoveryFeedRef.current =
+        bootstrap.discovery.feed || {
+          ...createEmptyDiscoveryFeed(),
+          supply: {
+            ...createEmptyDiscoveryFeed().supply,
+            fetchedAt: bootstrap.bootstrapGeneratedAt || new Date().toISOString(),
+          },
+        };
+      setDiscoveryFeed(discoveryFeedRef.current);
       discoveryFiltersRef.current = {
         ...DEFAULT_DISCOVERY_FILTERS,
         ...(bootstrap.discovery.filters || {}),
@@ -942,8 +1326,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       popularAttributesByCategoryRef.current =
         bootstrap.discovery.popularAttributesByCategory;
       setPopularAttributesByCategory(bootstrap.discovery.popularAttributesByCategory);
-      totalLikesCountRef.current = bootstrap.discovery.totalLikesCount;
-      setTotalLikesCount(bootstrap.discovery.totalLikesCount);
+      const normalizedTotalLikesCount = getAuthoritativeTotalLikesCount(
+        bootstrap.discovery
+      );
+      totalLikesCountRef.current = normalizedTotalLikesCount;
+      setTotalLikesCount(normalizedTotalLikesCount);
+      lifetimeDiscoveryCountsRef.current =
+        bootstrap.discovery.lifetimeCounts || createEmptyLifetimeDiscoveryCounts();
+      setLifetimeDiscoveryCounts(lifetimeDiscoveryCountsRef.current);
+      discoveryThresholdRef.current =
+        bootstrap.discovery.threshold || createEmptyDiscoveryThreshold();
+      setDiscoveryThreshold(discoveryThresholdRef.current);
+      goalsUnlockStateRef.current =
+        bootstrap.discovery.goalsUnlock || createEmptyGoalsUnlockState();
+      setGoalsUnlockState(goalsUnlockStateRef.current);
+      setGoalsUnlockPromptVisible(Boolean(goalsUnlockStateRef.current.unlockMessagePending));
       setLastServerSyncAt(
         bootstrap.bootstrapGeneratedAt || bootstrap.syncedAt || new Date().toISOString()
       );
@@ -954,6 +1351,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ...nextProfile,
             photos: restoredPhotos,
           });
+          confirmedProfileRef.current = restoredProfile;
           profileRef.current = restoredProfile;
           setProfile(restoredProfile);
           if (options?.persist !== false) {
@@ -1002,8 +1400,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [likedProfiles]);
 
   useEffect(() => {
+    passedProfilesRef.current = passedProfiles;
+  }, [passedProfiles]);
+
+  useEffect(() => {
     discoveryFiltersRef.current = discoveryFilters;
   }, [discoveryFilters]);
+
+  useEffect(() => {
+    discoveryFeedRef.current = discoveryFeed;
+  }, [discoveryFeed]);
 
   useEffect(() => {
     popularAttributesByCategoryRef.current = popularAttributesByCategory;
@@ -1012,6 +1418,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     totalLikesCountRef.current = totalLikesCount;
   }, [totalLikesCount]);
+
+  useEffect(() => {
+    lifetimeDiscoveryCountsRef.current = lifetimeDiscoveryCounts;
+  }, [lifetimeDiscoveryCounts]);
+
+  useEffect(() => {
+    discoveryThresholdRef.current = discoveryThreshold;
+  }, [discoveryThreshold]);
+
+  useEffect(() => {
+    goalsUnlockStateRef.current = goalsUnlockState;
+  }, [goalsUnlockState]);
 
   useEffect(() => {
     needsProfileCompletionRef.current = needsProfileCompletion;
@@ -1023,9 +1441,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return () => {
-      if (profileSyncTimeoutRef.current) {
-        clearTimeout(profileSyncTimeoutRef.current);
-      }
+      Object.values(profileFieldTimersRef.current).forEach((timer) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+      Object.values(profileFieldStateTimersRef.current).forEach((timer) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
     };
   }, []);
 
@@ -1212,10 +1637,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           goals: goalsRef.current,
           discovery: {
             likedProfileIds: likedProfilesRef.current,
+            passedProfileIds: passedProfilesRef.current,
+            currentDecisionCounts: {
+              likes: likedProfilesRef.current.length,
+              passes: passedProfilesRef.current.length,
+            },
             popularAttributesByCategory: popularAttributesByCategoryRef.current,
             totalLikesCount: totalLikesCountRef.current,
+            lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+            threshold: discoveryThresholdRef.current,
+            goalsUnlock: goalsUnlockStateRef.current,
             lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
             filters: discoveryFiltersRef.current,
+            feed: discoveryFeedRef.current,
           },
           syncedAt: new Date().toISOString(),
           bootstrapGeneratedAt: new Date().toISOString(),
@@ -1229,8 +1663,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         userId: normalizedSessionUser.id,
       });
       setAuthStatus("authenticated");
+      requestQueueReplay();
     },
-    [applyViewerBootstrap]
+    [applyViewerBootstrap, requestQueueReplay]
   );
 
   const hydrateSessionFromTokens = useCallback(
@@ -1433,13 +1868,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         refreshProfileLocation().catch(() => {});
+        requestQueueReplay();
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, [refreshProfileLocation]);
+  }, [refreshProfileLocation, requestQueueReplay]);
+
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        requestQueueReplay();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [requestQueueReplay]);
 
   const saveSettings = useCallback(
     async (input: {
@@ -1452,6 +1900,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       language: "es" | "en";
       heightUnit: HeightUnit;
     }) => {
+      Keyboard.dismiss();
       setAuthBusy(true);
       setAuthError(null);
       try {
@@ -1466,10 +1915,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ...profileRef.current,
           name: resolvedName,
           dateOfBirth: resolvedDateOfBirth,
-          profession: input.profession,
-          genderIdentity: input.genderIdentity,
-          pronouns: input.pronouns,
-          personality: input.personality,
+          profession: normalizeCanonicalProfileField("profession", input.profession),
+          genderIdentity: normalizeCanonicalProfileField(
+            "genderIdentity",
+            input.genderIdentity
+          ),
+          pronouns: normalizeCanonicalProfileField("pronouns", input.pronouns),
+          personality: normalizeCanonicalProfileField("personality", input.personality),
         });
         let nextSettings = {
           language: input.language,
@@ -1479,91 +1931,67 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           personality: input.personality,
         };
 
-        if (accessToken) {
-          const viewerProfilePayload: Parameters<typeof updateViewerProfile>[1] = {
-            profession: input.profession,
-            genderIdentity: input.genderIdentity,
-            pronouns: input.pronouns,
-            personality: input.personality,
-          };
-          if (resolvedName) {
-            viewerProfilePayload.name = resolvedName;
-          }
-          if (resolvedDateOfBirth) {
-            viewerProfilePayload.dateOfBirth = resolvedDateOfBirth;
-          }
-
-          const [profileResult, settingsResult] = await Promise.all([
-            updateViewerProfile(accessToken, viewerProfilePayload),
-            updateSettings(accessToken, {
-              language: input.language,
-              heightUnit: input.heightUnit,
-            }),
-          ]);
-          debugLog("[settings] profile/settings updated", {
-            userId: userRef.current?.id ?? null,
-            language: settingsResult.settings.language,
-            heightUnit: settingsResult.settings.heightUnit,
-          });
-
-          nextProfile = normalizeStoredProfile({
-            ...profileRef.current,
-            ...profileResult.profile,
-            dateOfBirth:
-              profileResult.profile.dateOfBirth || resolvedDateOfBirth,
-            photos: profileRef.current.photos,
-          });
-          nextSettings = {
-            ...settingsResult.settings,
-            genderIdentity: nextProfile.genderIdentity,
-            pronouns: nextProfile.pronouns,
-            personality: nextProfile.personality,
-          };
-
-          const mePayload: Parameters<typeof updateMe>[1] = {
-            profession: input.profession,
-          };
-          if (resolvedName) {
-            mePayload.name = resolvedName;
-          }
-          if (resolvedDateOfBirth) {
-            mePayload.dateOfBirth = resolvedDateOfBirth;
-          }
-
-          const me = await updateMe(accessToken, mePayload);
-          setUser(me.user);
-          userRef.current = me.user;
-          setNeedsProfileCompletion(me.needsProfileCompletion);
-          setHasCompletedOnboarding(me.hasCompletedOnboarding);
+        if (!accessToken || !userRef.current?.id) {
+          return false;
         }
 
-        profileRef.current = nextProfile;
-        setProfile(nextProfile);
-        setLanguageState(nextSettings.language);
-        setHeightUnitState(nextSettings.heightUnit);
-        await AsyncStorage.setItem("language", nextSettings.language);
-        await AsyncStorage.setItem("heightUnit", nextSettings.heightUnit);
+        const profileFields: readonly ProfileEditableField[] = [
+          "name",
+          "dateOfBirth",
+          "profession",
+          "genderIdentity",
+          "pronouns",
+          "personality",
+        ];
+        const profilePatch = mapCanonicalProfileToProfilePatch(nextProfile, profileFields);
+        const mePatch: Parameters<typeof updateMe>[1] = {
+          profession: input.profession,
+        };
+        if (resolvedName) {
+          mePatch.name = resolvedName;
+        }
+        if (resolvedDateOfBirth) {
+          mePatch.dateOfBirth = resolvedDateOfBirth;
+        }
 
-        setUser((prev) =>
-          prev
-            ? {
-                ...prev,
-                name: resolvedName,
-                dateOfBirth: resolvedDateOfBirth,
-                profession: input.profession,
-              }
-            : prev
-        );
-        await persistViewerBootstrapCache({
-          profile: nextProfile,
-          settings: nextSettings,
-          needsProfileCompletion: !(resolvedName && resolvedDateOfBirth),
+        await enqueueMutation<SettingsSavePayload>({
+          userId: userRef.current.id,
+          type: "settings_save",
+          targetKey: "settings:save",
+          canonicalPayload: {
+            profileFields,
+            profilePatch,
+            settingsPatch: {
+              language: input.language,
+              heightUnit: input.heightUnit,
+            },
+            mePatch,
+            completed: {
+              profile: false,
+              settings: false,
+              account: false,
+            },
+            resolvedProfile: {
+              name: resolvedName,
+              dateOfBirth: resolvedDateOfBirth,
+              profession: nextProfile.profession,
+              genderIdentity: nextProfile.genderIdentity,
+              pronouns: nextProfile.pronouns,
+              personality: nextProfile.personality,
+            },
+            resolvedSettings: {
+              language: nextSettings.language,
+              heightUnit: nextSettings.heightUnit,
+            },
+          },
         });
-        debugLog("[settings] save completed", {
-          userId: userRef.current?.id ?? null,
+        setSettingsSaveState("queued");
+        debugLog("[settings] save queued", {
+          userId: userRef.current.id,
           hasDateOfBirth: Boolean(resolvedDateOfBirth),
           hasName: Boolean(resolvedName),
         });
+        requestQueueReplay();
 
         return true;
       } catch (e: any) {
@@ -1586,12 +2014,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           },
         });
         setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
+        setSettingsSaveState("error");
         return false;
       } finally {
         setAuthBusy(false);
       }
     },
-    [accessToken, persistViewerBootstrapCache]
+    [accessToken, requestQueueReplay]
   );
 
   const login = useCallback(async () => {
@@ -1833,60 +2262,344 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [profile, user?.dateOfBirth, user?.email, user?.name, user?.profession]
   );
 
-  const syncProfileToServer = useCallback(
-    async (nextProfile: UserProfile) => {
-      if (!accessToken) {
-        await persistViewerBootstrapCache({ profile: nextProfile });
-        return nextProfile;
+  const persistConfirmedProfileWithBootstrap = useCallback(
+    async (
+      nextProfile: UserProfile,
+      options?: {
+        syncUi?: boolean;
       }
-
-      const profilePayload: Parameters<typeof updateViewerProfile>[1] = {
-        location: nextProfile.location,
-        profession: nextProfile.profession,
-        genderIdentity: nextProfile.genderIdentity,
-        pronouns: nextProfile.pronouns,
-        personality: nextProfile.personality,
-        relationshipGoals: nextProfile.relationshipGoals,
-        languagesSpoken: nextProfile.languagesSpoken,
-        education: nextProfile.education,
-        childrenPreference: nextProfile.childrenPreference,
-        physicalActivity: nextProfile.physicalActivity,
-        alcoholUse: nextProfile.alcoholUse,
-        tobaccoUse: nextProfile.tobaccoUse,
-        politicalInterest: nextProfile.politicalInterest,
-        religionImportance: nextProfile.religionImportance,
-        religion: nextProfile.religion,
-        bio: nextProfile.bio,
-        bodyType: nextProfile.bodyType,
-        height: nextProfile.height,
-        hairColor: nextProfile.hairColor,
-        ethnicity: nextProfile.ethnicity,
-        interests: nextProfile.interests,
-      };
-
-      if (nextProfile.name) {
-        profilePayload.name = nextProfile.name;
+    ) => {
+      confirmedProfileRef.current = nextProfile;
+      if (options?.syncUi !== false) {
+        profileRef.current = nextProfile;
+        setProfile(nextProfile);
       }
-      if (nextProfile.dateOfBirth) {
-        profilePayload.dateOfBirth = nextProfile.dateOfBirth;
-      }
-
-      const result = await updateViewerProfile(accessToken, profilePayload);
-
-      const syncedProfile = normalizeStoredProfile({
-        ...nextProfile,
-        ...result.profile,
-        photos: nextProfile.photos,
-      });
-
-      profileRef.current = syncedProfile;
-      setProfile(syncedProfile);
       await persistViewerBootstrapCache({
-        profile: syncedProfile,
+        profile: nextProfile,
       });
-      return syncedProfile;
     },
-    [accessToken, persistViewerBootstrapCache]
+    [persistViewerBootstrapCache]
+  );
+
+  const applyConfirmedProfileFields = useCallback(
+    async (
+      fields: readonly ProfileEditableField[],
+      remoteProfile: Partial<UserProfile>,
+      options?: {
+        revision?: number;
+      }
+    ) => {
+      const normalizedRemoteProfile = normalizeStoredProfile({
+        ...confirmedProfileRef.current,
+        ...remoteProfile,
+        photos: confirmedProfileRef.current.photos,
+      });
+      const nextConfirmedProfile = reconcileCanonicalProfileFields(
+        confirmedProfileRef.current,
+        normalizedRemoteProfile,
+        fields
+      );
+      confirmedProfileRef.current = nextConfirmedProfile;
+      await persistViewerBootstrapCache({
+        profile: nextConfirmedProfile,
+      });
+
+      const currentRevision = options?.revision
+        ? Math.max(
+            ...fields.map((field) => profileFieldRevisionRef.current[field] || 0),
+            0
+          )
+        : null;
+      const shouldReconcileUi =
+        !options?.revision || !currentRevision || currentRevision <= options.revision;
+
+      if (shouldReconcileUi) {
+        const nextUiProfile = reconcileCanonicalProfileFields(
+          profileRef.current,
+          normalizedRemoteProfile,
+          fields
+        );
+        profileRef.current = nextUiProfile;
+        setProfile(nextUiProfile);
+        fields.forEach((field) => {
+          setProfileFieldSaveState(field, "idle");
+        });
+      }
+
+      return nextConfirmedProfile;
+    },
+    [persistViewerBootstrapCache, setProfileFieldSaveState]
+  );
+
+  const replayMutationQueue = useCallback(async () => {
+    const currentUserId = userRef.current?.id;
+    if (!currentUserId || !accessToken || isQueueReplayingRef.current) {
+      return;
+    }
+
+    isQueueReplayingRef.current = true;
+    try {
+      const queueItems = await getReplayableMutationsForUser(currentUserId);
+      for (const queuedItem of queueItems) {
+        if (userRef.current?.id !== queuedItem.userId || !accessToken) {
+          break;
+        }
+
+        const savingItem = await updateMutationQueueItem(queuedItem.id, {
+          status: "saving",
+          lastError: null,
+        });
+        const item = savingItem || queuedItem;
+
+        try {
+          if (item.type === "profile_field_patch") {
+            const payload = item.canonicalPayload as ProfileFieldQueuePayload;
+            payload.fields.forEach((field) => setProfileFieldSaveState(field, "saving"));
+            debugLog("[queue] replay profile patch", {
+              id: item.id,
+              targetKey: item.targetKey,
+              fields: payload.fields,
+            });
+            const result = await updateViewerProfile(accessToken, payload.patch);
+            await applyConfirmedProfileFields(payload.fields, result.profile, {
+              revision: payload.revision,
+            });
+          } else if (item.type === "settings_save") {
+            setSettingsSaveState("saving");
+            const payload = item.canonicalPayload as SettingsSavePayload;
+
+            if (!payload.completed.profile) {
+              const profileResult = await updateViewerProfile(
+                accessToken,
+                payload.profilePatch
+              );
+              await applyConfirmedProfileFields(payload.profileFields, profileResult.profile);
+              payload.completed.profile = true;
+              await updateMutationQueueItem(item.id, {
+                canonicalPayload: payload,
+              });
+            }
+
+            if (!payload.completed.settings) {
+              const settingsResult = await updateSettings(accessToken, payload.settingsPatch);
+              setLanguageState(settingsResult.settings.language);
+              languageRef.current = settingsResult.settings.language;
+              setHeightUnitState(settingsResult.settings.heightUnit);
+              heightUnitRef.current = settingsResult.settings.heightUnit;
+              await AsyncStorage.setItem("language", settingsResult.settings.language);
+              await AsyncStorage.setItem("heightUnit", settingsResult.settings.heightUnit);
+              await persistViewerBootstrapCache({
+                settings: {
+                  ...settingsResult.settings,
+                  genderIdentity: confirmedProfileRef.current.genderIdentity,
+                  pronouns: confirmedProfileRef.current.pronouns,
+                  personality: confirmedProfileRef.current.personality,
+                },
+              });
+              payload.completed.settings = true;
+              await updateMutationQueueItem(item.id, {
+                canonicalPayload: payload,
+              });
+            }
+
+            if (!payload.completed.account) {
+              const me = await updateMe(accessToken, payload.mePatch);
+              setUser(me.user);
+              userRef.current = me.user;
+              setNeedsProfileCompletion(me.needsProfileCompletion);
+              setHasCompletedOnboarding(me.hasCompletedOnboarding);
+              payload.completed.account = true;
+              await updateMutationQueueItem(item.id, {
+                canonicalPayload: payload,
+              });
+            }
+
+            setSettingsSaveState("idle");
+          } else if (item.type === "profile_photo_upload") {
+            const payload = item.canonicalPayload as ProfilePhotoUploadPayload;
+            const fileInfo = await FileSystem.getInfoAsync(payload.localUri);
+            if (!fileInfo.exists) {
+              throw new ApiError(
+                "LOCAL_MEDIA_MISSING",
+                "Local media file is missing for queued upload"
+              );
+            }
+            const uploaded = await uploadProfilePhotoRequest(
+              accessToken,
+              payload.slot,
+              payload.localUri
+            );
+            const nextConfirmedProfile = normalizeStoredProfile({
+              ...confirmedProfileRef.current,
+              photos: normalizeStoredProfilePhotos(
+                confirmedProfileRef.current.photos
+                  .filter((photo) => photo.sortOrder !== uploaded.sortOrder)
+                  .concat({
+                    localUri: "",
+                    remoteUrl: uploaded.remoteUrl,
+                    mediaAssetId: uploaded.mediaAssetId,
+                    profileImageId: uploaded.profileImageId,
+                    sortOrder: uploaded.sortOrder,
+                    status: uploaded.status === "pending" ? "pending" : "ready",
+                  })
+              ),
+            });
+            await persistConfirmedProfileWithBootstrap(nextConfirmedProfile, {
+              syncUi: false,
+            });
+            const currentSlotPhoto = getProfilePhotoBySortOrder(profileRef.current.photos, payload.slot);
+            if (!currentSlotPhoto || currentSlotPhoto.localUri === payload.localUri) {
+              const nextUiProfile = normalizeStoredProfile({
+                ...profileRef.current,
+                photos: normalizeStoredProfilePhotos(
+                  profileRef.current.photos
+                    .filter((photo) => photo.sortOrder !== uploaded.sortOrder)
+                    .concat({
+                      localUri: "",
+                      remoteUrl: uploaded.remoteUrl,
+                      mediaAssetId: uploaded.mediaAssetId,
+                      profileImageId: uploaded.profileImageId,
+                      sortOrder: uploaded.sortOrder,
+                      status: uploaded.status === "pending" ? "pending" : "ready",
+                    })
+                ),
+              });
+              profileRef.current = nextUiProfile;
+              setProfile(nextUiProfile);
+            }
+            if (isStoredProfilePhoto(payload.localUri)) {
+              await deleteStoredProfilePhoto(payload.localUri).catch(() => {});
+            }
+          } else if (item.type === "profile_photo_delete") {
+            const payload = item.canonicalPayload as ProfilePhotoDeletePayload;
+            const profileImageId =
+              payload.profileImageId ||
+              getProfilePhotoBySortOrder(confirmedProfileRef.current.photos, payload.slot)
+                ?.profileImageId ||
+              null;
+            if (profileImageId) {
+              await deleteProfilePhotoRequest(accessToken, profileImageId);
+            }
+            const nextConfirmedProfile = normalizeStoredProfile({
+              ...confirmedProfileRef.current,
+              photos: confirmedProfileRef.current.photos.filter(
+                (photo) => photo.sortOrder !== payload.slot
+              ),
+            });
+            await persistConfirmedProfileWithBootstrap(nextConfirmedProfile, {
+              syncUi: false,
+            });
+            const nextUiProfile = normalizeStoredProfile({
+              ...profileRef.current,
+              photos: profileRef.current.photos.filter(
+                (photo) => photo.sortOrder !== payload.slot
+              ),
+            });
+            profileRef.current = nextUiProfile;
+            setProfile(nextUiProfile);
+            if (isStoredProfilePhoto(payload.localUri)) {
+              await deleteStoredProfilePhoto(payload.localUri).catch(() => {});
+            }
+          }
+
+          await updateMutationQueueItem(item.id, {
+            status: "completed",
+            lastError: null,
+          });
+        } catch (error: any) {
+          const nextStatus: MutationQueueStatus = isRetryableQueueError(error)
+            ? "retryable_error"
+            : "permanent_error";
+          await updateMutationQueueItem(item.id, {
+            status: nextStatus,
+            retryCount: item.retryCount + 1,
+            lastError: error?.code || error?.message || "UNKNOWN_ERROR",
+          });
+
+          if (item.type === "profile_field_patch") {
+            const payload = item.canonicalPayload as ProfileFieldQueuePayload;
+            payload.fields.forEach((field) => {
+              setProfileFieldSaveState(
+                field,
+                nextStatus === "retryable_error" ? "queued" : "error"
+              );
+            });
+          } else if (item.type === "settings_save") {
+            setSettingsSaveState(
+              nextStatus === "retryable_error" ? "queued" : "error"
+            );
+          } else if (item.type === "profile_photo_upload") {
+            const payload = item.canonicalPayload as ProfilePhotoUploadPayload;
+            const nextUiProfile = normalizeStoredProfile({
+              ...profileRef.current,
+              photos: normalizeStoredProfilePhotos(
+                profileRef.current.photos
+                  .filter((photo) => photo.sortOrder !== payload.slot)
+                  .concat({
+                    localUri: payload.localUri,
+                    remoteUrl: "",
+                    mediaAssetId: null,
+                    profileImageId: null,
+                    sortOrder: payload.slot,
+                    status: "error",
+                  })
+              ),
+            });
+            profileRef.current = nextUiProfile;
+            setProfile(nextUiProfile);
+          }
+
+          debugWarn("[queue] replay failed", {
+            id: item.id,
+            type: item.type,
+            targetKey: item.targetKey,
+            status: nextStatus,
+            error: error?.code || error?.message || "UNKNOWN_ERROR",
+          });
+        }
+      }
+
+      await removeCompletedMutationsForUser(currentUserId);
+    } finally {
+      isQueueReplayingRef.current = false;
+    }
+  }, [
+    accessToken,
+    applyConfirmedProfileFields,
+    persistConfirmedProfileWithBootstrap,
+    persistViewerBootstrapCache,
+    setProfileFieldSaveState,
+  ]);
+  replayMutationQueueRef.current = replayMutationQueue;
+
+  const queueProfileFieldMutation = useCallback(
+    async (
+      fields: readonly ProfileEditableField[],
+      updatedProfile: UserProfile,
+      options?: {
+        revision?: number;
+      }
+    ) => {
+      if (!userRef.current?.id || !accessToken) {
+        return;
+      }
+
+      const targetKey = getProfileTargetKey(fields[0]!);
+      const patch = mapCanonicalProfileToProfilePatch(updatedProfile, fields);
+      await enqueueMutation<ProfileFieldQueuePayload>({
+        userId: userRef.current.id,
+        type: "profile_field_patch",
+        targetKey: getProfileMutationTargetStorageKey(targetKey),
+        canonicalPayload: {
+          fields,
+          patch,
+          revision: options?.revision || 0,
+        },
+      });
+      fields.forEach((field) => setProfileFieldSaveState(field, "queued"));
+      void replayMutationQueue();
+    },
+    [accessToken, replayMutationQueue, setProfileFieldSaveState]
   );
 
   const completeProfile = useCallback(
@@ -1905,10 +2618,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setUser(result.user);
           setNeedsProfileCompletion(result.needsProfileCompletion);
           setHasCompletedOnboarding(result.hasCompletedOnboarding);
-          await syncProfileToServer(updated);
+          await persistConfirmedProfileWithBootstrap(updated);
+          await applyConfirmedProfileFields(["name", "dateOfBirth"], updated);
         } else {
-          profileRef.current = updated;
-          setProfile(updated);
+          await persistConfirmedProfileWithBootstrap(updated);
           await persistViewerBootstrapCache({
             profile: updated,
             needsProfileCompletion: false,
@@ -1923,7 +2636,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    [accessToken, persistViewerBootstrapCache, syncProfileToServer]
+    [
+      accessToken,
+      applyConfirmedProfileFields,
+      persistConfirmedProfileWithBootstrap,
+      persistViewerBootstrapCache,
+    ]
   );
 
   const saveOnboardingDraft = useCallback(
@@ -1944,15 +2662,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const updated = normalizeStoredProfile({
           ...profileRef.current,
-          genderIdentity: data.genderIdentity,
-          pronouns: data.pronouns,
-          personality: data.personality,
-          relationshipGoals: data.relationshipGoals,
-          childrenPreference: data.childrenPreference,
-          languagesSpoken: data.languagesSpoken,
-          education: data.education,
-          physicalActivity: data.physicalActivity,
-          bodyType: data.bodyType,
+          genderIdentity: normalizeCanonicalProfileField(
+            "genderIdentity",
+            data.genderIdentity
+          ),
+          pronouns: normalizeCanonicalProfileField("pronouns", data.pronouns),
+          personality: normalizeCanonicalProfileField("personality", data.personality),
+          relationshipGoals: normalizeCanonicalProfileField(
+            "relationshipGoals",
+            data.relationshipGoals
+          ),
+          childrenPreference: normalizeCanonicalProfileField(
+            "childrenPreference",
+            data.childrenPreference
+          ),
+          languagesSpoken: normalizeCanonicalProfileField(
+            "languagesSpoken",
+            data.languagesSpoken
+          ),
+          education: normalizeCanonicalProfileField("education", data.education),
+          physicalActivity: normalizeCanonicalProfileField(
+            "physicalActivity",
+            data.physicalActivity
+          ),
+          bodyType: normalizeCanonicalProfileField("bodyType", data.bodyType),
           photos: data.photos,
         });
 
@@ -1960,10 +2693,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setProfile(updated);
 
         if (accessToken) {
-          await syncProfileToServer(updated);
-        } else {
-          await persistViewerBootstrapCache({
-            profile: updated,
+          const fields: readonly ProfileEditableField[] = [
+            "genderIdentity",
+            "pronouns",
+            "personality",
+            "relationshipGoals",
+            "childrenPreference",
+            "languagesSpoken",
+            "education",
+            "physicalActivity",
+            "bodyType",
+          ];
+          const nextRevision = Math.max(
+            ...fields.map((field) => {
+              const revision = (profileFieldRevisionRef.current[field] || 0) + 1;
+              profileFieldRevisionRef.current[field] = revision;
+              return revision;
+            })
+          );
+          await queueProfileFieldMutation(fields, updated, {
+            revision: nextRevision,
           });
         }
         return true;
@@ -1974,7 +2723,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    [accessToken, persistViewerBootstrapCache, syncProfileToServer]
+    [
+      accessToken,
+      queueProfileFieldMutation,
+    ]
   );
 
   const finishOnboarding = useCallback(async () => {
@@ -2058,17 +2810,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const scheduleProfileSync = useCallback(
-    (nextProfile: UserProfile) => {
-      if (profileSyncTimeoutRef.current) {
-        clearTimeout(profileSyncTimeoutRef.current);
+  const updateProfileField = useCallback(
+    <K extends ProfileEditableField>(field: K, value: UserProfile[K]) => {
+      clearProfileFieldTimer(field);
+      clearProfileFieldStateTimer(field);
+
+      const normalizedValue = normalizeCanonicalProfileField(field, value);
+      const updated = normalizeStoredProfile({
+        ...profileRef.current,
+        [field]: normalizedValue,
+      });
+      const nextRevision = (profileFieldRevisionRef.current[field] || 0) + 1;
+      profileFieldRevisionRef.current[field] = nextRevision;
+      profileRef.current = updated;
+      setProfile(updated);
+      setProfileFieldSaveState(field, "queued");
+
+      if (DEBOUNCED_PROFILE_FIELDS.has(field)) {
+        profileFieldTimersRef.current[field] = setTimeout(() => {
+          delete profileFieldTimersRef.current[field];
+          void queueProfileFieldMutation([field], updated, {
+            revision: nextRevision,
+          });
+        }, 650);
+        return;
       }
 
-      profileSyncTimeoutRef.current = setTimeout(() => {
-        void syncProfileToServer(nextProfile).catch(() => {});
-      }, 700);
+      void queueProfileFieldMutation([field], updated, {
+        revision: nextRevision,
+      });
     },
-    [syncProfileToServer]
+    [
+      clearProfileFieldStateTimer,
+      clearProfileFieldTimer,
+      queueProfileFieldMutation,
+      setProfileFieldSaveState,
+    ]
   );
 
   const completeGoalTask = useCallback((id: string) => {
@@ -2184,35 +2961,397 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [accessToken, persistViewerBootstrapCache]
   );
 
-  const likeProfile = useCallback(
-    async (profileId: string) => {
+  const refreshDiscoveryFeedState = useCallback(
+    async (
+      token: string | null,
+      options?: {
+        reason?: string;
+        requestId?: string;
+        targetProfileId?: number;
+      }
+    ) => {
+      if (!token) {
+        return discoveryFeedRef.current;
+      }
+
+      const previousFeed = discoveryFeedRef.current;
+      const feed = await refreshDiscoveryFeed(token);
+      debugDiscoveryLog("feed_refresh_applied", {
+        requestId: options?.requestId || null,
+        reason: options?.reason || "manual",
+        targetProfileId: options?.targetProfileId || null,
+        previousProfileCount: previousFeed.profiles.length,
+        nextProfileCount: feed.profiles.length,
+        previousNextCursor: previousFeed.nextCursor,
+        nextCursor: feed.nextCursor,
+        previousUnseenCount: previousFeed.supply?.unseenCount ?? null,
+        nextUnseenCount: feed.supply?.unseenCount ?? null,
+        fetchedAt: feed.supply?.fetchedAt ?? null,
+      });
+      discoveryFeedRef.current = feed;
+      setDiscoveryFeed(feed);
+      setLastServerSyncAt(feed.supply?.fetchedAt || new Date().toISOString());
+      await persistViewerBootstrapCache({
+        discovery: {
+          likedProfileIds: likedProfilesRef.current,
+          passedProfileIds: passedProfilesRef.current,
+          currentDecisionCounts: {
+            likes: likedProfilesRef.current.length,
+            passes: passedProfilesRef.current.length,
+          },
+          popularAttributesByCategory: popularAttributesByCategoryRef.current,
+          totalLikesCount: totalLikesCountRef.current,
+          lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+          threshold: discoveryThresholdRef.current,
+          goalsUnlock: goalsUnlockStateRef.current,
+          lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
+          filters: discoveryFiltersRef.current,
+          feed,
+        },
+      });
+      return feed;
+    },
+    [persistViewerBootstrapCache]
+  );
+
+  const appendDiscoveryFeedWindow = useCallback(
+    async (token: string | null) => {
+      if (!token) {
+        return discoveryFeedRef.current;
+      }
+
+      const currentFeed = discoveryFeedRef.current;
+      if (!currentFeed.hasMore || !currentFeed.nextCursor) {
+        return currentFeed;
+      }
+
+      const nextFeed = await getNextDiscoveryFeedWindow(token, currentFeed.nextCursor);
+      const knownIds = new Set(currentFeed.profiles.map((profile) => profile.id));
+      const mergedFeed: DiscoveryFeedResponse = {
+        profiles: [
+          ...currentFeed.profiles,
+          ...nextFeed.profiles.filter((profile) => !knownIds.has(profile.id)),
+        ],
+        nextCursor: nextFeed.nextCursor,
+        hasMore: nextFeed.hasMore,
+        supply: nextFeed.supply,
+      };
+
+      debugDiscoveryLog("feed_window_appended", {
+        requestId: null,
+        appendedCount: mergedFeed.profiles.length - currentFeed.profiles.length,
+        previousProfileCount: currentFeed.profiles.length,
+        nextProfileCount: mergedFeed.profiles.length,
+        previousNextCursor: currentFeed.nextCursor,
+        nextCursor: mergedFeed.nextCursor,
+        hasMore: mergedFeed.hasMore,
+        unseenCount: mergedFeed.supply?.unseenCount ?? null,
+        fetchedAt: mergedFeed.supply?.fetchedAt ?? null,
+      });
+
+      discoveryFeedRef.current = mergedFeed;
+      setDiscoveryFeed(mergedFeed);
+      setLastServerSyncAt(mergedFeed.supply?.fetchedAt || new Date().toISOString());
+      await persistViewerBootstrapCache({
+        discovery: {
+          likedProfileIds: likedProfilesRef.current,
+          passedProfileIds: passedProfilesRef.current,
+          currentDecisionCounts: {
+            likes: likedProfilesRef.current.length,
+            passes: passedProfilesRef.current.length,
+          },
+          popularAttributesByCategory: popularAttributesByCategoryRef.current,
+          totalLikesCount: totalLikesCountRef.current,
+          lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+          threshold: discoveryThresholdRef.current,
+          goalsUnlock: goalsUnlockStateRef.current,
+          lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
+          filters: discoveryFiltersRef.current,
+          feed: mergedFeed,
+        },
+      });
+
+      return mergedFeed;
+    },
+    [persistViewerBootstrapCache]
+  );
+
+  const applyDiscoveryPreferenceResult = useCallback(
+    (
+      result: DiscoveryLikeResponse,
+      options?: {
+        requestId?: string;
+        action?: DiscoveryDecisionAction;
+        targetProfileId?: number;
+        latencyMs?: number;
+        before?: DiscoveryDecisionSnapshot;
+      }
+    ) => {
+      const after = getDiscoveryDecisionSnapshot(result);
+      debugDiscoveryLog("decision_response_reconciled", {
+        requestId: options?.requestId || null,
+        action: options?.action || result.decisionState,
+        targetProfileId: options?.targetProfileId ?? result.targetProfileId,
+        latencyMs: options?.latencyMs ?? null,
+        decisionApplied: result.decisionApplied,
+        decisionRejectedReason: result.decisionRejectedReason ?? null,
+        before: options?.before || null,
+        after,
+        changedCategories: result.changedCategories.map((item) => item.category),
+        shouldShowDiscoveryUpdate: result.shouldShowDiscoveryUpdate,
+      });
+      likedProfilesRef.current = result.likedProfileIds;
+      setLikedProfiles(result.likedProfileIds);
+      passedProfilesRef.current = result.passedProfileIds;
+      setPassedProfiles(result.passedProfileIds);
+      popularAttributesByCategoryRef.current = result.popularAttributesByCategory;
+      setPopularAttributesByCategory(result.popularAttributesByCategory);
+      const normalizedTotalLikesCount = getAuthoritativeTotalLikesCount(result);
+      totalLikesCountRef.current = normalizedTotalLikesCount;
+      setTotalLikesCount(normalizedTotalLikesCount);
+      lifetimeDiscoveryCountsRef.current = result.lifetimeCounts;
+      setLifetimeDiscoveryCounts(result.lifetimeCounts);
+      discoveryThresholdRef.current = result.threshold;
+      setDiscoveryThreshold(result.threshold);
+      goalsUnlockStateRef.current = result.goalsUnlock;
+      setGoalsUnlockState(result.goalsUnlock);
+      setGoalsUnlockPromptVisible(Boolean(result.goalsUnlock.unlockMessagePending));
+      setLastServerSyncAt(result.threshold.lastDecisionEventAt || new Date().toISOString());
+    },
+    []
+  );
+
+  const submitDiscoveryDecision = useCallback(
+    async (
+      action: DiscoveryDecisionAction,
+      requestDecision: DiscoveryDecisionRequester,
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      options?: DiscoveryDecisionOptions
+    ) => {
       if (!accessToken) {
         return null;
       }
 
-      const categoryValues = getDiscoverProfilePopularInput(profileId);
-      if (!categoryValues) {
-        return null;
-      }
+      const requestId =
+        options?.requestId || createDiscoveryDecisionRequestId(action, profile.id);
+      const queueVersion =
+        Number.isFinite(discoveryFeedRef.current.queueVersion) &&
+        Number(discoveryFeedRef.current.queueVersion) > 0
+          ? Number(discoveryFeedRef.current.queueVersion)
+          : null;
+      const before = getDiscoveryDecisionSnapshot({
+        totalLikesCount: totalLikesCountRef.current,
+        lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+        threshold: discoveryThresholdRef.current,
+        goalsUnlock: goalsUnlockStateRef.current,
+      });
+      const startedAt = Date.now();
+
+      debugDiscoveryLog("decision_request_sent", {
+        requestId,
+        action,
+        targetProfileId: profile.id,
+        before,
+      });
 
       try {
-        const result = await likeDiscoveryProfile(accessToken, {
-          likedProfileId: profileId,
-          categoryValues,
+        const result = await requestDecision(accessToken, {
+          targetProfileId: profile.id,
+          categoryValues: profile.categoryValues,
+          requestId,
+          queueVersion,
         });
-        setLikedProfiles(result.likedProfileIds);
-        setPopularAttributesByCategory(result.popularAttributesByCategory);
-        setTotalLikesCount(result.totalLikesCount);
+        const latencyMs = Date.now() - startedAt;
+        applyDiscoveryPreferenceResult(result, {
+          requestId,
+          action,
+          targetProfileId: profile.id,
+          latencyMs,
+          before,
+        });
+        const authoritativeFeed = result.feed;
+        const nextFeed = authoritativeFeed
+          ? authoritativeFeed
+          : result.decisionApplied
+            ? pruneDiscoveryFeedWindow(discoveryFeedRef.current, result.targetProfileId)
+            : await refreshDiscoveryFeedState(accessToken, {
+                reason: "decision_not_applied",
+                requestId,
+                targetProfileId: result.targetProfileId,
+              });
+        if (authoritativeFeed) {
+          debugDiscoveryLog("feed_window_authoritative", {
+            requestId,
+            action,
+            targetProfileId: result.targetProfileId,
+            queueVersion: authoritativeFeed.queueVersion ?? null,
+            returnedProfileIds: authoritativeFeed.profiles.map(
+              (item: DiscoveryFeedProfileResponse) => item.id
+            ),
+            reserveCount: authoritativeFeed.reserveCount ?? null,
+            generatedAt: authoritativeFeed.generatedAt ?? null,
+            latencyMs,
+          });
+        } else if (result.decisionApplied) {
+          debugDiscoveryLog("feed_window_pruned", {
+            requestId,
+            action,
+            targetProfileId: result.targetProfileId,
+            previousProfileCount: discoveryFeedRef.current.profiles.length,
+            nextProfileCount: nextFeed.profiles.length,
+            previousUnseenCount: discoveryFeedRef.current.supply?.unseenCount ?? null,
+            nextUnseenCount: nextFeed.supply?.unseenCount ?? null,
+            latencyMs,
+          });
+        }
+        discoveryFeedRef.current = nextFeed;
+        setDiscoveryFeed(nextFeed);
+        setLastServerSyncAt(
+          result.threshold.lastDecisionEventAt ||
+            nextFeed.supply?.fetchedAt ||
+            new Date().toISOString()
+        );
         await persistViewerBootstrapCache({
-          discovery: result,
+          discovery: {
+            ...result,
+            feed: nextFeed,
+          },
+        });
+        debugDiscoveryLog("decision_request_completed", {
+          requestId,
+          action,
+          targetProfileId: result.targetProfileId,
+          decisionApplied: result.decisionApplied,
+          decisionRejectedReason: result.decisionRejectedReason ?? null,
+          queueAction: authoritativeFeed
+            ? "replace-authoritative-window"
+            : result.decisionApplied
+              ? "prune"
+              : "refresh-first-window",
+          latencyMs,
         });
         return result;
-      } catch {
+      } catch (error: any) {
+        debugDiscoveryWarn("decision_request_failed", {
+          requestId,
+          action,
+          targetProfileId: profile.id,
+          latencyMs: Date.now() - startedAt,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        });
         return null;
       }
     },
-    [accessToken, persistViewerBootstrapCache]
+    [
+      accessToken,
+      applyDiscoveryPreferenceResult,
+      persistViewerBootstrapCache,
+      refreshDiscoveryFeedState,
+    ]
   );
+
+  const likeProfile = useCallback(
+    async (
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      options?: DiscoveryDecisionOptions
+    ) => submitDiscoveryDecision("like", likeDiscoveryProfile, profile, options),
+    [submitDiscoveryDecision]
+  );
+
+  const passProfile = useCallback(
+    async (
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      options?: DiscoveryDecisionOptions
+    ) => submitDiscoveryDecision("pass", passDiscoveryProfile, profile, options),
+    [submitDiscoveryDecision]
+  );
+
+  const resetDiscoveryHistory = useCallback(async () => {
+    if (!accessToken) {
+      setLikedProfiles([]);
+      setPassedProfiles([]);
+      setPopularAttributesByCategory(createEmptyPopularAttributesByCategory());
+      setTotalLikesCount(0);
+      setLifetimeDiscoveryCounts(createEmptyLifetimeDiscoveryCounts());
+      setDiscoveryThreshold(createEmptyDiscoveryThreshold());
+      setGoalsUnlockState(createEmptyGoalsUnlockState());
+      setGoalsUnlockPromptVisible(false);
+      setDiscoveryFeed(createEmptyDiscoveryFeed());
+      discoveryFeedRef.current = createEmptyDiscoveryFeed();
+      setSessionSwipeCounts({ likes: 0, dislikes: 0 });
+      await persistViewerBootstrapCache({
+        discovery: {
+          likedProfileIds: [],
+          passedProfileIds: [],
+          currentDecisionCounts: {
+            likes: 0,
+            passes: 0,
+          },
+          popularAttributesByCategory: createEmptyPopularAttributesByCategory(),
+          totalLikesCount: 0,
+          lifetimeCounts: createEmptyLifetimeDiscoveryCounts(),
+          threshold: createEmptyDiscoveryThreshold(),
+          goalsUnlock: createEmptyGoalsUnlockState(),
+          lastNotifiedPopularModeChangeAtLikeCount: 0,
+          filters: discoveryFiltersRef.current,
+          feed: createEmptyDiscoveryFeed(),
+        },
+      });
+      return true;
+    }
+
+    try {
+      const result = await resetDiscoveryHistoryRequest(accessToken);
+      setLikedProfiles(result.likedProfileIds);
+      setPassedProfiles(result.passedProfileIds);
+      setPopularAttributesByCategory(result.popularAttributesByCategory);
+      setTotalLikesCount(getAuthoritativeTotalLikesCount(result));
+      setLifetimeDiscoveryCounts(result.lifetimeCounts);
+      setDiscoveryThreshold(result.threshold);
+      setGoalsUnlockState(result.goalsUnlock);
+      setGoalsUnlockPromptVisible(Boolean(result.goalsUnlock.unlockMessagePending));
+      const refreshedFeed = await refreshDiscoveryFeedState(accessToken);
+      setSessionSwipeCounts({ likes: 0, dislikes: 0 });
+      await persistViewerBootstrapCache({
+        discovery: result,
+      });
+      setDiscoveryFeed(refreshedFeed);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [accessToken, persistViewerBootstrapCache, refreshDiscoveryFeedState]);
+
+  const refreshDiscoveryCandidates = useCallback(async () => {
+    if (!accessToken) {
+      return false;
+    }
+
+    try {
+      await refreshDiscoveryFeedState(accessToken);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [accessToken, refreshDiscoveryFeedState]);
+
+  const fetchNextDiscoveryWindow = useCallback(async () => {
+    if (!accessToken) {
+      return false;
+    }
+
+    try {
+      const currentFeed = discoveryFeedRef.current;
+      if (!currentFeed.hasMore || !currentFeed.nextCursor) {
+        return false;
+      }
+      await appendDiscoveryFeedWindow(accessToken);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [accessToken, appendDiscoveryFeedWindow]);
 
   const saveDiscoveryFilters = useCallback(
     async (filters: DiscoveryFilters) => {
@@ -2228,8 +3367,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await persistViewerBootstrapCache({
         discovery: {
           likedProfileIds: likedProfilesRef.current,
+          passedProfileIds: passedProfilesRef.current,
+          currentDecisionCounts: {
+            likes: likedProfilesRef.current.length,
+            passes: passedProfilesRef.current.length,
+          },
           popularAttributesByCategory: popularAttributesByCategoryRef.current,
           totalLikesCount: totalLikesCountRef.current,
+          lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+          threshold: discoveryThresholdRef.current,
+          goalsUnlock: goalsUnlockStateRef.current,
           lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
           filters: nextFilters,
         },
@@ -2241,6 +3388,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const result = await updateDiscoveryPreferences(accessToken, nextFilters);
+        const refreshedFeed = await refreshDiscoveryFeedState(accessToken);
         const syncedFilters = {
           ...DEFAULT_DISCOVERY_FILTERS,
           ...(result.filters || {}),
@@ -2252,10 +3400,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await persistViewerBootstrapCache({
           discovery: {
             likedProfileIds: likedProfilesRef.current,
+            passedProfileIds: passedProfilesRef.current,
+            currentDecisionCounts: {
+              likes: likedProfilesRef.current.length,
+              passes: passedProfilesRef.current.length,
+            },
             popularAttributesByCategory: popularAttributesByCategoryRef.current,
             totalLikesCount: totalLikesCountRef.current,
+            lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+            threshold: discoveryThresholdRef.current,
+            goalsUnlock: goalsUnlockStateRef.current,
             lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
             filters: syncedFilters,
+            feed: refreshedFeed,
           },
         });
         return true;
@@ -2264,131 +3421,189 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     },
-    [accessToken, persistDiscoveryFiltersForUser, persistViewerBootstrapCache, user?.id]
+    [
+      accessToken,
+      persistDiscoveryFiltersForUser,
+      persistViewerBootstrapCache,
+      refreshDiscoveryFeedState,
+      user?.id,
+    ]
   );
-
-  const updateProfile = useCallback((updates: Partial<UserProfile>) => {
-    const updated = normalizeStoredProfile({ ...profileRef.current, ...updates });
-    profileRef.current = updated;
-    setProfile(updated);
-    void persistViewerBootstrapCache({ profile: updated });
-    scheduleProfileSync(updated);
-  }, [persistViewerBootstrapCache, scheduleProfileSync]);
 
   const setProfilePhoto = useCallback(
     async (index: number, uri: string) => {
-      const currentPhotos = normalizeStoredProfilePhotos(profile.photos);
-      const previousPhoto = getProfilePhotoBySortOrder(currentPhotos, index);
+      const currentProfile = profileRef.current;
+      const currentPhotos = normalizeStoredProfilePhotos(currentProfile.photos);
       const optimisticPhoto: UserProfilePhoto = {
         localUri: uri,
-        remoteUrl: previousPhoto?.remoteUrl || "",
-        mediaAssetId: previousPhoto?.mediaAssetId || null,
-        profileImageId: previousPhoto?.profileImageId || null,
+        remoteUrl: "",
+        mediaAssetId: null,
+        profileImageId: null,
         sortOrder: index,
         status: "pending",
       };
-      const optimisticPhotos = [...currentPhotos.filter((photo) => photo.sortOrder !== index), optimisticPhoto]
+      const optimisticPhotos = [
+        ...currentPhotos.filter((photo) => photo.sortOrder !== index),
+        optimisticPhoto,
+      ]
         .sort((a, b) => a.sortOrder - b.sortOrder);
 
-      await persistProfile(
-        normalizeStoredProfile({
-          ...profile,
-          photos: optimisticPhotos,
-        })
-      );
-      await persistViewerBootstrapCache({
-        profile: normalizeStoredProfile({
-          ...profile,
-          photos: optimisticPhotos,
-        }),
+      const optimisticProfile = normalizeStoredProfile({
+        ...currentProfile,
+        photos: optimisticPhotos,
       });
+      profileRef.current = optimisticProfile;
+      setProfile(optimisticProfile);
 
       if (!accessToken) {
         const localPhoto = {
           ...optimisticPhoto,
           status: "ready" as const,
         };
-        await persistProfile(
-          normalizeStoredProfile({
-            ...profile,
-            photos: optimisticPhotos
-              .filter((photo) => photo.sortOrder !== index)
-              .concat(localPhoto)
-              .sort((a, b) => a.sortOrder - b.sortOrder),
-          })
-        );
-        await persistViewerBootstrapCache({
-          profile: normalizeStoredProfile({
-            ...profile,
-            photos: optimisticPhotos
-              .filter((photo) => photo.sortOrder !== index)
-              .concat(localPhoto)
-              .sort((a, b) => a.sortOrder - b.sortOrder),
-          }),
+        const localProfile = normalizeStoredProfile({
+          ...profileRef.current,
+          photos: optimisticPhotos
+            .filter((photo) => photo.sortOrder !== index)
+            .concat(localPhoto)
+            .sort((a, b) => a.sortOrder - b.sortOrder),
         });
+        profileRef.current = localProfile;
+        setProfile(localProfile);
         return localPhoto;
       }
 
-      const uploaded = await uploadProfilePhotoRequest(accessToken, index, uri);
-      const syncedPhoto: UserProfilePhoto = {
-        localUri: uri,
-        remoteUrl: uploaded.remoteUrl,
-        mediaAssetId: uploaded.mediaAssetId,
-        profileImageId: uploaded.profileImageId,
-        sortOrder: uploaded.sortOrder,
-        status: uploaded.status === "pending" ? "pending" : "ready",
-      };
-
-      await persistProfile(
-        normalizeStoredProfile({
-          ...profile,
+      try {
+        await enqueueMutation<ProfilePhotoUploadPayload>({
+          userId: userRef.current?.id || 0,
+          type: "profile_photo_upload",
+          targetKey: getPhotoMutationTargetStorageKey(index),
+          canonicalPayload: {
+            slot: index,
+            localUri: uri,
+          },
+        });
+        debugLog("[media] upload queued", {
+          slot: index,
+          targetKey: getPhotoMutationTargetStorageKey(index),
+        });
+        void replayMutationQueue();
+        return optimisticPhoto;
+      } catch (error: any) {
+        debugWarn("[media] upload failed", {
+          slot: index,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        });
+        const failedPhoto: UserProfilePhoto = {
+          ...optimisticPhoto,
+          status: "error",
+        };
+        const failedProfile = normalizeStoredProfile({
+          ...profileRef.current,
           photos: optimisticPhotos
             .filter((photo) => photo.sortOrder !== index)
-            .concat(syncedPhoto)
+            .concat(failedPhoto)
             .sort((a, b) => a.sortOrder - b.sortOrder),
-        })
-      );
-      await persistViewerBootstrapCache({
-        profile: normalizeStoredProfile({
-          ...profile,
-          photos: optimisticPhotos
-            .filter((photo) => photo.sortOrder !== index)
-            .concat(syncedPhoto)
-            .sort((a, b) => a.sortOrder - b.sortOrder),
-        }),
-      });
-
-      return syncedPhoto;
+        });
+        profileRef.current = failedProfile;
+        setProfile(failedProfile);
+        return failedPhoto;
+      }
     },
-    [accessToken, persistProfile, persistViewerBootstrapCache, profile]
+    [accessToken, replayMutationQueue]
   );
 
   const removeProfilePhoto = useCallback(
     async (index: number) => {
-      const photoToRemove = getProfilePhotoBySortOrder(profile.photos, index);
-      const nextPhotos = normalizeStoredProfilePhotos(profile.photos).filter(
+      const currentProfile = profileRef.current;
+      const photoToRemove = getProfilePhotoBySortOrder(currentProfile.photos, index);
+      const nextPhotos = normalizeStoredProfilePhotos(currentProfile.photos).filter(
         (photo) => photo.sortOrder !== index
       );
 
-      await persistProfile(
-        normalizeStoredProfile({
-          ...profile,
-          photos: nextPhotos,
-        })
-      );
-      await persistViewerBootstrapCache({
-        profile: normalizeStoredProfile({
-          ...profile,
-          photos: nextPhotos,
-        }),
+      const nextUiProfile = normalizeStoredProfile({
+        ...currentProfile,
+        photos: nextPhotos,
       });
+      profileRef.current = nextUiProfile;
+      setProfile(nextUiProfile);
 
-      if (accessToken && photoToRemove?.profileImageId) {
-        await deleteProfilePhotoRequest(accessToken, photoToRemove.profileImageId);
+      if (isStoredProfilePhoto(photoToRemove?.localUri)) {
+        await deleteStoredProfilePhoto(photoToRemove?.localUri).catch(() => {});
+      }
+
+      if (accessToken && userRef.current?.id) {
+        await enqueueMutation<ProfilePhotoDeletePayload>({
+          userId: userRef.current.id,
+          type: "profile_photo_delete",
+          targetKey: getPhotoMutationTargetStorageKey(index),
+          canonicalPayload: {
+            slot: index,
+            profileImageId: photoToRemove?.profileImageId || null,
+            localUri: photoToRemove?.localUri || "",
+          },
+        });
+        void replayMutationQueue();
       }
     },
-    [accessToken, persistProfile, persistViewerBootstrapCache, profile]
+    [accessToken, replayMutationQueue]
   );
+
+  const recordDiscoverySwipe = useCallback(
+    (
+      direction: "left" | "right",
+      options?: { requestId?: string; targetProfileId?: number }
+    ) => {
+      setSessionSwipeCounts((current) => {
+        const next =
+          direction === "right"
+            ? { ...current, likes: current.likes + 1 }
+            : { ...current, dislikes: current.dislikes + 1 };
+        debugDiscoveryLog("session_counters_incremented", {
+          requestId: options?.requestId || null,
+          targetProfileId: options?.targetProfileId || null,
+          direction,
+          before: current,
+          after: next,
+        });
+        return next;
+      });
+    },
+    []
+  );
+
+  const dismissGoalsUnlockPrompt = useCallback(async () => {
+    setGoalsUnlockPromptVisible(false);
+    if (!goalsUnlockStateRef.current.unlockMessagePending || !accessToken) {
+      return Boolean(accessToken) || !goalsUnlockStateRef.current.unlockMessagePending;
+    }
+
+    try {
+      const nextUnlockState = await acknowledgeGoalsUnlockSeenRequest(accessToken);
+      setGoalsUnlockState(nextUnlockState);
+      await persistViewerBootstrapCache({
+        discovery: {
+          likedProfileIds: likedProfilesRef.current,
+          passedProfileIds: passedProfilesRef.current,
+          currentDecisionCounts: {
+            likes: likedProfilesRef.current.length,
+            passes: passedProfilesRef.current.length,
+          },
+          popularAttributesByCategory: popularAttributesByCategoryRef.current,
+          totalLikesCount: totalLikesCountRef.current,
+          lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+          threshold: discoveryThresholdRef.current,
+          goalsUnlock: nextUnlockState,
+          lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
+          filters: discoveryFiltersRef.current,
+          feed: discoveryFeedRef.current,
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [accessToken, persistViewerBootstrapCache]);
 
   return (
     <AppContext.Provider
@@ -2425,14 +3640,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         heightUnit,
         setHeightUnit,
         saveSettings,
+        settingsSaveState,
         deleteAccount,
         t,
         goals,
         completeGoalTask,
         reorderGoalTasks,
+        sessionSwipeCounts,
+        lifetimeDiscoveryCounts,
+        discoveryThreshold,
+        goalsUnlockState,
+        goalsUnlockPromptVisible,
+        recordDiscoverySwipe,
+        dismissGoalsUnlockPrompt,
         popularAttributesByCategory,
         totalLikesCount,
         likedProfiles,
+        passedProfiles,
+        discoveryFeed,
         discoveryFilters,
         discoveryViewPreferences,
         lastServerSyncAt,
@@ -2440,9 +3665,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveDiscoveryFilters,
         setDiscoveryViewPreferences,
         likeProfile,
+        passProfile,
+        refreshDiscoveryCandidates,
+        fetchNextDiscoveryWindow,
+        resetDiscoveryHistory,
         profile,
         accountProfile,
-        updateProfile,
+        profileSaveStates,
+        updateProfileField,
         setProfilePhoto,
         removeProfilePhoto,
       }}

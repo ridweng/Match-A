@@ -1,6 +1,6 @@
 {
   "name": "@workspace/api-server",
-  "version": "2.1.0",
+  "version": "3.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,8 +9,12 @@
     "start": "node ./dist/index.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx ./src/scripts/seed.ts",
+    "db:seed:dummy-users": "tsx ./src/scripts/seed-dummy-users.ts",
+    "db:seed:all": "pnpm seed && pnpm db:seed:dummy-users",
     "db:setup": "tsx ./src/scripts/db-setup.ts",
     "db:reset": "tsx ./src/scripts/db-reset.ts",
+    "db:rebuild:preferences": "tsx ./src/scripts/rebuild-discovery-projections.ts",
+    "db:rebuild:goal-targets": "tsx ./src/scripts/rebuild-goals-projections.ts",
     "db:rebuild:goals-projections": "tsx ./src/scripts/rebuild-goals-projections.ts",
     "db:rebuild:discovery-projections": "tsx ./src/scripts/rebuild-discovery-projections.ts"
   },

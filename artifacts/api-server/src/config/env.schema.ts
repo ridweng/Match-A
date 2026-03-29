@@ -43,6 +43,9 @@ const envSchema = z
       .trim()
       .default("2026-03-26T00:00:00.000Z"),
     AUTH_PASSWORD_RESET_URL_BASE: z.string().trim().optional(),
+    ADMIN_DASHBOARD_ENABLED: booleanLikeSchema.default(false),
+    ADMIN_BASIC_AUTH_USERNAME: z.string().trim().default(""),
+    ADMIN_BASIC_AUTH_PASSWORD: z.string().trim().default(""),
     SMTP_ENABLED: booleanLikeSchema.default(false),
     EMAIL_LOG_ONLY: booleanLikeSchema.default(false),
     SMTP_HOST: z.string().trim().default(""),
@@ -113,6 +116,9 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     AUTH_PASSWORD_RESET_URL_BASE:
       env.AUTH_PASSWORD_RESET_URL_BASE ??
       `${frontendBaseUrl.replace(/\/+$/, "")}/reset-password`,
+    ADMIN_DASHBOARD_ENABLED: env.ADMIN_DASHBOARD_ENABLED ?? "false",
+    ADMIN_BASIC_AUTH_USERNAME: env.ADMIN_BASIC_AUTH_USERNAME ?? "",
+    ADMIN_BASIC_AUTH_PASSWORD: env.ADMIN_BASIC_AUTH_PASSWORD ?? "",
     SMTP_ENABLED: env.SMTP_ENABLED ?? "false",
     EMAIL_LOG_ONLY: env.EMAIL_LOG_ONLY ?? "false",
     SMTP_HOST: env.SMTP_HOST ?? "",
