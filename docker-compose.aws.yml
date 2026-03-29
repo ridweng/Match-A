@@ -3,9 +3,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: matcha
-      POSTGRES_USER: matcha
-      POSTGRES_PASSWORD: matcha
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PGDATA: /var/lib/postgresql/data/db
     expose:
       - "5432"
@@ -36,16 +36,16 @@ services:
       APP_ENV: production
       NODE_ENV: production
       APP_PORT: 8082
-      API_BASE_URL: ${API_BASE_URL:-http://ec2-3-237-0-218.compute-1.amazonaws.com:8082}
-      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://ec2-3-237-0-218.compute-1.amazonaws.com:8082}
-      AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI:-matcha:///auth-callback}
-      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-change-me}
+      API_BASE_URL: ${API_BASE_URL}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
       AUTH_ACCESS_TTL_MINUTES: 15
       AUTH_REFRESH_TTL_DAYS: 30
       AUTH_PASSWORD_RESET_TTL_MINUTES: 60
       AUTH_EMAIL_VERIFICATION_TTL_MINUTES: 1440
-      AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE:-http://ec2-3-237-0-218.compute-1.amazonaws.com:8082}
-      DATABASE_URL: postgresql://matcha:matcha@postgres:5432/matcha
+      AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
+      DATABASE_URL: ${DATABASE_URL}
       SMTP_ENABLED: "true"
       EMAIL_LOG_ONLY: "false"
       SMTP_HOST: mailpit
@@ -59,8 +59,8 @@ services:
       SMTP_SOCKET_TIMEOUT_MS: 20000
       SMTP_VERIFY_ON_STARTUP: "false"
       ADMIN_DASHBOARD_ENABLED: "true"
-      ADMIN_BASIC_AUTH_USERNAME: ${ADMIN_BASIC_AUTH_USERNAME:-admin}
-      ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_BASIC_AUTH_PASSWORD:-change-me-now}
+      ADMIN_BASIC_AUTH_USERNAME: ${ADMIN_BASIC_AUTH_USERNAME}
+      ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_BASIC_AUTH_PASSWORD}
     command: >
       sh -lc "pnpm db:migrate &&
       pnpm db:seed &&

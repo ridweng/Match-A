@@ -48,6 +48,11 @@ Thumbs.db
 .cache/
 .local/
 
+# Environment files
+.env
+.env.*
+!.env.example
+
 # Local Docker data
 data/*
 !data/.gitkeep
@@ -57,4 +62,3 @@ data/media/*
 !data/postgres/
 data/postgres/*
 !data/postgres/.gitkeep
-
