@@ -45,6 +45,70 @@ type UserFilterOptions = {
   generationVersions: number[];
 };
 
+type OverviewRealGenderRow = {
+  gender_identity: string;
+  profile_count: string;
+};
+
+type OverviewRealCountryRow = {
+  country: string;
+  profile_count: string;
+};
+
+type OverviewTimeframe = "now" | "1w" | "1m" | "3m" | "6m" | "1y" | "3y" | "all";
+
+type OverviewFilters = {
+  timeframe?: string;
+  country?: string;
+};
+
+type OverviewInteractedUserRow = {
+  profile_id: number;
+  display_name: string;
+  country: string;
+  likes_count: string;
+  passes_count: string;
+  total_decisions: string;
+  last_interaction_at: string | Date | null;
+};
+
+type OverviewCounts = {
+  real_users: string;
+  dummy_profiles: string;
+  total_decisions: string;
+  total_likes: string;
+  total_passes: string;
+  users_below_threshold: string;
+  users_above_threshold: string;
+  active_interacting_users: string;
+  latest_decision_event_at: string | Date | null;
+  latest_projection_rebuild_at: string | Date | null;
+};
+
+type OverviewView = {
+  selectedTimeframe: Exclude<OverviewTimeframe, "all">;
+  selectedCountry: string;
+  availableCountries: OverviewRealCountryRow[];
+  counts: OverviewCounts;
+  thresholds: { bucket: string; count: string }[];
+  batches: { dummy_batch_key: string; generation_version: number; profile_count: string }[];
+  activeBatch: { dummy_batch_key: string; generation_version: number } | null;
+  genderDistribution: {
+    gender_identity: string;
+    dummy_batch_key: string;
+    generation_version: number;
+    profile_count: string;
+  }[];
+  realUserGenderDistribution: OverviewRealGenderRow[];
+  realUserCountryDistribution: OverviewRealCountryRow[];
+  interactedUsers: OverviewInteractedUserRow[];
+  architectureSections: {
+    title: string;
+    body: string;
+  }[];
+  architectureFlow: string[];
+};
+
 type DatabaseTableKey =
   | "auth.users"
   | "core.profiles"
@@ -84,6 +148,24 @@ type DatabaseGraphNode = {
   rowCount: number | null;
   freshness: string | Date | null;
   present: boolean;
+};
+
+type DatabaseTableColumnDetail = {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  foreignKeyTarget: string | null;
+};
+
+type DatabaseTableDetail = {
+  key: DatabaseTableKey;
+  schema: string;
+  table: string;
+  role: TableRole;
+  description: string;
+  present: boolean;
+  columns: DatabaseTableColumnDetail[];
 };
 
 type DatabaseGraphEdge = {
@@ -127,6 +209,7 @@ type DatabaseView = {
     nodes: DatabaseGraphNode[];
     edges: DatabaseGraphEdge[];
   };
+  tableDetails: DatabaseTableDetail[];
   metricGroups: DatabaseMetricGroup[];
   tableStats: DatabaseTableStat[];
 };
@@ -150,6 +233,21 @@ type ColumnRequirement = {
 
 type RecentTimestampRow = {
   value: string | Date | null;
+};
+
+type TableColumnRow = {
+  column_name: string;
+  data_type: string;
+  udt_name: string;
+  is_nullable: "YES" | "NO";
+};
+
+type ConstraintColumnRow = {
+  constraint_type: "PRIMARY KEY" | "FOREIGN KEY";
+  column_name: string;
+  target_schema: string | null;
+  target_table: string | null;
+  target_column: string | null;
 };
 
 const GRAPH_NODE_WIDTH = 220;
@@ -489,6 +587,73 @@ export class AdminService {
     return key;
   }
 
+  private normalizeOverviewTimeframe(input?: string): OverviewTimeframe {
+    if (
+      input === "all" ||
+      input === "now" ||
+      input === "1w" ||
+      input === "1m" ||
+      input === "3m" ||
+      input === "6m" ||
+      input === "1y" ||
+      input === "3y"
+    ) {
+      return input;
+    }
+    return "1m";
+  }
+
+  private normalizeOverviewCountry(input?: string) {
+    const normalized = String(input || "").trim();
+    return normalized ? normalized : "all";
+  }
+
+  private getOverviewWindowStart(timeframe: OverviewTimeframe) {
+    if (timeframe === "all") {
+      return null;
+    }
+
+    const now = Date.now();
+    const days =
+      timeframe === "now"
+        ? 1
+        : timeframe === "1w"
+          ? 7
+          : timeframe === "1m"
+            ? 30
+            : timeframe === "3m"
+              ? 90
+              : timeframe === "6m"
+                ? 180
+                : timeframe === "1y"
+                  ? 365
+                  : 1095;
+
+    return new Date(now - days * 24 * 60 * 60 * 1000);
+  }
+
+  private buildResolvedCountryExpression(alias: string, hasProfileCountryColumn: boolean) {
+    const locationCountry = `NULLIF(TRIM(SPLIT_PART(${alias}.location, ',', array_length(regexp_split_to_array(${alias}.location, ','), 1))), '')`;
+    if (hasProfileCountryColumn) {
+      return `COALESCE(NULLIF(TRIM(${alias}.country), ''), ${locationCountry}, 'Unknown')`;
+    }
+    return `COALESCE(${locationCountry}, 'Unknown')`;
+  }
+
+  private async hasColumn(schema: string, table: string, column: string) {
+    const result = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_schema = $1
+           AND table_name = $2
+           AND column_name = $3
+       ) AS exists`,
+      [schema, table, column]
+    );
+    return Boolean(result.rows[0]?.exists);
+  }
+
   private async loadPresentRelations(keys: DatabaseTableKey[]) {
     const relationChecks = await Promise.all(
       keys.map(async (key) => {
@@ -680,6 +845,95 @@ export class AdminService {
     return [...fkEdges, ...flowEdges];
   }
 
+  private async loadTableDetails(
+    presentRelations: Map<DatabaseTableKey, boolean>
+  ): Promise<DatabaseTableDetail[]> {
+    return Promise.all(
+      APPROVED_TABLE_SPECS.map(async (spec) => {
+        const present = Boolean(presentRelations.get(spec.key));
+        if (!present) {
+          return {
+            key: spec.key,
+            schema: spec.schema,
+            table: spec.table,
+            role: spec.role,
+            description: spec.description,
+            present: false,
+            columns: [],
+          } satisfies DatabaseTableDetail;
+        }
+
+        const [columnRows, constraintRows] = await Promise.all([
+          pool.query<TableColumnRow>(
+            `SELECT column_name, data_type, udt_name, is_nullable
+             FROM information_schema.columns
+             WHERE table_schema = $1
+               AND table_name = $2
+             ORDER BY ordinal_position ASC`,
+            [spec.schema, spec.table]
+          ),
+          pool.query<ConstraintColumnRow>(
+            `SELECT
+               tc.constraint_type,
+               kcu.column_name,
+               ccu.table_schema AS target_schema,
+               ccu.table_name AS target_table,
+               ccu.column_name AS target_column
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+               ON tc.constraint_name = kcu.constraint_name
+              AND tc.table_schema = kcu.table_schema
+              AND tc.table_name = kcu.table_name
+             LEFT JOIN information_schema.constraint_column_usage ccu
+               ON tc.constraint_name = ccu.constraint_name
+              AND tc.table_schema = ccu.table_schema
+             WHERE tc.table_schema = $1
+               AND tc.table_name = $2
+               AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')`,
+            [spec.schema, spec.table]
+          ),
+        ]);
+
+        const primaryKeys = new Set(
+          constraintRows.rows
+            .filter((row) => row.constraint_type === "PRIMARY KEY")
+            .map((row) => row.column_name)
+        );
+        const foreignKeys = new Map(
+          constraintRows.rows
+            .filter(
+              (row) =>
+                row.constraint_type === "FOREIGN KEY" &&
+                row.target_schema &&
+                row.target_table &&
+                row.target_column
+            )
+            .map((row) => [
+              row.column_name,
+              `${row.target_schema}.${row.target_table}.${row.target_column}`,
+            ] as const)
+        );
+
+        return {
+          key: spec.key,
+          schema: spec.schema,
+          table: spec.table,
+          role: spec.role,
+          description: spec.description,
+          present: true,
+          columns: columnRows.rows.map((row) => ({
+            name: row.column_name,
+            dataType:
+              row.data_type === "USER-DEFINED" ? row.udt_name : row.data_type,
+            isNullable: row.is_nullable === "YES",
+            isPrimaryKey: primaryKeys.has(row.column_name),
+            foreignKeyTarget: foreignKeys.get(row.column_name) || null,
+          })),
+        } satisfies DatabaseTableDetail;
+      })
+    );
+  }
+
   private async loadDatabaseMetricGroups(
     presentRelations: Map<DatabaseTableKey, boolean>
   ): Promise<DatabaseMetricGroup[]> {
@@ -710,7 +964,7 @@ export class AdminService {
         })),
     });
 
-    const overview = await this.getOverview();
+    const overview = await this.getOverview({ timeframe: "all", country: "all" });
     groups.push({
       title: "Discovery and Unlock",
       metrics: [
@@ -877,6 +1131,7 @@ export class AdminService {
       .filter((check) => !check.present)
       .map((check) => `${check.relation}.${check.column}`);
     const tableStats = await this.loadTableStats(presentRelations);
+    const tableDetails = await this.loadTableDetails(presentRelations);
     const fkEdges = await this.loadFkEdges(presentRelations);
     const nodes = this.buildGraphNodes(tableStats);
     const edges = this.buildGraphEdges(presentRelations, fkEdges);
@@ -897,62 +1152,128 @@ export class AdminService {
         nodes,
         edges,
       },
+      tableDetails,
       metricGroups,
       tableStats,
     };
   }
 
-  async getOverview() {
-    const [counts, thresholds, batches, activeBatch, genderDistribution] = await Promise.all([
-      pool.query<{
-        real_users: string;
-        dummy_profiles: string;
-        total_decisions: string;
-        total_likes: string;
-        total_passes: string;
-        users_below_threshold: string;
-        users_above_threshold: string;
-        latest_decision_event_at: string | Date | null;
-        latest_projection_rebuild_at: string | Date | null;
-      }>(
-        `SELECT
-           COUNT(*) FILTER (WHERE p.kind = 'user')::text AS real_users,
+  async getOverview(filters?: OverviewFilters): Promise<OverviewView> {
+    const normalizedTimeframe = this.normalizeOverviewTimeframe(filters?.timeframe);
+    const selectedTimeframe =
+      normalizedTimeframe === "all" ? "1m" : normalizedTimeframe;
+    const selectedCountry = this.normalizeOverviewCountry(filters?.country);
+    const hasProfileCountryColumn = await this.hasColumn("core", "profiles", "country");
+    const resolvedCountryExpression = this.buildResolvedCountryExpression(
+      "p",
+      hasProfileCountryColumn
+    );
+    const windowStart = this.getOverviewWindowStart(normalizedTimeframe);
+    const overviewCte = `
+      WITH real_profiles AS (
+        SELECT
+          p.id,
+          p.user_id,
+          p.public_id,
+          p.display_name,
+          p.gender_identity,
+          ${resolvedCountryExpression} AS resolved_country
+        FROM core.profiles p
+        WHERE p.kind = 'user'
+      ),
+      filtered_real_profiles AS (
+        SELECT *
+        FROM real_profiles
+        WHERE ($1::text = 'all' OR resolved_country = $1)
+      )
+    `;
+
+    const [counts, thresholds, batches, activeBatch, genderDistribution, realUserGenderDistribution, realUserCountryDistribution, availableCountries, interactedUsers] = await Promise.all([
+      pool.query<OverviewCounts>(
+        `${overviewCte}
+         SELECT
+           COALESCE((SELECT COUNT(*)::text FROM filtered_real_profiles), '0') AS real_users,
            COUNT(*) FILTER (WHERE p.kind = 'dummy')::text AS dummy_profiles,
-           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions), '0') AS total_decisions,
-           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions WHERE interaction_type = 'like'), '0') AS total_likes,
-           COALESCE((SELECT COUNT(*)::text FROM discovery.profile_interactions WHERE interaction_type = 'pass'), '0') AS total_passes,
            COALESCE((
              SELECT COUNT(*)::text
-             FROM core.profiles p2
-             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p2.id
-             WHERE p2.kind = 'user'
-               AND COALESCE(pth.threshold_reached, false) = false
+             FROM discovery.profile_interactions pi
+             JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+             WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+               AND pi.interaction_type IN ('like', 'pass')
+           ), '0') AS total_decisions,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM discovery.profile_interactions pi
+             JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+             WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+               AND pi.interaction_type = 'like'
+           ), '0') AS total_likes,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM discovery.profile_interactions pi
+             JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+             WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+               AND pi.interaction_type = 'pass'
+           ), '0') AS total_passes,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM filtered_real_profiles frp
+             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = frp.id
+             WHERE COALESCE(pth.threshold_reached, false) = false
            ), '0') AS users_below_threshold,
            COALESCE((
              SELECT COUNT(*)::text
-             FROM core.profiles p2
-             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p2.id
-             WHERE p2.kind = 'user'
-               AND COALESCE(pth.threshold_reached, false) = true
+             FROM filtered_real_profiles frp
+             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = frp.id
+             WHERE COALESCE(pth.threshold_reached, false) = true
            ), '0') AS users_above_threshold,
-           (SELECT MAX(created_at) FROM discovery.profile_interactions) AS latest_decision_event_at,
-           (SELECT MAX(last_recomputed_at) FROM goals.user_goal_projection_meta) AS latest_projection_rebuild_at
+           COALESCE((
+             SELECT COUNT(DISTINCT pi.actor_profile_id)::text
+             FROM discovery.profile_interactions pi
+             JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+             WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+               AND pi.interaction_type IN ('like', 'pass')
+           ), '0') AS active_interacting_users,
+           (
+             SELECT MAX(pi.created_at)
+             FROM discovery.profile_interactions pi
+             JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+             WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+               AND pi.interaction_type IN ('like', 'pass')
+           ) AS latest_decision_event_at,
+           (
+             SELECT MAX(ugpm.last_recomputed_at)
+             FROM goals.user_goal_projection_meta ugpm
+             JOIN filtered_real_profiles frp ON frp.user_id = ugpm.user_id
+           ) AS latest_projection_rebuild_at
          FROM core.profiles p`
-      ),
+      , [selectedCountry, windowStart]),
       pool.query<{ bucket: string; count: string }>(
-        `SELECT
-           CASE
-             WHEN threshold_reached THEN 'reached'
-             WHEN total_likes >= 20 THEN '20-29'
-             WHEN total_likes >= 10 THEN '10-19'
-             WHEN total_likes >= 1 THEN '1-9'
-             ELSE '0'
-           END AS bucket,
-           COUNT(*)::text AS count
-         FROM discovery.profile_preference_thresholds
-         GROUP BY 1
-         ORDER BY 1 ASC`
-      ),
+        `${overviewCte}
+         SELECT bucket, count
+         FROM (
+           SELECT
+             CASE
+               WHEN COALESCE(pth.threshold_reached, false) THEN 'reached'
+               WHEN COALESCE(pth.total_likes, 0) >= 20 THEN '20-29'
+               WHEN COALESCE(pth.total_likes, 0) >= 10 THEN '10-19'
+               WHEN COALESCE(pth.total_likes, 0) >= 1 THEN '1-9'
+               ELSE '0'
+             END AS bucket,
+             COUNT(*)::text AS count,
+             CASE
+               WHEN COALESCE(pth.threshold_reached, false) THEN 5
+               WHEN COALESCE(pth.total_likes, 0) >= 20 THEN 4
+               WHEN COALESCE(pth.total_likes, 0) >= 10 THEN 3
+               WHEN COALESCE(pth.total_likes, 0) >= 1 THEN 2
+               ELSE 1
+             END AS sort_order
+           FROM filtered_real_profiles frp
+           LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = frp.id
+           GROUP BY 1, 3
+         ) buckets
+         ORDER BY sort_order`
+      , [selectedCountry]),
       pool.query<{ dummy_batch_key: string; generation_version: number; profile_count: string }>(
         `SELECT dummy_batch_key, generation_version, COUNT(*)::text AS profile_count
          FROM core.profile_dummy_metadata
@@ -992,9 +1313,63 @@ export class AdminService {
          GROUP BY p.gender_identity, pdm.dummy_batch_key, pdm.generation_version
          ORDER BY profile_count DESC, p.gender_identity ASC`
       ),
+      pool.query<OverviewRealGenderRow>(
+        `${overviewCte}
+         SELECT
+           CASE
+             WHEN COALESCE(TRIM(frp.gender_identity), '') = '' THEN 'Unknown'
+             ELSE frp.gender_identity
+           END AS gender_identity,
+           COUNT(*)::text AS profile_count
+         FROM filtered_real_profiles frp
+         GROUP BY 1
+         ORDER BY COUNT(*) DESC, 1 ASC`
+      , [selectedCountry]),
+      pool.query<OverviewRealCountryRow>(
+        `${overviewCte}
+         SELECT
+           frp.resolved_country AS country,
+           COUNT(*)::text AS profile_count
+         FROM filtered_real_profiles frp
+         GROUP BY 1
+         ORDER BY COUNT(*) DESC, 1 ASC`
+      , [selectedCountry]),
+      pool.query<OverviewRealCountryRow>(
+        `WITH real_profiles AS (
+           SELECT ${resolvedCountryExpression} AS country
+           FROM core.profiles p
+           WHERE p.kind = 'user'
+         )
+         SELECT
+           country,
+           COUNT(*)::text AS profile_count
+         FROM real_profiles
+         GROUP BY 1
+         ORDER BY COUNT(*) DESC, 1 ASC`
+      ),
+      pool.query<OverviewInteractedUserRow>(
+        `${overviewCte}
+         SELECT
+           frp.id AS profile_id,
+           COALESCE(NULLIF(TRIM(frp.display_name), ''), frp.public_id) AS display_name,
+           frp.resolved_country AS country,
+           COUNT(*) FILTER (WHERE pi.interaction_type = 'like')::text AS likes_count,
+           COUNT(*) FILTER (WHERE pi.interaction_type = 'pass')::text AS passes_count,
+           COUNT(*)::text AS total_decisions,
+           MAX(pi.created_at) AS last_interaction_at
+         FROM discovery.profile_interactions pi
+         JOIN filtered_real_profiles frp ON frp.id = pi.actor_profile_id
+         WHERE ($2::timestamptz IS NULL OR pi.created_at >= $2)
+           AND pi.interaction_type IN ('like', 'pass')
+         GROUP BY frp.id, frp.display_name, frp.public_id, frp.resolved_country
+         ORDER BY COUNT(*) DESC, MAX(pi.created_at) DESC, frp.id ASC`
+      , [selectedCountry, windowStart]),
     ]);
 
     return {
+      selectedTimeframe,
+      selectedCountry,
+      availableCountries: availableCountries.rows,
       counts: counts.rows[0] || {
         real_users: "0",
         dummy_profiles: "0",
@@ -1003,6 +1378,7 @@ export class AdminService {
         total_passes: "0",
         users_below_threshold: "0",
         users_above_threshold: "0",
+        active_interacting_users: "0",
         latest_decision_event_at: null,
         latest_projection_rebuild_at: null,
       },
@@ -1010,6 +1386,48 @@ export class AdminService {
       batches: batches.rows,
       activeBatch: activeBatch.rows[0] || null,
       genderDistribution: genderDistribution.rows,
+      realUserGenderDistribution: realUserGenderDistribution.rows,
+      realUserCountryDistribution: realUserCountryDistribution.rows,
+      interactedUsers: interactedUsers.rows,
+      architectureSections: [
+        {
+          title: "auth",
+          body:
+            "Owns account identity and access state: users, sessions, provider identities, verification tokens, reset tokens, and email action throttling.",
+        },
+        {
+          title: "core",
+          body:
+            "Owns source-of-truth profile data for real and dummy accounts: profiles, languages, interests, category values, and dummy metadata. This is where location and normalized country live.",
+        },
+        {
+          title: "catalog",
+          body:
+            "Owns the static rule and template source data used to derive goals: categories, allowed values, category rules, and goal task templates.",
+        },
+        {
+          title: "discovery",
+          body:
+            "Owns immutable like/pass interaction facts and the discovery projections rebuilt from them: current decisions, popular attribute modes, and preference thresholds.",
+        },
+        {
+          title: "goals",
+          body:
+            "Owns derived unlock and goal progress state: unlock status, category targets, target progress, projected tasks, category/global summaries, and projection metadata.",
+        },
+        {
+          title: "media",
+          body:
+            "Owns media asset metadata and profile image mappings used by the app and discovery rendering surfaces.",
+        },
+      ],
+      architectureFlow: [
+        "Source facts start in auth.users and core.profiles, then discovery.profile_interactions records immutable like/pass events.",
+        "discovery.profile_decisions, popular_attribute_modes, and profile_preference_thresholds are projections derived from those interaction facts.",
+        "Threshold projections feed goals.user_unlock_state and the goals projection pipeline.",
+        "catalog tables define the rules/templates that goals projections use to derive targets, tasks, and progress summaries.",
+        "media tables attach uploaded assets to profiles but do not drive discovery/goals projections directly.",
+      ],
     };
   }
 

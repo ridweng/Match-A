@@ -9,6 +9,23 @@ type DatabaseGraphNode = Awaited<
 type DatabaseGraphEdge = Awaited<
   ReturnType<AdminService["getDatabaseView"]>
 >["graph"]["edges"][number];
+type DatabaseTableDetail = Awaited<
+  ReturnType<AdminService["getDatabaseView"]>
+>["tableDetails"][number];
+type AdminOverview = Awaited<ReturnType<AdminService["getOverview"]>>;
+
+type DatabaseGraphSize = "current" | "wide";
+type OverviewTimeframe = AdminOverview["selectedTimeframe"];
+
+const OVERVIEW_TIMEFRAME_LABELS: Record<OverviewTimeframe, string> = {
+  now: "Last 24h",
+  "1w": "1 week",
+  "1m": "1 month",
+  "3m": "3 months",
+  "6m": "6 months",
+  "1y": "1 year",
+  "3y": "3 years",
+};
 
 function escapeHtml(input: unknown) {
   return String(input ?? "")
@@ -33,6 +50,29 @@ function renderOption(
   return `<option value="${escapeHtml(value)}"${
     String(selectedValue ?? "") === value ? " selected" : ""
   }>${escapeHtml(label)}</option>`;
+}
+
+function toMetricGroupId(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildAdminQuery(params: Record<string, string | null | undefined>) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value && String(value).trim()) {
+      search.set(key, String(value));
+    }
+  }
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+function escapeHtmlAttribute(input: unknown) {
+  return escapeHtml(input).replace(/`/g, "&#96;");
 }
 
 @Controller("admin/stats")
@@ -96,6 +136,14 @@ export class AdminController {
       .button { padding:10px 14px; border-radius:10px; border:1px solid #ccd5ce; background:#fff; color:#1d241f; cursor:pointer; }
       .button.primary { border-color:#0e7a4a; background:#0e7a4a; color:#fff; }
       .meta { font-size: 13px; color: #65746a; margin-bottom: 16px; }
+      .card.flush { padding: 0; overflow: hidden; }
+      .card.flush .card-header { padding: 16px 16px 12px; }
+      .graph-shell { overflow: auto; border-top: 1px solid #e2e8f0; background: #ffffff; }
+      .full-bleed-card { width: calc(100vw - 24px); margin-left: calc(50% - 50vw + 12px); margin-right: calc(50% - 50vw + 12px); }
+      @media (max-width: 768px) {
+        main { padding: 16px; }
+        .full-bleed-card { width: calc(100vw - 12px); margin-left: calc(50% - 50vw + 6px); margin-right: calc(50% - 50vw + 6px); }
+      }
     </style>
   </head>
   <body>
@@ -118,10 +166,14 @@ export class AdminController {
 
   private renderDatabaseGraph(
     nodes: DatabaseGraphNode[],
-    edges: DatabaseGraphEdge[]
+    edges: DatabaseGraphEdge[],
+    size: DatabaseGraphSize,
+    tableDetails: DatabaseTableDetail[]
   ) {
     const maxX = Math.max(...nodes.map((node) => node.x + node.width), 0) + 60;
     const maxY = Math.max(...nodes.map((node) => node.y + node.height), 0) + 60;
+    const svgWidth = size === "wide" ? maxX + 420 : maxX;
+    const svgHeight = size === "wide" ? 980 : 920;
     const schemaBlocks = [
       { label: "auth", x: 20, width: 250 },
       { label: "core", x: 300, width: 250 },
@@ -131,6 +183,7 @@ export class AdminController {
       { label: "media", x: 1420, width: 250 },
     ];
     const nodeByKey = new Map(nodes.map((node) => [node.key, node] as const));
+    const detailByKey = new Map(tableDetails.map((detail) => [detail.key, detail] as const));
 
     const edgeSvg = edges
       .map((edge) => {
@@ -171,9 +224,28 @@ export class AdminController {
         const statusFill = node.present ? roleStyles.fill : "#fff7f7";
         const count = node.present ? String(node.rowCount ?? 0) : "missing";
         const freshness = node.freshness ? toIso(node.freshness) : "—";
+        const detail = detailByKey.get(node.key);
+        const detailPayload = encodeURIComponent(
+          JSON.stringify({
+            key: node.key,
+            label: node.label,
+            schema: node.schema,
+            table: node.table,
+            role: node.role,
+            description: node.description,
+            present: node.present,
+            columns: detail?.columns || [],
+          })
+        );
 
         return `
-          <g>
+          <g style="cursor:pointer;" tabindex="0" role="button" aria-label="Open ${escapeHtmlAttribute(
+            node.label
+          )} details" onclick="window.openDbTableDetail('${escapeHtmlAttribute(
+            detailPayload
+          )}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.openDbTableDetail('${escapeHtmlAttribute(
+            detailPayload
+          )}');}">
             <rect
               x="${node.x}"
               y="${node.y}"
@@ -220,7 +292,7 @@ export class AdminController {
       .join("");
 
     return `
-      <svg viewBox="0 0 ${maxX} ${maxY}" width="100%" height="920" role="img" aria-label="Database architecture graph">
+          <svg viewBox="0 0 ${maxX} ${maxY}" width="${svgWidth}" height="${svgHeight}" style="display:block;min-width:${svgWidth}px;" role="img" aria-label="Database architecture graph">
         <defs>
           <marker id="arrow-fk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
@@ -237,9 +309,34 @@ export class AdminController {
   }
 
   @Get("overview")
-  async overview(@Req() req: Request, @Res() res: Response) {
+  async overview(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query("timeframe") timeframe?: string,
+    @Query("country") country?: string
+  ) {
     if (!this.authorize(req, res)) return;
-    const overview = await this.adminService.getOverview();
+    const overview = await this.adminService.getOverview({ timeframe, country });
+    const timeframeButtons = (Object.entries(OVERVIEW_TIMEFRAME_LABELS) as [
+      OverviewTimeframe,
+      string,
+    ][])
+      .map(([value, label]) => {
+        const href = `/api/admin/stats/overview${buildAdminQuery({
+          timeframe: value,
+          country: overview.selectedCountry,
+        })}`;
+        return `<a href="${escapeHtml(href)}" class="button${
+          overview.selectedTimeframe === value ? " primary" : ""
+        }">${escapeHtml(label)}</a>`;
+      })
+      .join("");
+    const countryOptions = [
+      renderOption("all", "All countries", overview.selectedCountry),
+      ...overview.availableCountries.map((row) =>
+        renderOption(row.country, `${row.country} (${row.profile_count})`, overview.selectedCountry)
+      ),
+    ].join("");
 
     const thresholdRows = overview.thresholds
       .map(
@@ -265,6 +362,50 @@ export class AdminController {
           )}</td></tr>`
       )
       .join("");
+    const realUserGenderRows = overview.realUserGenderDistribution
+      .map(
+        (row) =>
+          `<tr><td>${escapeHtml(row.gender_identity || "Unknown")}</td><td>${escapeHtml(
+            row.profile_count
+          )}</td></tr>`
+      )
+      .join("");
+    const realUserCountryRows = overview.realUserCountryDistribution
+      .map(
+        (row) =>
+          `<tr><td>${escapeHtml(row.country || "Unknown")}</td><td>${escapeHtml(
+            row.profile_count
+          )}</td></tr>`
+      )
+      .join("");
+    const interactedUserRows = overview.interactedUsers
+      .map(
+        (row) => `<tr>
+          <td>${escapeHtml(row.profile_id)}</td>
+          <td>${escapeHtml(row.display_name)}</td>
+          <td>${escapeHtml(row.country || "Unknown")}</td>
+          <td>${escapeHtml(row.likes_count)}</td>
+          <td>${escapeHtml(row.passes_count)}</td>
+          <td>${escapeHtml(row.total_decisions)}</td>
+          <td>${escapeHtml(toIso(row.last_interaction_at))}</td>
+        </tr>`
+      )
+      .join("");
+    const architectureCards = overview.architectureSections
+      .map(
+        (section) => `
+          <div class="card" style="box-shadow:none;">
+            <div class="label">${escapeHtml(section.title)}</div>
+            <div class="muted" style="margin-top:8px;line-height:1.55;">${escapeHtml(
+              section.body
+            )}</div>
+          </div>
+        `
+      )
+      .join("");
+    const architectureFlowRows = overview.architectureFlow
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("");
 
     res.send(
       this.renderPage(
@@ -273,27 +414,80 @@ export class AdminController {
           <h1>Matcha Admin</h1>
           <div class="actions">
             <button class="button primary" onclick="window.location.reload()">Refresh</button>
+            <a class="button" href="/api/admin/stats/overview${buildAdminQuery({
+              timeframe: "1m",
+              country: "all",
+            })}">Reset filters</a>
           </div>
-          <div class="meta">Latest decision activity: ${escapeHtml(
+          <div class="card" style="margin-bottom:16px;">
+            <h2>Overview Filters</h2>
+            <form method="get" style="margin-bottom:0;">
+              <input type="hidden" name="timeframe" value="${escapeHtml(overview.selectedTimeframe)}" />
+              <div style="display:grid;grid-template-columns:minmax(220px,360px) auto;gap:12px;align-items:end;">
+                <div>
+                  <div class="label" style="margin-bottom:6px;">Country</div>
+                  <select name="country" style="padding:10px 12px;border-radius:10px;border:1px solid #ccd5ce;width:100%;">
+                    ${countryOptions}
+                  </select>
+                </div>
+                <div class="actions" style="margin:0;">
+                  <button type="submit" class="button primary">Apply country</button>
+                </div>
+              </div>
+            </form>
+            <div class="label" style="margin:16px 0 8px;">Timeframe</div>
+            <div class="actions" style="flex-wrap:wrap;margin-bottom:0;">${timeframeButtons}</div>
+          </div>
+          <div class="meta">Current filters: ${escapeHtml(
+            overview.selectedCountry === "all" ? "All countries" : overview.selectedCountry
+          )} · ${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div>
+          <div class="meta">Latest matching decision activity: ${escapeHtml(
             toIso(overview.counts.latest_decision_event_at)
-          )} · Latest projection rebuild: ${escapeHtml(
+          )} · Latest filtered projection rebuild: ${escapeHtml(
             toIso(overview.counts.latest_projection_rebuild_at)
           )}</div>
           <div class="grid">
             <div class="card"><div class="label">Real users</div><div class="value">${escapeHtml(overview.counts.real_users)}</div></div>
             <div class="card"><div class="label">Dummy profiles</div><div class="value">${escapeHtml(overview.counts.dummy_profiles)}</div></div>
-            <div class="card"><div class="label">Total likes</div><div class="value">${escapeHtml(overview.counts.total_likes)}</div></div>
-            <div class="card"><div class="label">Total passes</div><div class="value">${escapeHtml(overview.counts.total_passes)}</div></div>
+            <div class="card"><div class="label">Active interacting users</div><div class="value">${escapeHtml(overview.counts.active_interacting_users)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
+            <div class="card"><div class="label">Total likes</div><div class="value">${escapeHtml(overview.counts.total_likes)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
+            <div class="card"><div class="label">Total passes</div><div class="value">${escapeHtml(overview.counts.total_passes)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
             <div class="card"><div class="label">Users below threshold</div><div class="value">${escapeHtml(overview.counts.users_below_threshold)}</div></div>
             <div class="card"><div class="label">Users above threshold</div><div class="value">${escapeHtml(overview.counts.users_above_threshold)}</div></div>
-            <div class="card"><div class="label">Total decisions</div><div class="value">${escapeHtml(overview.counts.total_decisions)}</div></div>
-            <div class="card"><div class="label">Active dummy batch</div><div class="value">${escapeHtml(overview.activeBatch?.dummy_batch_key || "—")}</div><div class="muted">Generation ${escapeHtml(overview.activeBatch?.generation_version ?? "—")}</div></div>
+            <div class="card"><div class="label">Total decisions</div><div class="value">${escapeHtml(overview.counts.total_decisions)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
+            <div class="card"><div class="label">Active dummy batch</div><div class="value">${escapeHtml(overview.activeBatch?.dummy_batch_key || "—")}</div><div class="muted">Generation ${escapeHtml(overview.activeBatch?.generation_version ?? "—")} · global</div></div>
           </div>
           <div class="card" style="margin-bottom: 16px;">
             <h2>Threshold Distribution</h2>
             <table>
               <thead><tr><th>Bucket</th><th>Profiles</th></tr></thead>
               <tbody>${thresholdRows || '<tr><td colspan="2" class="muted">No rows</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));">
+            <div class="card">
+              <h2>Real User Gender Distribution</h2>
+              <table>
+                <thead><tr><th>Gender</th><th>Profiles</th></tr></thead>
+                <tbody>${realUserGenderRows || '<tr><td colspan="2" class="muted">No real-user gender rows</td></tr>'}</tbody>
+              </table>
+            </div>
+            <div class="card">
+              <h2>Real User Country Distribution</h2>
+              <table>
+                <thead><tr><th>Country</th><th>Profiles</th></tr></thead>
+                <tbody>${realUserCountryRows || '<tr><td colspan="2" class="muted">No real-user country rows</td></tr>'}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: 16px;">
+            <h2>Users Interacting With Discovery Queues</h2>
+            <div class="muted" style="margin-bottom:12px;">Real-user actors with at least one like/pass event in ${escapeHtml(
+              OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe]
+            )}.</div>
+            <table>
+              <thead><tr><th>Profile ID</th><th>Display name</th><th>Country</th><th>Likes</th><th>Passes</th><th>Total decisions</th><th>Last interaction</th></tr></thead>
+              <tbody>${interactedUserRows || '<tr><td colspan="7" class="muted">No interacting users in this timeframe</td></tr>'}</tbody>
             </table>
           </div>
           <div class="card">
@@ -309,6 +503,17 @@ export class AdminController {
               <thead><tr><th>Gender</th><th>Batch</th><th>Generation</th><th>Profiles</th></tr></thead>
               <tbody>${genderRows || '<tr><td colspan="4" class="muted">No active batch distribution</td></tr>'}</tbody>
             </table>
+          </div>
+          <div class="card" style="margin-top:16px;">
+            <h2>Database Architecture</h2>
+            <div class="muted" style="margin-bottom:12px;">Operational summary of how source tables and projections relate across the backend.</div>
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">${architectureCards}</div>
+            <div class="card" style="box-shadow:none;margin-top:12px;">
+              <div class="label">Source to projection flow</div>
+              <ul style="margin:10px 0 0 18px;padding:0;color:#475569;line-height:1.6;">
+                ${architectureFlowRows}
+              </ul>
+            </div>
           </div>
         `,
         { autoRefreshMs: 15000 }
@@ -572,7 +777,31 @@ export class AdminController {
     if (!this.authorize(req, res)) return;
 
     const view = await this.adminService.getDatabaseView();
-    const graphSvg = this.renderDatabaseGraph(view.graph.nodes, view.graph.edges);
+    const graphSize =
+      req.query.graphSize === "wide" || req.query.graphSize === "current"
+        ? (req.query.graphSize as DatabaseGraphSize)
+        : "current";
+    const selectedMetrics =
+      typeof req.query.metrics === "string" && req.query.metrics.trim()
+        ? req.query.metrics.trim()
+        : "all";
+    const graphSvg = this.renderDatabaseGraph(
+      view.graph.nodes,
+      view.graph.edges,
+      graphSize,
+      view.tableDetails
+    );
+    const metricOptions = [
+      { id: "all", label: "All panels" },
+      ...view.metricGroups.map((group) => ({
+        id: toMetricGroupId(group.title),
+        label: group.title,
+      })),
+    ];
+    const visibleMetricGroups =
+      selectedMetrics === "all"
+        ? view.metricGroups
+        : view.metricGroups.filter((group) => toMetricGroupId(group.title) === selectedMetrics);
     const warningBanner =
       view.schemaStatus.missingRequiredRelations.length ||
       view.schemaStatus.missingRequiredColumns.length ||
@@ -608,7 +837,7 @@ export class AdminController {
         `
         : "";
 
-    const metricSections = view.metricGroups
+    const metricSections = visibleMetricGroups
       .map(
         (group) => `
           <div class="card" style="margin-bottom:16px;">
@@ -671,16 +900,47 @@ export class AdminController {
               <span class="pill" style="border:1px solid #a855f7;background:#faf5ff;">Flow edge = architectural projection/data flow</span>
             </div>
           </div>
-          <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(320px,1fr);gap:16px;align-items:start;">
-            <div class="card">
-              <h2>Schema Visualizer</h2>
-              <div style="overflow:auto;border:1px solid #e2e8f0;border-radius:14px;background:#ffffff;">
-                ${graphSvg}
+          <div class="card flush ${graphSize === "wide" ? "full-bleed-card" : ""}">
+            <div class="card-header" style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;align-items:flex-start;">
+              <div>
+                <h2>Schema Visualizer</h2>
+                <div class="muted">Approved source/projection graph with distinct FK and flow edges.</div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <a class="button ${graphSize === "current" ? "primary" : ""}" href="/api/admin/stats/database${buildAdminQuery({
+                  graphSize: "current",
+                  metrics: selectedMetrics,
+                })}">Current width</a>
+                <a class="button ${graphSize === "wide" ? "primary" : ""}" href="/api/admin/stats/database${buildAdminQuery({
+                  graphSize: "wide",
+                  metrics: selectedMetrics,
+                })}">Bigger width</a>
               </div>
             </div>
-            <div>
-              ${metricSections}
+            <div class="graph-shell">
+              ${graphSvg}
             </div>
+          </div>
+          <div class="card" style="margin-top:16px;">
+            <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
+              <div>
+                <h2>Monitoring Panels</h2>
+                <div class="muted">Toggle DB-backed monitoring sections without shrinking the graph.</div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                ${metricOptions
+                  .map(
+                    (option) => `
+                      <a class="button ${selectedMetrics === option.id ? "primary" : ""}" href="/api/admin/stats/database${buildAdminQuery({
+                        graphSize,
+                        metrics: option.id,
+                      })}">${escapeHtml(option.label)}</a>
+                    `
+                  )
+                  .join("")}
+              </div>
+            </div>
+            ${metricSections || '<div class="muted">No monitoring section matches the selected toggle.</div>'}
           </div>
           <div class="card" style="margin-top:16px;">
             <h2>Approved Table Stats</h2>
@@ -697,6 +957,78 @@ export class AdminController {
               <tbody>${tableStatRows}</tbody>
             </table>
           </div>
+          <dialog id="db-table-detail-modal" style="width:min(860px,calc(100vw - 32px));border:none;border-radius:18px;padding:0;box-shadow:0 24px 64px rgba(15,23,42,0.24);">
+            <div style="padding:18px 18px 14px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+              <div>
+                <h2 id="db-table-detail-title" style="margin-bottom:6px;">Table details</h2>
+                <div id="db-table-detail-subtitle" class="muted"></div>
+              </div>
+              <button class="button" onclick="window.closeDbTableDetail()">Close</button>
+            </div>
+            <div style="padding:18px;">
+              <div id="db-table-detail-description" class="muted" style="margin-bottom:14px;"></div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Attribute</th>
+                    <th>Data type</th>
+                    <th>Nullable</th>
+                    <th>Primary key</th>
+                    <th>Foreign key</th>
+                  </tr>
+                </thead>
+                <tbody id="db-table-detail-rows">
+                  <tr><td colspan="5" class="muted">Select a table card to inspect its schema details.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </dialog>
+          <script>
+            window.openDbTableDetail = function(encodedPayload) {
+              var dialog = document.getElementById('db-table-detail-modal');
+              if (!dialog) return;
+              var payload = JSON.parse(decodeURIComponent(encodedPayload));
+              document.getElementById('db-table-detail-title').textContent = payload.label;
+              document.getElementById('db-table-detail-subtitle').textContent =
+                payload.schema + '.' + payload.table + ' · ' + payload.role;
+              document.getElementById('db-table-detail-description').textContent =
+                payload.description + (payload.present ? '' : ' This relation is missing in the current environment.');
+              var rows = document.getElementById('db-table-detail-rows');
+              if (!rows) return;
+              if (!payload.present) {
+                rows.innerHTML = '<tr><td colspan="5" class="muted">This approved relation is not present in the current environment.</td></tr>';
+              } else if (!payload.columns || !payload.columns.length) {
+                rows.innerHTML = '<tr><td colspan="5" class="muted">No column metadata available.</td></tr>';
+              } else {
+                rows.innerHTML = payload.columns.map(function(column) {
+                  return '<tr>' +
+                    '<td>' + String(column.name) + '</td>' +
+                    '<td>' + String(column.dataType) + '</td>' +
+                    '<td>' + (column.isNullable ? 'yes' : 'no') + '</td>' +
+                    '<td>' + (column.isPrimaryKey ? 'yes' : 'no') + '</td>' +
+                    '<td>' + (column.foreignKeyTarget || '—') + '</td>' +
+                  '</tr>';
+                }).join('');
+              }
+              dialog.showModal();
+            };
+            window.closeDbTableDetail = function() {
+              var dialog = document.getElementById('db-table-detail-modal');
+              if (dialog) dialog.close();
+            };
+            (function() {
+              var dialog = document.getElementById('db-table-detail-modal');
+              if (!dialog) return;
+              dialog.addEventListener('click', function(event) {
+                var rect = dialog.getBoundingClientRect();
+                var inside = rect.top <= event.clientY && event.clientY <= rect.top + rect.height &&
+                  rect.left <= event.clientX && event.clientX <= rect.left + rect.width;
+                if (!inside) {
+                  dialog.close();
+                }
+              });
+            })();
+          </script>
         `,
         { autoRefreshMs: 15000 }
       )

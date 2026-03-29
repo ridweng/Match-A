@@ -120,6 +120,7 @@ export type ViewerProfileResponse = {
   dateOfBirth: string;
   updatedAt?: string | null;
   location: string;
+  country: string;
   profession: string;
   genderIdentity: string;
   pronouns: string;
@@ -431,6 +432,7 @@ const DEMO_VIEWER_PROFILE: ViewerProfileResponse = {
   dateOfBirth: DEMO_USER.dateOfBirth || "",
   updatedAt: new Date().toISOString(),
   location: "",
+  country: "",
   profession: DEMO_USER.profession || "",
   genderIdentity: "",
   pronouns: "",

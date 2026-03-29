@@ -21,6 +21,7 @@ const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   location: z.string().trim().max(255).optional(),
+  country: z.string().trim().max(120).optional(),
   profession: z.string().trim().max(120).optional(),
   genderIdentity: z.string().trim().max(64).optional(),
   pronouns: z.string().trim().max(64).optional(),

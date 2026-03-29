@@ -1503,17 +1503,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setProfile((prev) => {
-        if (prev.location === nextLocation) {
-          return prev;
-        }
-        const updated = normalizeStoredProfile({ ...prev, location: nextLocation });
-        profileRef.current = updated;
-        void persistViewerBootstrapCache({ profile: updated });
-        return updated;
+      if (profileRef.current.location === nextLocation) {
+        return;
+      }
+
+      const updated = normalizeStoredProfile({
+        ...profileRef.current,
+        location: nextLocation,
       });
+      profileRef.current = updated;
+      setProfile(updated);
+      void persistViewerBootstrapCache({ profile: updated });
+
+      if (accessToken) {
+        void updateViewerProfile(accessToken, {
+          location: nextLocation,
+          country,
+        }).catch(() => {});
+      }
     } catch {}
-  }, [persistViewerBootstrapCache]);
+  }, [accessToken, persistViewerBootstrapCache]);
 
   const setLanguage = useCallback((lang: "es" | "en") => {
     setLanguageState(lang);

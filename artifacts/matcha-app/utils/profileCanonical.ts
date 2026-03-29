@@ -29,6 +29,7 @@ export type CanonicalProfile = {
   age: string;
   dateOfBirth: string;
   location: string;
+  country: string;
   profession: string;
   genderIdentity: string;
   pronouns: string;
@@ -52,7 +53,7 @@ export type CanonicalProfile = {
   photos: UserProfilePhoto[];
 };
 
-export type ProfileEditableField = Exclude<keyof CanonicalProfile, "age" | "photos">;
+export type ProfileEditableField = Exclude<keyof CanonicalProfile, "age" | "photos" | "country">;
 export type ProfileFieldSaveState = "idle" | "queued" | "saving" | "error";
 
 type EditableScreen = "onboarding" | "profile" | "settings";
@@ -70,6 +71,7 @@ export const EMPTY_CANONICAL_PROFILE: CanonicalProfile = {
   age: "",
   dateOfBirth: "",
   location: "",
+  country: "",
   profession: "",
   genderIdentity: "",
   pronouns: "",
@@ -378,6 +380,7 @@ export function mapApiProfileToCanonicalProfile(
     age: normalizeFreeText(input?.age),
     dateOfBirth: normalizeIsoDateString(input?.dateOfBirth),
     location: normalizeFreeText(input?.location),
+    country: normalizeFreeText(input?.country),
     profession: normalizeFreeText(input?.profession),
     genderIdentity: normalizeGenderIdentity(input?.genderIdentity),
     pronouns: normalizePronouns(input?.pronouns),

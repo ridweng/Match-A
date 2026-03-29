@@ -234,6 +234,7 @@ export const profilesTable = coreSchema.table(
     contentLocale: localeCodeEnum("content_locale").notNull().default("es"),
     dateOfBirth: date("date_of_birth"),
     location: varchar("location", { length: 255 }).notNull().default(""),
+    country: varchar("country", { length: 120 }).notNull().default(""),
     genderIdentity: varchar("gender_identity", { length: 64 }).notNull().default(""),
     pronouns: varchar("pronouns", { length: 64 }).notNull().default(""),
     personality: varchar("personality", { length: 64 }).notNull().default(""),

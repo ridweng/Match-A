@@ -11,6 +11,7 @@ type ProfileRow = {
   display_name: string;
   date_of_birth: string | null;
   location: string;
+  country: string;
   profession: string;
   gender_identity: string;
   pronouns: string;
@@ -43,6 +44,19 @@ export class ViewerService {
     @Inject(DiscoveryService) private readonly discoveryService: DiscoveryService,
     @Inject(MediaService) private readonly mediaService: MediaService
   ) {}
+
+  private async hasProfileCountryColumn() {
+    const result = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_schema = 'core'
+           AND table_name = 'profiles'
+           AND column_name = 'country'
+       ) AS exists`
+    );
+    return Boolean(result.rows[0]?.exists);
+  }
 
   private async findProfileId(userId: number) {
     const result = await pool.query<{ id: number }>(
@@ -194,6 +208,7 @@ export class ViewerService {
       dateOfBirth: row.date_of_birth || "",
       updatedAt: this.toIsoTimestamp(row.updated_at),
       location: row.location || "",
+      country: row.country || "",
       profession: row.profession || "",
       genderIdentity: row.gender_identity || "",
       pronouns: row.pronouns || "",
@@ -220,6 +235,7 @@ export class ViewerService {
 
   async getProfile(userId: number) {
     const profileId = await this.findProfileId(userId);
+    const hasProfileCountryColumn = await this.hasProfileCountryColumn();
     const [profileResult, languagesSpoken, interests] = await Promise.all([
       pool.query<ProfileRow>(
         `SELECT
@@ -228,6 +244,7 @@ export class ViewerService {
            display_name,
            date_of_birth,
            location,
+           ${hasProfileCountryColumn ? "country," : "'' AS country,"}
            profession,
            gender_identity,
            pronouns,
@@ -274,6 +291,7 @@ export class ViewerService {
       name?: string;
       dateOfBirth?: string;
       location?: string;
+      country?: string;
       profession?: string;
       genderIdentity?: string;
       pronouns?: string;
@@ -304,6 +322,7 @@ export class ViewerService {
     }
 
     const profileId = await this.findProfileId(userId);
+    const hasProfileCountryColumn = await this.hasProfileCountryColumn();
     const client = await pool.connect();
 
     try {
@@ -321,6 +340,9 @@ export class ViewerService {
         pushAssignment("date_of_birth", updates.dateOfBirth || null);
       }
       if (typeof updates.location === "string") pushAssignment("location", updates.location);
+      if (hasProfileCountryColumn && typeof updates.country === "string") {
+        pushAssignment("country", updates.country);
+      }
       if (typeof updates.profession === "string") {
         pushAssignment("profession", updates.profession);
       }
