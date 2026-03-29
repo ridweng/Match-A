@@ -26,6 +26,13 @@
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f api",
+    "docker:aws:start": "docker compose --env-file .env -f docker-compose.aws.yml up -d",
+    "docker:aws:build": "docker compose --env-file .env -f docker-compose.aws.yml up -d --build",
+    "docker:aws:restart": "docker compose --env-file .env -f docker-compose.aws.yml restart api",
+    "docker:aws:recreate": "docker compose --env-file .env -f docker-compose.aws.yml up -d --build --force-recreate api",
+    "docker:aws:logs": "docker compose --env-file .env -f docker-compose.aws.yml logs -f api",
+    "docker:aws:ps": "docker compose --env-file .env -f docker-compose.aws.yml ps",
+    "docker:aws:down": "docker compose --env-file .env -f docker-compose.aws.yml down",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
