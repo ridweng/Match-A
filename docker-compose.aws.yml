@@ -15,6 +15,8 @@ services:
   mailpit:
     image: axllent/mailpit:v1.20
     restart: unless-stopped
+    ports:
+      - "8025:8025"
     expose:
       - "1025"
       - "8025"
