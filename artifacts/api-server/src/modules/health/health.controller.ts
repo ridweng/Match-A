@@ -21,11 +21,25 @@ export class HealthController {
 
   @Get("ready")
   async readiness() {
-    const status = await this.healthService.getReadinessStatus();
-    if (!status.ready) {
-      throw new ServiceUnavailableException(status);
+    try {
+      const status = await this.healthService.getReadinessStatus();
+      if (!status.ready) {
+        throw new ServiceUnavailableException(status);
+      }
+      return status;
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+      throw new ServiceUnavailableException({
+        dbConnected: false,
+        missingRelations: [],
+        missingColumns: [],
+        seededCategoryCount: 0,
+        seededTemplateCount: 0,
+        ready: false,
+      });
     }
-    return status;
   }
 
   @Get("email")

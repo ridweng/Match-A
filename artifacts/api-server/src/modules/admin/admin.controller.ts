@@ -119,7 +119,8 @@ export class AdminController {
       main { max-width: 1200px; margin: 0 auto; padding: 24px; }
       a { color: #0e7a4a; text-decoration: none; }
       h1, h2 { margin: 0 0 12px; }
-      .nav { margin-bottom: 24px; display: flex; gap: 16px; font-size: 14px; }
+      .topbar { margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+      .nav { display: flex; gap: 16px; font-size: 14px; flex-wrap: wrap; }
       .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 24px; }
       .card { background: #fff; border: 1px solid #dde3dc; border-radius: 16px; padding: 16px; box-shadow: 0 8px 24px rgba(18, 38, 23, 0.04); }
       .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #5d6c62; }
@@ -135,6 +136,11 @@ export class AdminController {
       .actions { display:flex; gap:12px; margin: 12px 0 16px; }
       .button { padding:10px 14px; border-radius:10px; border:1px solid #ccd5ce; background:#fff; color:#1d241f; cursor:pointer; }
       .button.primary { border-color:#0e7a4a; background:#0e7a4a; color:#fff; }
+      .health-indicator { display:inline-flex; align-items:center; gap:10px; border-radius:999px; border:1px solid #d5ddd7; background:#ffffff; color:#405046; padding:10px 14px; font-size:13px; font-weight:700; letter-spacing:0.02em; pointer-events:none; user-select:none; }
+      .health-indicator::before { content:""; width:10px; height:10px; border-radius:999px; background: currentColor; opacity:0.95; }
+      .health-indicator[data-health-state="healthy"] { background:#edf9f1; border-color:#b6e0c2; color:#0e7a4a; }
+      .health-indicator[data-health-state="unhealthy"] { background:#fff1f1; border-color:#efb7b7; color:#b42318; }
+      .health-indicator[data-health-state="checking"] { background:#f3f5f4; border-color:#d8ddda; color:#647067; }
       .meta { font-size: 13px; color: #65746a; margin-bottom: 16px; }
       .card.flush { padding: 0; overflow: hidden; }
       .card.flush .card-header { padding: 16px 16px 12px; }
@@ -148,10 +154,18 @@ export class AdminController {
   </head>
   <body>
     <main>
-      <div class="nav">
-        <a href="/api/admin/stats/overview">Overview</a>
-        <a href="/api/admin/stats/users">Users</a>
-        <a href="/api/admin/stats/database">Database</a>
+      <div class="topbar">
+        <div class="nav">
+          <a href="/api/admin/stats/overview">Overview</a>
+          <a href="/api/admin/stats/users">Users</a>
+          <a href="/api/admin/stats/database">Database</a>
+        </div>
+        <div
+          class="health-indicator"
+          id="admin-health-indicator"
+          data-health-state="checking"
+          aria-live="polite"
+        >Checking API</div>
       </div>
       ${body}
     </main>
@@ -160,6 +174,40 @@ export class AdminController {
         ? `<script>window.setTimeout(function(){ window.location.reload(); }, ${options.autoRefreshMs});</script>`
         : ""
     }
+    <script>
+      (function () {
+        const indicator = document.getElementById("admin-health-indicator");
+        if (!indicator) return;
+        const pollMs = 30000;
+
+        function setIndicator(state, label) {
+          indicator.dataset.healthState = state;
+          indicator.textContent = label;
+        }
+
+        async function updateHealth() {
+          setIndicator("checking", "Checking API");
+          try {
+            const response = await window.fetch("/api/healthz/ready", {
+              cache: "no-store",
+              headers: { Accept: "application/json" },
+            });
+            if (response.ok) {
+              setIndicator("healthy", "API Healthy");
+              return;
+            }
+            setIndicator("unhealthy", "API Unhealthy");
+          } catch (_error) {
+            setIndicator("unhealthy", "API Unhealthy");
+          }
+        }
+
+        void updateHealth();
+        window.setInterval(function () {
+          void updateHealth();
+        }, pollMs);
+      })();
+    </script>
   </body>
 </html>`;
   }
