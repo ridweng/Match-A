@@ -382,19 +382,21 @@ export class AuthService {
          o.started_at AS onboarding_started_at,
          o.completed_at AS onboarding_completed_at,
          o.updated_at AS onboarding_updated_at,
-         COUNT(pi.id) AS profile_image_count
+         COUNT(ma.id) AS profile_image_count
        FROM auth.users u
        LEFT JOIN auth.auth_sessions s
          ON s.user_id = u.id
         AND ($2::bigint IS NULL OR s.id = $2)
        LEFT JOIN core.profiles p
          ON p.user_id = u.id
-        AND p.kind = 'user'
+       AND p.kind = 'user'
        LEFT JOIN core.user_onboarding o
          ON o.user_id = u.id
        LEFT JOIN media.profile_images pi
          ON pi.profile_id = p.id
-        AND pi.deleted_at IS NULL
+       LEFT JOIN media.media_assets ma
+         ON ma.id = pi.media_asset_id
+        AND ma.status <> 'deleted'
        WHERE u.id = $1
        GROUP BY
          u.id,
