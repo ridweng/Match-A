@@ -7,7 +7,6 @@ import {
   Dimensions,
   Easing,
   Image,
-  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -15,11 +14,17 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
+import { KeyboardSheet } from "@/components/KeyboardSheet";
+import {
+  KEYBOARD_SURFACE_GAP,
+  useBottomObstruction,
+} from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 import type { AuthProvider } from "@/services/auth";
@@ -72,6 +77,16 @@ function translateAuthError(code: string | null, t: (es: string, en: string) => 
       return t(
         "Este proveedor todavía no está configurado en este entorno.",
         "This provider is not configured in this environment yet."
+      );
+    case "NETWORK_REQUEST_FAILED":
+      return t(
+        "No pudimos conectar con el servidor. Revisa tu internet e inténtalo de nuevo.",
+        "We could not reach the server. Check your internet and try again."
+      );
+    case "SESSION_EXPIRED":
+      return t(
+        "Tu sesión expiró. Inicia sesión de nuevo para continuar con tu onboarding.",
+        "Your session expired. Sign in again to continue your onboarding."
       );
     case "AUTH_CANCELLED":
       return t("Autenticación cancelada.", "Authentication cancelled.");
@@ -139,6 +154,7 @@ function formatCountdownLabel(
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const {
     signIn,
     signUp,
@@ -176,7 +192,6 @@ export default function LoginScreen() {
   const [secondsUntilVerificationCheck, setSecondsUntilVerificationCheck] = useState<
     number | null
   >(null);
-  const [keyboardInset, setKeyboardInset] = useState(0);
 
   const animatePress = (anim: Animated.Value, down: boolean) => {
     Animated.spring(anim, {
@@ -314,10 +329,17 @@ export default function LoginScreen() {
   const landingPaddingTop = topOffset + 24;
   const verificationChecking = verificationStatus === "checking";
   const nextCheckLabel = formatCountdownLabel(secondsUntilVerificationCheck, t);
-  const effectiveBottomInset = Math.max(bottomPadding, keyboardInset);
+  const { bottomObstructionHeight } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: Platform.OS === "web" ? 34 : 24,
+    extraKeyboardSpacing:
+      Platform.OS === "ios" ? KEYBOARD_SURFACE_GAP.ios : KEYBOARD_SURFACE_GAP.android,
+    enabled: mode !== "landing",
+  });
+  const effectiveBottomInset = bottomObstructionHeight;
   const authCardMaxHeight = Math.max(
     420,
-    Dimensions.get("window").height - topOffset - effectiveBottomInset - 18
+    windowHeight - topOffset - effectiveBottomInset - 18
   );
   const cardScaleX = cardFlip.interpolate({
     inputRange: [0, 0.5, 1],
@@ -335,34 +357,6 @@ export default function LoginScreen() {
     inputRange: [0, 0.5, 1],
     outputRange: [0, -6, 0],
   });
-
-  useEffect(() => {
-    if (Platform.OS === "web") {
-      return;
-    }
-
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-
-    const handleKeyboardShow = (event: any) => {
-      const height = event?.endCoordinates?.height || 0;
-      setKeyboardInset(Math.max(0, height - insets.bottom + 8));
-    };
-
-    const handleKeyboardHide = () => {
-      setKeyboardInset(0);
-    };
-
-    const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
-    const hideSubscription = Keyboard.addListener(hideEvent, handleKeyboardHide);
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, [insets.bottom]);
 
   useEffect(() => {
     if (shouldShowVerificationBack) {
@@ -576,10 +570,15 @@ export default function LoginScreen() {
         <View
           style={[
             styles.overlayWrap,
-            { paddingTop: topOffset, paddingBottom: effectiveBottomInset },
+            { paddingTop: topOffset, paddingBottom: bottomPadding },
           ]}
         >
-          <View style={styles.overlayCardShell}>
+          <KeyboardSheet
+            style={styles.overlayCardShell}
+            keyboardVerticalOffset={topOffset}
+            bottomInset={0}
+            enabled
+          >
             <Animated.View
               style={[
                 styles.authCard,
@@ -598,7 +597,7 @@ export default function LoginScreen() {
                 contentContainerStyle={styles.authCardContent}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
-                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                keyboardDismissMode="none"
               >
                 <View pointerEvents={isCardFlipping ? "none" : "auto"}>
                   {visibleCardFace === "front" ? (
@@ -846,7 +845,7 @@ export default function LoginScreen() {
                 </View>
               </ScrollView>
             </Animated.View>
-          </View>
+          </KeyboardSheet>
         </View>
       ) : null}
     </View>
@@ -998,8 +997,10 @@ const styles = StyleSheet.create({
   },
   overlayCardShell: {
     flex: 1,
+    minHeight: 0,
     paddingHorizontal: 24,
     justifyContent: "flex-end",
+    paddingTop: 12,
   },
   authHeader: {
     flexDirection: "row",

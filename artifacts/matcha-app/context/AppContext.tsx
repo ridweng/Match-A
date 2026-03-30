@@ -51,6 +51,7 @@ import {
   updateMe,
   updateSettings,
   refreshSession,
+  resendVerificationEmail as authResendVerificationEmail,
   signInWithProvider as authSignInWithProvider,
   toReadableAuthError,
   updateDiscoveryPreferences,
@@ -144,6 +145,11 @@ type AuthFormPrefill = {
   email: string;
   mode: "signin" | "signup";
 };
+type PendingPostLoginRoute = "onboarding";
+type PostAuthRedirectRoute =
+  | "/complete-profile"
+  | "/onboarding"
+  | "/(tabs)/discover";
 
 type BiometricResult = { ok: boolean; code?: string };
 type DiscoveryViewPreferences = {
@@ -488,6 +494,8 @@ function normalizeStoredGoals(input: Partial<Goal>[] | null | undefined): Goal[]
 
 type AppContextType = {
   authStatus: AuthStatus;
+  postAuthRedirectRoute: PostAuthRedirectRoute | null;
+  clearPostAuthRedirectRoute: () => void;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   signIn: (input: { email: string; password: string }) => Promise<boolean>;
@@ -515,19 +523,13 @@ type AppContextType = {
   needsProfileCompletion: boolean;
   hasCompletedOnboarding: boolean;
   completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<boolean>;
-  saveOnboardingDraft: (data: {
-    genderIdentity: string;
-    pronouns: string;
-    personality: string;
-    relationshipGoals: string;
-    childrenPreference: string;
-    languagesSpoken: string[];
-    education: string;
-    physicalActivity: string;
-    bodyType: string;
-    photos: UserProfilePhoto[];
-  }) => Promise<boolean>;
-  finishOnboarding: () => Promise<boolean>;
+  onboardingResumeStep: number;
+  setOnboardingResumeStep: (step: number) => Promise<void>;
+  saveOnboardingDraft: (
+    data: OnboardingDraftInput,
+    options?: { step?: number; requestId?: string }
+  ) => Promise<boolean>;
+  finishOnboarding: (data: OnboardingDraftInput) => Promise<boolean>;
   biometricLockRequired: boolean;
   biometricBusy: boolean;
   biometricsEnabled: boolean;
@@ -603,12 +605,19 @@ type AppContextType = {
   profile: UserProfile;
   accountProfile: AccountProfile;
   profileSaveStates: Partial<Record<ProfileEditableField, ProfileFieldSaveState>>;
+  saveProfileChanges: (
+    patch: Partial<Omit<UserProfile, "age" | "photos">>
+  ) => Promise<boolean>;
   updateProfileField: <K extends ProfileEditableField>(
     field: K,
     value: UserProfile[K]
   ) => void;
   setProfilePhoto: (index: number, uri: string) => Promise<UserProfilePhoto | null>;
   removeProfilePhoto: (index: number) => Promise<void>;
+  refreshProfileLocation: (options?: {
+    reason?: string;
+    force?: boolean;
+  }) => Promise<boolean>;
 };
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -619,6 +628,9 @@ const DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY = "discoveryViewPreferences";
 const DISCOVERY_FEED_PAGE_STORAGE_PREFIX = "discoveryFeedPage:";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "lastAuthUserId";
 const VIEWER_BOOTSTRAP_STORAGE_PREFIX = "viewerBootstrap:";
+const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
+const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
+const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
 
 type DiscoveryFiltersCache = Record<string, DiscoveryFilters>;
 type ViewerBootstrapCache = ViewerBootstrapResponse;
@@ -667,6 +679,26 @@ type ProfilePhotoDeletePayload = {
   slot: number;
   profileImageId: number | null;
   localUri: string;
+};
+
+type OnboardingDraftInput = {
+  genderIdentity: string;
+  pronouns: string;
+  personality: string;
+  relationshipGoals: string;
+  childrenPreference: string;
+  languagesSpoken: string[];
+  education: string;
+  physicalActivity: string;
+  bodyType: string;
+  photos: UserProfilePhoto[];
+};
+
+type OnboardingResumeDraft = {
+  email: string | null;
+  profile: UserProfile;
+  step: number;
+  storedAt: string;
 };
 
 type DiscoveryDecisionAction = "like" | "pass";
@@ -755,6 +787,26 @@ function createEmptyDiscoveryFeed(): DiscoveryFeedState {
   };
 }
 
+function normalizeOnboardingStep(step: number | null | undefined) {
+  if (step === 2 || step === 3) {
+    return step;
+  }
+  return 1;
+}
+
+function resolvePostAuthRedirectRoute(input: {
+  needsProfileCompletion: boolean;
+  hasCompletedOnboarding: boolean;
+}): PostAuthRedirectRoute {
+  if (input.needsProfileCompletion) {
+    return "/complete-profile";
+  }
+  if (!input.hasCompletedOnboarding) {
+    return "/onboarding";
+  }
+  return "/(tabs)/discover";
+}
+
 function createDiscoveryDecisionRequestId(
   action: DiscoveryDecisionAction,
   targetProfileId: number
@@ -762,6 +814,37 @@ function createDiscoveryDecisionRequestId(
   return `discovery_${action}_${targetProfileId}_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+}
+
+function createOnboardingAttemptId() {
+  return `onboarding_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildOnboardingRequestHeaders(requestId?: string) {
+  if (!requestId) {
+    return undefined;
+  }
+  return {
+    "X-Matcha-Request-Id": requestId,
+  };
+}
+
+function mergeOnboardingResumeProfile(
+  baseProfile: UserProfile,
+  resumeDraft: OnboardingResumeDraft | null
+) {
+  if (!resumeDraft) {
+    return baseProfile;
+  }
+
+  return normalizeStoredProfile({
+    ...baseProfile,
+    ...resumeDraft.profile,
+    photos:
+      resumeDraft.profile.photos?.length > 0
+        ? resumeDraft.profile.photos
+        : baseProfile.photos,
+  });
 }
 
 function getAuthoritativeTotalLikesCount(
@@ -868,10 +951,14 @@ async function checkBiometricHardware(): Promise<boolean> {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
+  const [postAuthRedirectRoute, setPostAuthRedirectRoute] =
+    useState<PostAuthRedirectRoute | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const userRef = useRef<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const accessTokenRef = useRef<string | null>(null);
   const [, setRefreshToken] = useState<string | null>(null);
+  const refreshTokenRef = useRef<string | null>(null);
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const languageRef = useRef<"es" | "en">("es");
   const [heightUnit, setHeightUnitState] = useState<HeightUnit>("metric");
@@ -964,6 +1051,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     facebook: false,
     apple: false,
   });
+  const [onboardingResumeStep, setOnboardingResumeStepState] = useState(1);
+  const pendingPostLoginRouteRef = useRef<PendingPostLoginRoute | null>(null);
+  const onboardingResumeDraftRef = useRef<OnboardingResumeDraft | null>(null);
+  const onboardingResumeStepRef = useRef(1);
   const isQueueReplayingRef = useRef(false);
   const replayMutationQueueRef = useRef<() => Promise<void>>(async () => {});
   const requestQueueReplay = useCallback(() => {
@@ -989,7 +1080,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     userRef.current = null;
     setAccessToken(null);
+    accessTokenRef.current = null;
     setRefreshToken(null);
+    refreshTokenRef.current = null;
+    setPostAuthRedirectRoute(null);
     setBiometricLockRequired(false);
     setHasCompletedOnboarding(false);
     hasCompletedOnboardingRef.current = false;
@@ -1026,11 +1120,87 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setProfile(DEFAULT_PROFILE);
     setProfileSaveStates({});
     setSettingsSaveState("idle");
+    setOnboardingResumeStepState(1);
+    onboardingResumeStepRef.current = 1;
     profileFieldRevisionRef.current = {};
     goalsRef.current = defaultGoals;
     setGoals(defaultGoals);
     viewerBootstrapMetaRef.current = createDefaultBootstrapMetadata();
   }, []);
+
+  const clearPendingPostLoginRoute = useCallback(async () => {
+    pendingPostLoginRouteRef.current = null;
+    await AsyncStorage.removeItem(PENDING_POST_LOGIN_ROUTE_STORAGE_KEY);
+  }, []);
+
+  const setPendingPostLoginRoute = useCallback(async (route: PendingPostLoginRoute) => {
+    pendingPostLoginRouteRef.current = route;
+    await AsyncStorage.setItem(PENDING_POST_LOGIN_ROUTE_STORAGE_KEY, route);
+  }, []);
+
+  const clearOnboardingResumeDraft = useCallback(async () => {
+    onboardingResumeDraftRef.current = null;
+    onboardingResumeStepRef.current = 1;
+    setOnboardingResumeStepState(1);
+    await AsyncStorage.removeItem(ONBOARDING_RESUME_DRAFT_STORAGE_KEY);
+  }, []);
+
+  const setOnboardingResumeStep = useCallback(async (step: number) => {
+    const nextStep = normalizeOnboardingStep(step);
+    onboardingResumeStepRef.current = nextStep;
+    setOnboardingResumeStepState(nextStep);
+    const currentDraft = onboardingResumeDraftRef.current;
+    if (!currentDraft) {
+      return;
+    }
+    const nextDraft: OnboardingResumeDraft = {
+      ...currentDraft,
+      step: nextStep,
+      storedAt: new Date().toISOString(),
+    };
+    onboardingResumeDraftRef.current = nextDraft;
+    await AsyncStorage.setItem(
+      ONBOARDING_RESUME_DRAFT_STORAGE_KEY,
+      JSON.stringify(nextDraft)
+    );
+  }, []);
+
+  const cacheOnboardingResumeDraft = useCallback(
+    async (
+      profileDraft: UserProfile,
+      email?: string | null,
+      options?: {
+        step?: number;
+      }
+    ) => {
+      const nextStep = normalizeOnboardingStep(
+        options?.step ?? onboardingResumeStepRef.current
+      );
+      const normalizedDraft: OnboardingResumeDraft = {
+        email:
+          email ??
+          userRef.current?.email ??
+          onboardingResumeDraftRef.current?.email ??
+          authFormPrefill?.email ??
+          null,
+        profile: normalizeStoredProfile(profileDraft),
+        step: nextStep,
+        storedAt: new Date().toISOString(),
+      };
+      onboardingResumeStepRef.current = nextStep;
+      setOnboardingResumeStepState(nextStep);
+      onboardingResumeDraftRef.current = normalizedDraft;
+      await AsyncStorage.setItem(
+        ONBOARDING_RESUME_DRAFT_STORAGE_KEY,
+        JSON.stringify(normalizedDraft)
+      );
+    },
+    [authFormPrefill?.email]
+  );
+
+  const clearOnboardingResumeState = useCallback(async () => {
+    await Promise.all([clearPendingPostLoginRoute(), clearOnboardingResumeDraft()]);
+  }, [clearOnboardingResumeDraft, clearPendingPostLoginRoute]);
 
   const persistProfile = useCallback(async (nextProfile: UserProfile) => {
     profileRef.current = nextProfile;
@@ -1244,6 +1414,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const applyOnboardingResumeDraftToProfile = useCallback(async () => {
+    const resumeDraft = onboardingResumeDraftRef.current;
+    if (!resumeDraft) {
+      return;
+    }
+
+    const nextStep = normalizeOnboardingStep(resumeDraft.step);
+    onboardingResumeStepRef.current = nextStep;
+    setOnboardingResumeStepState(nextStep);
+    const mergedProfile = mergeOnboardingResumeProfile(profileRef.current, resumeDraft);
+    profileRef.current = mergedProfile;
+    setProfile(mergedProfile);
+    await persistViewerBootstrapCache({
+      profile: mergedProfile,
+    });
+  }, [persistViewerBootstrapCache]);
+
   const applyViewerBootstrap = useCallback(
     async (bootstrap: ViewerBootstrapCache, options?: { persist?: boolean }) => {
       const normalizedBootstrapUser: AuthUser = {
@@ -1384,6 +1571,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   useEffect(() => {
+    accessTokenRef.current = accessToken;
+  }, [accessToken]);
+
+  useEffect(() => {
     languageRef.current = language;
   }, [language]);
 
@@ -1463,66 +1654,131 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [language]
   );
 
-  const refreshProfileLocation = useCallback(async () => {
-    if (Platform.OS === "web") {
-      return;
-    }
-
-    try {
-      let permission = await Location.getForegroundPermissionsAsync();
-      if (!permission.granted && permission.canAskAgain) {
-        permission = await Location.requestForegroundPermissionsAsync();
+  const refreshProfileLocation = useCallback(
+    async (options?: { reason?: string; force?: boolean }) => {
+      if (Platform.OS === "web") {
+        return false;
       }
 
-      if (!permission.granted) {
-        return;
+      const userId = userRef.current?.id;
+      const token = accessTokenRef.current;
+      if (!userId || !token) {
+        return false;
       }
 
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const [place] = await Location.reverseGeocodeAsync({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      });
+      const reason = options?.reason || "manual";
+      const cadenceKey = `${DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX}${userId}`;
 
-      if (!place) {
-        return;
-      }
+      try {
+        if (reason === "discover_entry" && !options?.force) {
+          const lastSyncedAt = await AsyncStorage.getItem(cadenceKey);
+          if (lastSyncedAt) {
+            const elapsedMs = Date.now() - new Date(lastSyncedAt).getTime();
+            if (Number.isFinite(elapsedMs) && elapsedMs < 24 * 60 * 60 * 1000) {
+              debugLog("[location-sync] skipped_recent_sync", {
+                reason,
+                userId,
+                lastSyncedAt,
+              });
+              return false;
+            }
+          }
+        }
 
-      const city =
-        place.city ||
-        place.subregion ||
-        place.district ||
-        place.region ||
-        "";
-      const country = place.country || "";
-      const nextLocation = [city, country].filter(Boolean).join(", ");
+        let permission = await Location.getForegroundPermissionsAsync();
+        if (!permission.granted && permission.canAskAgain) {
+          permission = await Location.requestForegroundPermissionsAsync();
+        }
 
-      if (!nextLocation) {
-        return;
-      }
+        if (!permission.granted) {
+          debugWarn("[location-sync] permission_denied", {
+            reason,
+            userId,
+          });
+          return false;
+        }
 
-      if (profileRef.current.location === nextLocation) {
-        return;
-      }
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const [place] = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
 
-      const updated = normalizeStoredProfile({
-        ...profileRef.current,
-        location: nextLocation,
-      });
-      profileRef.current = updated;
-      setProfile(updated);
-      void persistViewerBootstrapCache({ profile: updated });
+        if (!place) {
+          debugWarn("[location-sync] reverse_geocode_empty", {
+            reason,
+            userId,
+          });
+          return false;
+        }
 
-      if (accessToken) {
-        void updateViewerProfile(accessToken, {
-          location: nextLocation,
+        const city =
+          place.city ||
+          place.subregion ||
+          place.district ||
+          place.region ||
+          "";
+        const country = place.country || "";
+        const nextLocation = [city, country].filter(Boolean).join(", ");
+
+        if (!nextLocation) {
+          debugWarn("[location-sync] normalized_location_empty", {
+            reason,
+            userId,
+          });
+          return false;
+        }
+
+        debugLog("[location-sync] update_started", {
+          reason,
+          userId,
+          nextLocation,
           country,
-        }).catch(() => {});
+        });
+
+        const response = await updateViewerProfile(
+          token,
+          {
+            location: nextLocation,
+            country,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          } as any,
+          {
+            headers: {
+              "X-Matcha-Location-Source": reason,
+            },
+          }
+        );
+
+        const updated = normalizeStoredProfile({
+          ...profileRef.current,
+          ...response.profile,
+        });
+        profileRef.current = updated;
+        setProfile(updated);
+        await persistViewerBootstrapCache({ profile: updated });
+        await AsyncStorage.setItem(cadenceKey, new Date().toISOString());
+        debugLog("[location-sync] update_succeeded", {
+          reason,
+          userId,
+          nextLocation,
+        });
+        return true;
+      } catch (error: any) {
+        debugWarn("[location-sync] update_failed", {
+          reason,
+          userId,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        });
+        return false;
       }
-    } catch {}
-  }, [accessToken, persistViewerBootstrapCache]);
+    },
+    [persistViewerBootstrapCache]
+  );
 
   const setLanguage = useCallback((lang: "es" | "en") => {
     setLanguageState(lang);
@@ -1550,6 +1806,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const clearAuthFeedback = useCallback(() => {
     setAuthError(null);
+  }, []);
+
+  const clearPostAuthRedirectRoute = useCallback(() => {
+    setPostAuthRedirectRoute(null);
   }, []);
 
   const resetPendingVerificationState = useCallback(() => {
@@ -1583,7 +1843,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       user: AuthUser;
       needsProfileCompletion: boolean;
       hasCompletedOnboarding: boolean;
-    }) => {
+    }, options?: { restoreOnboardingDraft?: boolean }) => {
       Keyboard.dismiss();
       const normalizedSessionUser: AuthUser = {
         ...session.user,
@@ -1595,7 +1855,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         hasCompletedOnboarding: session.hasCompletedOnboarding,
       });
       setAccessToken(session.accessToken);
+      accessTokenRef.current = session.accessToken;
       setRefreshToken(session.refreshToken);
+      refreshTokenRef.current = session.refreshToken;
       setUser(normalizedSessionUser);
       setAuthFormPrefill(null);
       setPendingVerificationEmail(null);
@@ -1668,13 +1930,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       await applyViewerBootstrap(bootstrap);
+      const onboardingResumeDraft = onboardingResumeDraftRef.current;
+      const resumeDraftMatchesSession =
+        !onboardingResumeDraft?.email ||
+        !normalizedSessionUser.email ||
+        onboardingResumeDraft.email === normalizedSessionUser.email;
+      const shouldRestoreOnboardingDraft =
+        options?.restoreOnboardingDraft !== false &&
+        Boolean(onboardingResumeDraft) &&
+        resumeDraftMatchesSession &&
+        !session.needsProfileCompletion &&
+        !session.hasCompletedOnboarding;
+
+      if (shouldRestoreOnboardingDraft) {
+        await applyOnboardingResumeDraftToProfile();
+      } else if (onboardingResumeDraft && !resumeDraftMatchesSession) {
+        await clearOnboardingResumeState().catch(() => {});
+      } else if (session.hasCompletedOnboarding || session.needsProfileCompletion) {
+        await clearOnboardingResumeState().catch(() => {});
+      } else {
+        const preservedStep = onboardingResumeDraft?.step ?? onboardingResumeStepRef.current;
+        const nextStep = normalizeOnboardingStep(preservedStep);
+        onboardingResumeStepRef.current = nextStep;
+        setOnboardingResumeStepState(nextStep);
+      }
       debugLog("[auth] session applied", {
         userId: normalizedSessionUser.id,
       });
       setAuthStatus("authenticated");
       requestQueueReplay();
     },
-    [applyViewerBootstrap, requestQueueReplay]
+    [
+      applyOnboardingResumeDraftToProfile,
+      applyViewerBootstrap,
+      clearOnboardingResumeState,
+      requestQueueReplay,
+    ]
   );
 
   const hydrateSessionFromTokens = useCallback(
@@ -1687,8 +1978,145 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         needsProfileCompletion: me.needsProfileCompletion,
         hasCompletedOnboarding: me.hasCompletedOnboarding,
       });
+      return {
+        needsProfileCompletion: me.needsProfileCompletion,
+        hasCompletedOnboarding: me.hasCompletedOnboarding,
+      };
     },
     [applySession]
+  );
+
+  const requireOnboardingReLogin = useCallback(
+    async (requestId?: string, reason?: string) => {
+      const recoveryEmail =
+        userRef.current?.email ?? onboardingResumeDraftRef.current?.email ?? null;
+      const currentDraft = normalizeStoredProfile(profileRef.current);
+      await Promise.all([
+        setPendingPostLoginRoute("onboarding"),
+        cacheOnboardingResumeDraft(
+          currentDraft,
+          recoveryEmail
+        ),
+      ]);
+
+      console.warn("[onboarding-auth] onboarding_resume_required", {
+        requestId: requestId || null,
+        reason: reason || "session_recovery_failed",
+        email: recoveryEmail,
+      });
+
+      if (recoveryEmail) {
+        try {
+          await authResendVerificationEmail(recoveryEmail);
+          console.log("[onboarding-auth] verification_resend_requested", {
+            requestId: requestId || null,
+            email: recoveryEmail,
+          });
+        } catch (resendError: any) {
+          console.warn("[onboarding-auth] verification_resend_failed", {
+            requestId: requestId || null,
+            email: recoveryEmail,
+            error:
+              resendError instanceof ApiError
+                ? resendError.code
+                : resendError?.message || "UNKNOWN_ERROR",
+          });
+        }
+      }
+
+      setSignInPrefill(recoveryEmail);
+      setUser(null);
+      userRef.current = null;
+      setAccessToken(null);
+      accessTokenRef.current = null;
+      setRefreshToken(null);
+      refreshTokenRef.current = null;
+      setPendingVerificationEmail(recoveryEmail);
+      setPendingVerificationPassword(null);
+      setVerificationStatus(recoveryEmail ? "pending" : "idle");
+      setSessionOfflineFallback(false);
+      setBiometricLockRequired(false);
+      setAuthStatus(recoveryEmail ? "verification_pending" : "unauthenticated");
+      setAuthError(null);
+      await clearStoredSessionTokens();
+    },
+    [
+      authResendVerificationEmail,
+      cacheOnboardingResumeDraft,
+      clearStoredSessionTokens,
+      setPendingPostLoginRoute,
+      setSignInPrefill,
+    ]
+  );
+
+  const runWithOnboardingSessionRecovery = useCallback(
+    async <T,>(
+      requestId: string | undefined,
+      label: string,
+      action: (token: string) => Promise<T>
+    ) => {
+      const initialToken = accessTokenRef.current;
+      if (!initialToken) {
+        await requireOnboardingReLogin(requestId, "missing_access_token");
+        throw new ApiError("SESSION_EXPIRED", "SESSION_EXPIRED");
+      }
+
+      try {
+        return await action(initialToken);
+      } catch (error) {
+        if (
+          !(error instanceof ApiError) ||
+          !["INVALID_SESSION", "UNAUTHORIZED"].includes(error.code)
+        ) {
+          throw error;
+        }
+
+        console.log("[onboarding-auth] session_refresh_started", {
+          requestId: requestId || null,
+          label,
+          error: error.code,
+        });
+
+        const storedRefreshToken =
+          refreshTokenRef.current ||
+          (await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY));
+
+        if (!storedRefreshToken) {
+          await requireOnboardingReLogin(requestId, "missing_refresh_token");
+          throw new ApiError("SESSION_EXPIRED", "SESSION_EXPIRED");
+        }
+
+        try {
+          const refreshedSession = await refreshSession(storedRefreshToken);
+          await applySession(refreshedSession, {
+            restoreOnboardingDraft: true,
+          });
+          console.log("[onboarding-auth] session_refresh_succeeded", {
+            requestId: requestId || null,
+            label,
+            userId: refreshedSession.user.id,
+          });
+          return await action(refreshedSession.accessToken);
+        } catch (refreshError: any) {
+          console.warn("[onboarding-auth] session_refresh_failed", {
+            requestId: requestId || null,
+            label,
+            error:
+              refreshError instanceof ApiError
+                ? refreshError.code
+                : refreshError?.message || "UNKNOWN_ERROR",
+          });
+          await requireOnboardingReLogin(
+            requestId,
+            refreshError instanceof ApiError
+              ? refreshError.code
+              : refreshError?.message || "refresh_failed"
+          );
+          throw new ApiError("SESSION_EXPIRED", "SESSION_EXPIRED");
+        }
+      }
+    },
+    [applySession, requireOnboardingReLogin]
   );
 
   const completePendingVerificationSignIn = useCallback(async () => {
@@ -1704,6 +2132,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         email: pendingVerificationEmail,
         password: pendingVerificationPassword,
       });
+      setPostAuthRedirectRoute(
+        resolvePostAuthRedirectRoute({
+          needsProfileCompletion: session.needsProfileCompletion,
+          hasCompletedOnboarding: session.hasCompletedOnboarding,
+        })
+      );
       await applySession(session);
       debugLog("[auth] pending verification auto-login succeeded");
       return true;
@@ -1732,6 +2166,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           savedDiscoveryFilters,
           savedDiscoveryViewPreferences,
           savedLastAuthUserId,
+          savedPendingPostLoginRoute,
+          savedOnboardingResumeDraft,
           savedBiometrics,
           savedHeightUnit,
           legacyGoals,
@@ -1742,6 +2178,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             AsyncStorage.getItem(DISCOVERY_FILTERS_STORAGE_KEY),
             AsyncStorage.getItem(DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY),
             AsyncStorage.getItem(LAST_AUTH_USER_ID_STORAGE_KEY),
+            AsyncStorage.getItem(PENDING_POST_LOGIN_ROUTE_STORAGE_KEY),
+            AsyncStorage.getItem(ONBOARDING_RESUME_DRAFT_STORAGE_KEY),
             AsyncStorage.getItem("biometricsEnabled"),
             AsyncStorage.getItem("heightUnit"),
             AsyncStorage.getItem("goals"),
@@ -1767,6 +2205,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           } catch {}
         }
         const lastAuthUserId = savedLastAuthUserId ? Number(savedLastAuthUserId) : null;
+        if (savedPendingPostLoginRoute === "onboarding") {
+          pendingPostLoginRouteRef.current = "onboarding";
+        }
+        if (savedOnboardingResumeDraft) {
+          try {
+            const parsedResumeDraft = JSON.parse(
+              savedOnboardingResumeDraft
+            ) as OnboardingResumeDraft;
+            onboardingResumeDraftRef.current = {
+              ...parsedResumeDraft,
+              step: normalizeOnboardingStep(parsedResumeDraft.step),
+              profile: normalizeStoredProfile(parsedResumeDraft.profile),
+            };
+            onboardingResumeStepRef.current = normalizeOnboardingStep(
+              parsedResumeDraft.step
+            );
+            setOnboardingResumeStepState(
+              normalizeOnboardingStep(parsedResumeDraft.step)
+            );
+            if (parsedResumeDraft.email) {
+              setSignInPrefill(parsedResumeDraft.email);
+            }
+          } catch {
+            onboardingResumeDraftRef.current = null;
+            onboardingResumeStepRef.current = 1;
+          }
+        }
         const cachedBootstrapRaw =
           lastAuthUserId && Number.isFinite(lastAuthUserId)
             ? await AsyncStorage.getItem(getViewerBootstrapStorageKey(lastAuthUserId))
@@ -1823,7 +2288,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               });
             }
             await applySession(session);
-            refreshProfileLocation().catch(() => {});
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
             }
@@ -1843,6 +2307,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             debugWarn("[auth] refresh failed, clearing authenticated state", {
               reason: error instanceof Error ? error.message : "unknown",
             });
+            if (error instanceof ApiError && error.code === "NETWORK_REQUEST_FAILED") {
+              setAuthError(toReadableAuthError(error.code));
+            }
             resetClientState();
             await clearStoredSessionTokens();
             await Promise.all([
@@ -1864,9 +2331,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearUserScopedCachedState,
     clearStoredSessionTokens,
     persistProfile,
-    refreshProfileLocation,
     resetClientState,
     restoreProfilePhotos,
+    setSignInPrefill,
   ]);
 
   useEffect(() => {
@@ -1876,7 +2343,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        refreshProfileLocation().catch(() => {});
         requestQueueReplay();
       }
     });
@@ -1884,7 +2350,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.remove();
     };
-  }, [refreshProfileLocation, requestQueueReplay]);
+  }, [requestQueueReplay]);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -1912,6 +2378,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       Keyboard.dismiss();
       setAuthBusy(true);
       setAuthError(null);
+      setSettingsSaveState("saving");
       try {
         const resolvedName =
           input.name || profileRef.current.name || userRef.current?.name || "";
@@ -1941,6 +2408,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         };
 
         if (!accessToken || !userRef.current?.id) {
+          setSettingsSaveState("error");
           return false;
         }
 
@@ -1963,44 +2431,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           mePatch.dateOfBirth = resolvedDateOfBirth;
         }
 
-        await enqueueMutation<SettingsSavePayload>({
-          userId: userRef.current.id,
-          type: "settings_save",
-          targetKey: "settings:save",
-          canonicalPayload: {
-            profileFields,
-            profilePatch,
-            settingsPatch: {
-              language: input.language,
-              heightUnit: input.heightUnit,
-            },
-            mePatch,
-            completed: {
-              profile: false,
-              settings: false,
-              account: false,
-            },
-            resolvedProfile: {
-              name: resolvedName,
-              dateOfBirth: resolvedDateOfBirth,
-              profession: nextProfile.profession,
-              genderIdentity: nextProfile.genderIdentity,
-              pronouns: nextProfile.pronouns,
-              personality: nextProfile.personality,
-            },
-            resolvedSettings: {
-              language: nextSettings.language,
-              heightUnit: nextSettings.heightUnit,
-            },
-          },
+        const profileResult = await updateViewerProfile(accessToken, profilePatch);
+        const confirmedProfile = normalizeStoredProfile({
+          ...confirmedProfileRef.current,
+          ...profileResult.profile,
+          photos: confirmedProfileRef.current.photos,
         });
-        setSettingsSaveState("queued");
-        debugLog("[settings] save queued", {
+        confirmedProfileRef.current = confirmedProfile;
+        profileRef.current = confirmedProfile;
+        setProfile(confirmedProfile);
+
+        const settingsResult = await updateSettings(accessToken, {
+          language: input.language,
+          heightUnit: input.heightUnit,
+        });
+        setLanguageState(settingsResult.settings.language);
+        languageRef.current = settingsResult.settings.language;
+        setHeightUnitState(settingsResult.settings.heightUnit);
+        heightUnitRef.current = settingsResult.settings.heightUnit;
+        await AsyncStorage.setItem("language", settingsResult.settings.language);
+        await AsyncStorage.setItem("heightUnit", settingsResult.settings.heightUnit);
+
+        const me = await updateMe(accessToken, mePatch);
+        setUser(me.user);
+        userRef.current = me.user;
+        setNeedsProfileCompletion(me.needsProfileCompletion);
+        needsProfileCompletionRef.current = me.needsProfileCompletion;
+        setHasCompletedOnboarding(me.hasCompletedOnboarding);
+        hasCompletedOnboardingRef.current = me.hasCompletedOnboarding;
+
+        await persistViewerBootstrapCache({
+          user: me.user,
+          profile: confirmedProfile,
+          settings: {
+            ...nextSettings,
+            language: settingsResult.settings.language,
+            heightUnit: settingsResult.settings.heightUnit,
+          },
+          needsProfileCompletion: me.needsProfileCompletion,
+          hasCompletedOnboarding: me.hasCompletedOnboarding,
+        });
+
+        setSettingsSaveState("idle");
+        debugLog("[settings] save succeeded", {
           userId: userRef.current.id,
           hasDateOfBirth: Boolean(resolvedDateOfBirth),
           hasName: Boolean(resolvedName),
         });
-        requestQueueReplay();
 
         return true;
       } catch (e: any) {
@@ -2029,10 +2506,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    [accessToken, requestQueueReplay]
+    [accessToken, persistViewerBootstrapCache]
   );
 
   const login = useCallback(async () => {
+    setPostAuthRedirectRoute("/onboarding");
     await applySession({
       accessToken: "demo-access-token",
       refreshToken: "demo-refresh-token",
@@ -2056,6 +2534,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const session = await authSignIn(input);
         setSignInPrefill(input.email);
+        setPostAuthRedirectRoute(
+          resolvePostAuthRedirectRoute({
+            needsProfileCompletion: session.needsProfileCompletion,
+            hasCompletedOnboarding: session.hasCompletedOnboarding,
+          })
+        );
         await applySession(session);
         return true;
       } catch (e: any) {
@@ -2100,6 +2584,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthError(null);
       try {
         const session = await authSignInWithProvider(provider, mode);
+        setPostAuthRedirectRoute(
+          resolvePostAuthRedirectRoute({
+            needsProfileCompletion: session.needsProfileCompletion,
+            hasCompletedOnboarding: session.hasCompletedOnboarding,
+          })
+        );
         await applySession(session);
         return true;
       } catch (e: any) {
@@ -2132,10 +2622,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           payload.accessToken &&
           payload.refreshToken
         ) {
-          await hydrateSessionFromTokens({
+          const hydrated = await hydrateSessionFromTokens({
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
           });
+          setPostAuthRedirectRoute(resolvePostAuthRedirectRoute(hydrated));
           return true;
         }
 
@@ -2216,11 +2707,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAuthStatus("unauthenticated");
     resetClientState();
     await Promise.all([
+      clearOnboardingResumeState(),
       clearStoredSessionTokens(),
       clearUserScopedCachedState(currentUserId),
       AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
     ]);
-  }, [accessToken, clearStoredSessionTokens, clearUserScopedCachedState, resetClientState]);
+  }, [
+    accessToken,
+    clearOnboardingResumeState,
+    clearStoredSessionTokens,
+    clearUserScopedCachedState,
+    resetClientState,
+  ]);
 
   const deleteAccount = useCallback(async () => {
     setAuthBusy(true);
@@ -2243,6 +2741,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthStatus("unauthenticated");
       resetClientState();
       await Promise.all([
+        clearOnboardingResumeState(),
         clearStoredSessionTokens(),
         clearUserScopedCachedState(currentUserId),
         AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
@@ -2255,7 +2754,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setAuthBusy(false);
     }
-  }, [accessToken, clearStoredSessionTokens, clearUserScopedCachedState, resetClientState]);
+  }, [
+    accessToken,
+    clearOnboardingResumeState,
+    clearStoredSessionTokens,
+    clearUserScopedCachedState,
+    resetClientState,
+  ]);
 
   const accountProfile = useMemo(
     () => {
@@ -2653,76 +3158,179 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
+  const applyOnboardingDraftToLocalState = useCallback(
+    (data: OnboardingDraftInput) => {
+      const updated = normalizeStoredProfile({
+        ...profileRef.current,
+        genderIdentity: normalizeCanonicalProfileField(
+          "genderIdentity",
+          data.genderIdentity
+        ),
+        pronouns: normalizeCanonicalProfileField("pronouns", data.pronouns),
+        personality: normalizeCanonicalProfileField("personality", data.personality),
+        relationshipGoals: normalizeCanonicalProfileField(
+          "relationshipGoals",
+          data.relationshipGoals
+        ),
+        childrenPreference: normalizeCanonicalProfileField(
+          "childrenPreference",
+          data.childrenPreference
+        ),
+        languagesSpoken: normalizeCanonicalProfileField(
+          "languagesSpoken",
+          data.languagesSpoken
+        ),
+        education: normalizeCanonicalProfileField("education", data.education),
+        physicalActivity: normalizeCanonicalProfileField(
+          "physicalActivity",
+          data.physicalActivity
+        ),
+        bodyType: normalizeCanonicalProfileField("bodyType", data.bodyType),
+        photos: data.photos,
+      });
+
+      profileRef.current = updated;
+      setProfile(updated);
+      return updated;
+    },
+    []
+  );
+
+  const submitOnboardingDraftToServer = useCallback(
+    async (
+      token: string,
+      data: OnboardingDraftInput,
+      requestId?: string
+    ) => {
+      const fields: readonly ProfileEditableField[] = [
+        "genderIdentity",
+        "pronouns",
+        "personality",
+        "relationshipGoals",
+        "childrenPreference",
+        "languagesSpoken",
+        "education",
+        "physicalActivity",
+        "bodyType",
+      ];
+      const result = await updateViewerProfile(
+        token,
+        mapCanonicalProfileToProfilePatch(profileRef.current, fields),
+        {
+          headers: buildOnboardingRequestHeaders(requestId),
+        }
+      );
+      await applyConfirmedProfileFields(fields, result.profile);
+      await cacheOnboardingResumeDraft(
+        normalizeStoredProfile({
+          ...profileRef.current,
+          photos: data.photos,
+        })
+      );
+    },
+    [applyConfirmedProfileFields, cacheOnboardingResumeDraft]
+  );
+
+  const commitOnboardingPhotos = useCallback(
+    async (
+      draftPhotos: UserProfilePhoto[],
+      options?: { token?: string; requestId?: string }
+    ) => {
+      const normalizedDraftPhotos = normalizeStoredProfilePhotos(draftPhotos);
+      if (!normalizedDraftPhotos.length) {
+        return;
+      }
+
+      const token = options?.token ?? accessTokenRef.current;
+      if (!token) {
+        const nextProfile = normalizeStoredProfile({
+          ...profileRef.current,
+          photos: normalizedDraftPhotos,
+        });
+        await persistConfirmedProfileWithBootstrap(nextProfile);
+        await cacheOnboardingResumeDraft(nextProfile);
+        return;
+      }
+
+      const committedPhotos: UserProfilePhoto[] = [];
+      const localUrisToDelete: string[] = [];
+
+      for (const photo of normalizedDraftPhotos) {
+        const needsUpload =
+          Boolean(photo.localUri) &&
+          (!photo.remoteUrl || photo.mediaAssetId == null || photo.profileImageId == null);
+
+        if (!needsUpload) {
+          committedPhotos.push(photo);
+          continue;
+        }
+
+        const uploaded = await runWithOnboardingSessionRecovery(
+          options?.requestId,
+          "commit_onboarding_photo",
+          async (resolvedToken) =>
+            uploadProfilePhotoRequest(resolvedToken, photo.sortOrder, photo.localUri, {
+              headers: buildOnboardingRequestHeaders(options?.requestId),
+            })
+        );
+        committedPhotos.push({
+          localUri: "",
+          remoteUrl: uploaded.remoteUrl,
+          mediaAssetId: uploaded.mediaAssetId,
+          profileImageId: uploaded.profileImageId,
+          sortOrder: uploaded.sortOrder,
+          status: uploaded.status === "pending" ? "pending" : "ready",
+        });
+
+        if (isStoredProfilePhoto(photo.localUri)) {
+          localUrisToDelete.push(photo.localUri);
+        }
+      }
+
+      const nextProfile = normalizeStoredProfile({
+        ...profileRef.current,
+        photos: committedPhotos,
+      });
+      await persistConfirmedProfileWithBootstrap(nextProfile);
+      await cacheOnboardingResumeDraft(nextProfile);
+
+      await Promise.all(
+        localUrisToDelete.map((uri) => deleteStoredProfilePhoto(uri).catch(() => {}))
+      );
+    },
+    [
+      cacheOnboardingResumeDraft,
+      persistConfirmedProfileWithBootstrap,
+      runWithOnboardingSessionRecovery,
+    ]
+  );
+
   const saveOnboardingDraft = useCallback(
-    async (data: {
-      genderIdentity: string;
-      pronouns: string;
-      personality: string;
-      relationshipGoals: string;
-      childrenPreference: string;
-      languagesSpoken: string[];
-      education: string;
-      physicalActivity: string;
-      bodyType: string;
-      photos: UserProfilePhoto[];
-    }) => {
+    async (
+      data: OnboardingDraftInput,
+      options?: {
+        step?: number;
+        requestId?: string;
+      }
+    ) => {
+      const requestId = options?.requestId ?? createOnboardingAttemptId();
+      const currentStep = normalizeOnboardingStep(options?.step);
       setAuthBusy(true);
       setAuthError(null);
       try {
-        const updated = normalizeStoredProfile({
-          ...profileRef.current,
-          genderIdentity: normalizeCanonicalProfileField(
-            "genderIdentity",
-            data.genderIdentity
-          ),
-          pronouns: normalizeCanonicalProfileField("pronouns", data.pronouns),
-          personality: normalizeCanonicalProfileField("personality", data.personality),
-          relationshipGoals: normalizeCanonicalProfileField(
-            "relationshipGoals",
-            data.relationshipGoals
-          ),
-          childrenPreference: normalizeCanonicalProfileField(
-            "childrenPreference",
-            data.childrenPreference
-          ),
-          languagesSpoken: normalizeCanonicalProfileField(
-            "languagesSpoken",
-            data.languagesSpoken
-          ),
-          education: normalizeCanonicalProfileField("education", data.education),
-          physicalActivity: normalizeCanonicalProfileField(
-            "physicalActivity",
-            data.physicalActivity
-          ),
-          bodyType: normalizeCanonicalProfileField("bodyType", data.bodyType),
-          photos: data.photos,
+        const updated = applyOnboardingDraftToLocalState(data);
+        await cacheOnboardingResumeDraft(updated, undefined, {
+          step: currentStep,
         });
 
-        profileRef.current = updated;
-        setProfile(updated);
-
-        if (accessToken) {
-          const fields: readonly ProfileEditableField[] = [
-            "genderIdentity",
-            "pronouns",
-            "personality",
-            "relationshipGoals",
-            "childrenPreference",
-            "languagesSpoken",
-            "education",
-            "physicalActivity",
-            "bodyType",
-          ];
-          const nextRevision = Math.max(
-            ...fields.map((field) => {
-              const revision = (profileFieldRevisionRef.current[field] || 0) + 1;
-              profileFieldRevisionRef.current[field] = revision;
-              return revision;
-            })
+        const token = accessTokenRef.current;
+        if (token) {
+          await runWithOnboardingSessionRecovery(
+            requestId,
+            "save_draft",
+            async (resolvedToken) =>
+              submitOnboardingDraftToServer(resolvedToken, data, requestId)
           );
-          await queueProfileFieldMutation(fields, updated, {
-            revision: nextRevision,
-          });
         }
         return true;
       } catch (e: any) {
@@ -2733,35 +3341,119 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [
-      accessToken,
-      queueProfileFieldMutation,
+      applyOnboardingDraftToLocalState,
+      cacheOnboardingResumeDraft,
+      runWithOnboardingSessionRecovery,
+      submitOnboardingDraftToServer,
     ]
   );
 
-  const finishOnboarding = useCallback(async () => {
-    setAuthBusy(true);
-    setAuthError(null);
-    try {
-      if (accessToken) {
-        const result = await completeOnboardingRequest(accessToken);
-        setHasCompletedOnboarding(result.hasCompletedOnboarding);
-        await persistViewerBootstrapCache({
-          hasCompletedOnboarding: result.hasCompletedOnboarding,
+  const finishOnboarding = useCallback(
+    async (data: OnboardingDraftInput) => {
+      const requestId = createOnboardingAttemptId();
+      setAuthBusy(true);
+      setAuthError(null);
+      console.log("[onboarding-auth] onboarding_submit_started", {
+        requestId,
+        hasPhotos: data.photos.length > 0,
+      });
+
+      try {
+        const updated = applyOnboardingDraftToLocalState(data);
+        await cacheOnboardingResumeDraft(updated);
+
+        const token = accessTokenRef.current;
+        if (token) {
+          await runWithOnboardingSessionRecovery(
+            requestId,
+            "finish_onboarding_save_draft",
+            async (resolvedToken) =>
+              submitOnboardingDraftToServer(resolvedToken, data, requestId)
+          );
+          await commitOnboardingPhotos(data.photos, {
+            requestId,
+          });
+          const result = await runWithOnboardingSessionRecovery(
+            requestId,
+            "finish_onboarding_complete",
+            async (resolvedToken) =>
+              completeOnboardingRequest(resolvedToken, {
+                headers: buildOnboardingRequestHeaders(requestId),
+              })
+          );
+          setHasCompletedOnboarding(result.hasCompletedOnboarding);
+          await persistViewerBootstrapCache({
+            hasCompletedOnboarding: result.hasCompletedOnboarding,
+          });
+        } else {
+          setHasCompletedOnboarding(true);
+          await persistViewerBootstrapCache({
+            hasCompletedOnboarding: true,
+          });
+        }
+
+        await clearOnboardingResumeState();
+        console.log("[onboarding-auth] onboarding_complete_succeeded", {
+          requestId,
         });
-      } else {
-        setHasCompletedOnboarding(true);
-        await persistViewerBootstrapCache({
-          hasCompletedOnboarding: true,
+        return true;
+      } catch (e: any) {
+        console.warn("[onboarding-auth] onboarding_complete_failed", {
+          requestId,
+          error: e?.code || e?.message || "UNKNOWN_ERROR",
         });
+        setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
+        return false;
+      } finally {
+        setAuthBusy(false);
       }
-      return true;
-    } catch (e: any) {
-      setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
-      return false;
-    } finally {
-      setAuthBusy(false);
-    }
-  }, [accessToken, persistViewerBootstrapCache]);
+    },
+    [
+      applyOnboardingDraftToLocalState,
+      cacheOnboardingResumeDraft,
+      clearOnboardingResumeState,
+      commitOnboardingPhotos,
+      persistViewerBootstrapCache,
+      runWithOnboardingSessionRecovery,
+      submitOnboardingDraftToServer,
+    ]
+  );
+
+  const saveProfileChanges = useCallback(
+    async (patch: Partial<Omit<UserProfile, "age" | "photos">>) => {
+      const token = accessTokenRef.current;
+      if (!token) {
+        return false;
+      }
+
+      try {
+        debugLog("[profile-save] started", {
+          fields: Object.keys(patch),
+        });
+        const result = await updateViewerProfile(token, patch as any);
+        const updated = normalizeStoredProfile({
+          ...profileRef.current,
+          ...result.profile,
+        });
+        profileRef.current = updated;
+        setProfile(updated);
+        await persistViewerBootstrapCache({ profile: updated });
+        debugLog("[profile-save] succeeded", {
+          fields: Object.keys(patch),
+        });
+        return true;
+      } catch (error: any) {
+        debugWarn("[profile-save] failed", {
+          fields: Object.keys(patch),
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        });
+        setAuthError(error?.code || error?.message || "UNKNOWN_ERROR");
+        return false;
+      }
+    },
+    [persistViewerBootstrapCache]
+  );
 
   const unlockWithBiometrics = useCallback(async (): Promise<BiometricResult> => {
     if (Platform.OS === "web") {
@@ -3368,11 +4060,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...DEFAULT_DISCOVERY_FILTERS,
         ...filters,
       };
+      const requestId = `discovery_filters_${Date.now()}_${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+
+      debugDiscoveryLog("filters_update_started", {
+        requestId,
+        nextFilters,
+        previousQueueVersion: discoveryFeedRef.current.queueVersion ?? null,
+      });
 
       setDiscoveryFilters(nextFilters);
       if (user?.id) {
         await persistDiscoveryFiltersForUser(user.id, nextFilters);
       }
+      discoveryFeedRef.current = createEmptyDiscoveryFeed();
+      setDiscoveryFeed(discoveryFeedRef.current);
       await persistViewerBootstrapCache({
         discovery: {
           likedProfileIds: likedProfilesRef.current,
@@ -3396,8 +4099,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const result = await updateDiscoveryPreferences(accessToken, nextFilters);
-        const refreshedFeed = await refreshDiscoveryFeedState(accessToken);
+        const result = await updateDiscoveryPreferences(accessToken, nextFilters, {
+          headers: {
+            "X-Matcha-Request-Id": requestId,
+          },
+        });
+        const refreshedFeed = await refreshDiscoveryFeedState(accessToken, {
+          reason: "filters_updated",
+          requestId,
+        });
         const syncedFilters = {
           ...DEFAULT_DISCOVERY_FILTERS,
           ...(result.filters || {}),
@@ -3424,8 +4134,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             feed: refreshedFeed,
           },
         });
+        debugDiscoveryLog("filters_update_succeeded", {
+          requestId,
+          queueVersion: refreshedFeed.queueVersion ?? null,
+          profileCount: refreshedFeed.profiles.length,
+        });
         return true;
       } catch (e: any) {
+        debugDiscoveryWarn("filters_update_failed", {
+          requestId,
+          code: e?.code || null,
+          message: e?.message || "UNKNOWN_ERROR",
+        });
         setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
         return false;
       }
@@ -3618,6 +4338,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider
       value={{
         authStatus,
+        postAuthRedirectRoute,
+        clearPostAuthRedirectRoute,
         login,
         logout,
         signIn,
@@ -3637,6 +4359,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         needsProfileCompletion,
         hasCompletedOnboarding,
         completeProfile,
+        onboardingResumeStep,
+        setOnboardingResumeStep,
         saveOnboardingDraft,
         finishOnboarding,
         biometricLockRequired,
@@ -3681,9 +4405,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         profile,
         accountProfile,
         profileSaveStates,
+        saveProfileChanges,
         updateProfileField,
         setProfilePhoto,
         removeProfilePhoto,
+        refreshProfileLocation,
       }}
     >
       {children}

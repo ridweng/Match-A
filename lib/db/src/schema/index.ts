@@ -334,6 +334,35 @@ export const userSyncStateTable = coreSchema.table("user_sync_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const profileLocationHistoryTable = coreSchema.table(
+  "profile_location_history",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    profileId: bigint("profile_id", { mode: "number" })
+      .notNull()
+      .references(() => profilesTable.id, { onDelete: "cascade" }),
+    location: varchar("location", { length: 255 }).notNull().default(""),
+    country: varchar("country", { length: 120 }).notNull().default(""),
+    latitude: integer("latitude_e6"),
+    longitude: integer("longitude_e6"),
+    source: varchar("source", { length: 64 }).notNull().default("profile_update"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userCreatedIndex: index("core_profile_location_history_user_created_idx").on(
+      table.userId,
+      table.createdAt
+    ),
+    profileCreatedIndex: index("core_profile_location_history_profile_created_idx").on(
+      table.profileId,
+      table.createdAt
+    ),
+  })
+);
+
 export const userConsentsTable = coreSchema.table(
   "user_consents",
   {

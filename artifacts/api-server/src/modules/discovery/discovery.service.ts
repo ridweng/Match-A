@@ -996,6 +996,7 @@ export class DiscoveryService {
     filters: DiscoveryFilters
   ) {
     const actorProfileId = await this.findActorProfileId(userId);
+    const previousState = await this.getActorState(pool, actorProfileId);
     await pool.query(
       `INSERT INTO discovery.filter_preferences
         (actor_profile_id, selected_genders, therian_mode, age_min, age_max)
@@ -1014,6 +1015,15 @@ export class DiscoveryService {
         filters.ageMin,
         filters.ageMax,
       ]
+    );
+
+    this.logger.log(
+      `[discovery-filters-updated] ${JSON.stringify({
+        userId,
+        actorProfileId,
+        previousQueueVersion: previousState?.queue_version ?? null,
+        filters,
+      })}`
     );
 
     return this.getPreferences(userId);

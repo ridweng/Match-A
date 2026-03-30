@@ -1,19 +1,19 @@
 {
   "name": "@workspace/matcha-app",
-  "version": "3.1.1",
+  "version": "3.2.1",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
-    "dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
+    "dev": "set -a && . ./.env && set +a && EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "android": "expo run:android",
-    "android:prebuild": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android",
-    "android:release": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android && cd android && ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pexpo.useLegacyPackaging=true -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true",
-    "android:release:clean": "set -a && . ./.env.production && set +a && NODE_ENV=production pnpm exec expo prebuild -p android --clean && cd android && ./gradlew clean assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pexpo.useLegacyPackaging=true -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true",
+    "android": "set -a && . ./.env && set +a && pnpm exec expo run:android",
+    "android:prebuild": "set -a && . ./.env && set +a && NODE_ENV=production pnpm exec expo prebuild -p android",
+    "android:release": "set -a && . ./.env && set +a && NODE_ENV=production pnpm exec expo prebuild -p android && cd android && ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pexpo.useLegacyPackaging=true -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true",
+    "android:release:clean": "set -a && . ./.env && set +a && NODE_ENV=production pnpm exec expo prebuild -p android --clean && cd android && ./gradlew clean assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pexpo.useLegacyPackaging=true -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true",
     "android:release:install": "cd android && ./gradlew installRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pexpo.useLegacyPackaging=true -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true",
-    "ios": "expo run:ios"
+    "ios": "set -a && . ./.env && set +a && pnpm exec expo run:ios"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

@@ -1,69 +1,60 @@
 import React from "react";
 import {
-  Keyboard,
   Platform,
   ScrollView,
   ScrollViewProps,
   StyleProp,
-  View,
   ViewStyle,
 } from "react-native";
+import {
+  KeyboardAwareScrollView,
+  type KeyboardAwareScrollViewProps,
+} from "react-native-keyboard-controller";
 
-type Props = ScrollViewProps & {
-  bottomOffset?: number;
-  extraKeyboardSpace?: number;
-  contentContainerStyle?: StyleProp<ViewStyle>;
-};
+type Props = ScrollViewProps &
+  Pick<
+    KeyboardAwareScrollViewProps,
+    "bottomOffset" | "extraKeyboardSpace" | "enabled"
+  > & {
+    bottomOffset?: number;
+    extraKeyboardSpace?: number;
+    contentContainerStyle?: StyleProp<ViewStyle>;
+    keyboardDismissMode?: ScrollViewProps["keyboardDismissMode"];
+  };
 
 export function KeyboardAwareScrollViewCompat({
   children,
   keyboardShouldPersistTaps = "handled",
+  keyboardDismissMode = Platform.OS === "web" ? "on-drag" : "none",
   bottomOffset = 0,
   extraKeyboardSpace = 0,
   contentContainerStyle,
   ...props
 }: Props) {
-  const [keyboardInset, setKeyboardInset] = React.useState(0);
-
-  React.useEffect(() => {
-    if (Platform.OS === "web") {
-      return;
-    }
-
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-
-    const handleKeyboardShow = (event: any) => {
-      const height = event?.endCoordinates?.height || 0;
-      setKeyboardInset(
-        Math.max(0, height - bottomOffset + extraKeyboardSpace)
-      );
-    };
-
-    const handleKeyboardHide = () => {
-      setKeyboardInset(0);
-    };
-
-    const showSubscription = Keyboard.addListener(showEvent, handleKeyboardShow);
-    const hideSubscription = Keyboard.addListener(hideEvent, handleKeyboardHide);
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, [bottomOffset, extraKeyboardSpace]);
-
-  return (
-    <View style={{ flex: 1, paddingBottom: keyboardInset }}>
+  if (Platform.OS === "web") {
+    return (
       <ScrollView
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+        keyboardDismissMode={keyboardDismissMode}
         contentContainerStyle={contentContainerStyle}
         {...props}
       >
         {children}
       </ScrollView>
-    </View>
+    );
+  }
+
+  return (
+    <KeyboardAwareScrollView
+      bottomOffset={bottomOffset}
+      extraKeyboardSpace={extraKeyboardSpace}
+      keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+      keyboardDismissMode={keyboardDismissMode}
+      contentContainerStyle={contentContainerStyle}
+      disableScrollOnKeyboardHide
+      {...props}
+    >
+      {children}
+    </KeyboardAwareScrollView>
   );
 }

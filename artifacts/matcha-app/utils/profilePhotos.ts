@@ -24,6 +24,9 @@ export function getProfilePhotoDisplayUri(
   if (typeof photo === "string") {
     return photo;
   }
+  if (photo.status === "ready" && photo.remoteUrl) {
+    return photo.remoteUrl;
+  }
   return photo.localUri || photo.remoteUrl || "";
 }
 

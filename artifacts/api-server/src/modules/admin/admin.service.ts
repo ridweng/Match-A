@@ -112,6 +112,7 @@ type OverviewView = {
 type DatabaseTableKey =
   | "auth.users"
   | "core.profiles"
+  | "core.profile_location_history"
   | "core.profile_category_values"
   | "core.profile_dummy_metadata"
   | "core.profile_languages"
@@ -278,6 +279,17 @@ const APPROVED_TABLE_SPECS: TableSpec[] = [
     y: 70,
   },
   {
+    key: "core.profile_location_history",
+    schema: "core",
+    table: "profile_location_history",
+    role: "source",
+    description: "Historical user/profile location snapshots",
+    freshnessColumn: "created_at",
+    required: true,
+    x: 320,
+    y: 190,
+  },
+  {
     key: "core.profile_category_values",
     schema: "core",
     table: "profile_category_values",
@@ -285,7 +297,7 @@ const APPROVED_TABLE_SPECS: TableSpec[] = [
     description: "Profile source values by goal category",
     freshnessColumn: null,
     x: 320,
-    y: 190,
+    y: 310,
   },
   {
     key: "core.profile_dummy_metadata",
@@ -295,7 +307,7 @@ const APPROVED_TABLE_SPECS: TableSpec[] = [
     description: "Dummy batch and synthetic metadata",
     freshnessColumn: "created_at",
     x: 320,
-    y: 310,
+    y: 430,
   },
   {
     key: "core.profile_languages",
@@ -305,7 +317,7 @@ const APPROVED_TABLE_SPECS: TableSpec[] = [
     description: "Profile spoken languages",
     freshnessColumn: null,
     x: 320,
-    y: 430,
+    y: 550,
   },
   {
     key: "core.profile_interests",
@@ -315,7 +327,7 @@ const APPROVED_TABLE_SPECS: TableSpec[] = [
     description: "Profile interests",
     freshnessColumn: null,
     x: 320,
-    y: 550,
+    y: 670,
   },
   {
     key: "catalog.goal_categories",
@@ -513,6 +525,12 @@ const REQUIRED_COLUMN_REQUIREMENTS: ColumnRequirement[] = [
 ];
 
 const CURATED_FLOW_EDGES: DatabaseGraphEdge[] = [
+  {
+    from: "core.profiles",
+    to: "core.profile_location_history",
+    edgeType: "flow",
+    label: "location audit",
+  },
   {
     from: "discovery.profile_interactions",
     to: "discovery.profile_decisions",
@@ -948,6 +966,7 @@ export class AdminService {
           [
             "auth.users",
             "core.profiles",
+            "core.profile_location_history",
             "core.profile_dummy_metadata",
             "discovery.profile_interactions",
             "discovery.profile_decisions",

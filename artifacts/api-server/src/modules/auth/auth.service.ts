@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { EmailDeliveryError } from "../email/email.types";
 import { EmailService } from "../email/email.service";
@@ -44,7 +44,29 @@ type SessionRow = {
   access_expires_at: string | Date;
   refresh_expires_at: string | Date;
   revoked_at: string | Date | null;
+  last_used_at?: string | Date | null;
+  updated_at?: string | Date;
   created_at: string | Date;
+};
+
+type AuthUserSessionSnapshot = {
+  userId: number;
+  email: string | null;
+  emailVerified: boolean;
+  userCreatedAt: string | null;
+  sessionId: number | null;
+  accessExpiresAt: string | null;
+  refreshExpiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  profileId: number | null;
+  displayName: string | null;
+  dateOfBirth: string | null;
+  onboardingStatus: string | null;
+  onboardingStartedAt: string | null;
+  onboardingCompletedAt: string | null;
+  onboardingUpdatedAt: string | null;
+  profileImageCount: number;
 };
 
 type VerificationTokenRow = UserRow & {
@@ -69,6 +91,8 @@ type DbClient = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @Inject(GoalsService) private readonly goalsService: GoalsService,
     @Inject(EmailService) private readonly emailService: EmailService
@@ -287,6 +311,135 @@ export class AuthService {
     if (!localPart || !domain) return email;
     const visible = localPart.slice(0, 2);
     return `${visible}${"*".repeat(Math.max(0, localPart.length - 2))}@${domain}`;
+  }
+
+  private hashPrefix(value: string) {
+    const hashed = this.hashToken(value);
+    return hashed.slice(0, 12);
+  }
+
+  private toIso(value: string | Date | null | undefined) {
+    if (!value) {
+      return null;
+    }
+    return new Date(value).toISOString();
+  }
+
+  private logAuthEvent(
+    level: "log" | "warn" | "error",
+    event: string,
+    payload: Record<string, unknown>
+  ) {
+    this.logger[level](`[auth] ${event} ${JSON.stringify(payload)}`);
+  }
+
+  private async touchSessionLastUsed(sessionId: number) {
+    await pool.query(
+      `UPDATE auth.auth_sessions
+       SET last_used_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [sessionId]
+    );
+  }
+
+  private async getAuthUserSessionSnapshot(
+    userId: number,
+    sessionId?: number | null
+  ): Promise<AuthUserSessionSnapshot | null> {
+    const snapshot = await this.queryOne<{
+      user_id: number;
+      email: string | null;
+      email_verified: boolean;
+      user_created_at: string | Date | null;
+      session_id: number | null;
+      access_expires_at: string | Date | null;
+      refresh_expires_at: string | Date | null;
+      revoked_at: string | Date | null;
+      last_used_at: string | Date | null;
+      profile_id: number | null;
+      display_name: string | null;
+      date_of_birth: string | null;
+      onboarding_status: string | null;
+      onboarding_started_at: string | Date | null;
+      onboarding_completed_at: string | Date | null;
+      onboarding_updated_at: string | Date | null;
+      profile_image_count: string | number | null;
+    }>(
+      `SELECT
+         u.id AS user_id,
+         u.email,
+         u.email_verified,
+         u.created_at AS user_created_at,
+         s.id AS session_id,
+         s.access_expires_at,
+         s.refresh_expires_at,
+         s.revoked_at,
+         s.last_used_at,
+         p.id AS profile_id,
+         p.display_name,
+         p.date_of_birth,
+         o.status AS onboarding_status,
+         o.started_at AS onboarding_started_at,
+         o.completed_at AS onboarding_completed_at,
+         o.updated_at AS onboarding_updated_at,
+         COUNT(pi.id) AS profile_image_count
+       FROM auth.users u
+       LEFT JOIN auth.auth_sessions s
+         ON s.user_id = u.id
+        AND ($2::bigint IS NULL OR s.id = $2)
+       LEFT JOIN core.profiles p
+         ON p.user_id = u.id
+        AND p.kind = 'user'
+       LEFT JOIN core.user_onboarding o
+         ON o.user_id = u.id
+       LEFT JOIN media.profile_images pi
+         ON pi.profile_id = p.id
+        AND pi.deleted_at IS NULL
+       WHERE u.id = $1
+       GROUP BY
+         u.id,
+         u.email,
+         u.email_verified,
+         u.created_at,
+         s.id,
+         s.access_expires_at,
+         s.refresh_expires_at,
+         s.revoked_at,
+         s.last_used_at,
+         p.id,
+         p.display_name,
+         p.date_of_birth,
+         o.status,
+         o.started_at,
+         o.completed_at,
+         o.updated_at
+       LIMIT 1`,
+      [userId, sessionId ?? null]
+    );
+
+    if (!snapshot) {
+      return null;
+    }
+
+    return {
+      userId: Number(snapshot.user_id),
+      email: this.maskEmail(snapshot.email),
+      emailVerified: Boolean(snapshot.email_verified),
+      userCreatedAt: this.toIso(snapshot.user_created_at),
+      sessionId: snapshot.session_id ? Number(snapshot.session_id) : null,
+      accessExpiresAt: this.toIso(snapshot.access_expires_at),
+      refreshExpiresAt: this.toIso(snapshot.refresh_expires_at),
+      revokedAt: this.toIso(snapshot.revoked_at),
+      lastUsedAt: this.toIso(snapshot.last_used_at),
+      profileId: snapshot.profile_id ? Number(snapshot.profile_id) : null,
+      displayName: snapshot.display_name,
+      dateOfBirth: snapshot.date_of_birth,
+      onboardingStatus: snapshot.onboarding_status,
+      onboardingStartedAt: this.toIso(snapshot.onboarding_started_at),
+      onboardingCompletedAt: this.toIso(snapshot.onboarding_completed_at),
+      onboardingUpdatedAt: this.toIso(snapshot.onboarding_updated_at),
+      profileImageCount: Number(snapshot.profile_image_count || 0),
+    };
   }
 
   private logVerificationRedirectOutcome(
@@ -796,10 +949,11 @@ export class AuthService {
     accessExpiresAt: string,
     refreshExpiresAt: string
   ) {
-    await pool.query(
+    return this.queryOne<SessionRow>(
       `INSERT INTO auth.auth_sessions
         (user_id, access_token_hash, refresh_token_hash, access_expires_at, refresh_expires_at, revoked_at)
-       VALUES ($1, $2, $3, $4, $5, NULL)`,
+       VALUES ($1, $2, $3, $4, $5, NULL)
+       RETURNING *`,
       [
         userId,
         this.hashToken(accessToken),
@@ -810,20 +964,14 @@ export class AuthService {
     );
   }
 
-  async findSessionByAccessToken(accessToken: string) {
-    const session = await this.queryOne<SessionRow>(
+  async findSessionRecordByAccessToken(accessToken: string) {
+    return this.queryOne<SessionRow>(
       `SELECT *
        FROM auth.auth_sessions
-       WHERE access_token_hash = $1 AND revoked_at IS NULL
+       WHERE access_token_hash = $1
        LIMIT 1`,
       [this.hashToken(accessToken)]
     );
-    if (!session) return null;
-    if (new Date(session.access_expires_at).getTime() < Date.now()) {
-      return null;
-    }
-    const user = await this.findUserById(session.user_id);
-    return user ? { session, user } : null;
   }
 
   async rotateSession(refreshToken: string) {
@@ -865,6 +1013,9 @@ export class AuthService {
     return user
       ? {
           user,
+          sessionId: session.id,
+          accessExpiresAt: nextAccessExpiresAt,
+          refreshExpiresAt: nextRefreshExpiresAt,
           accessToken: nextAccessToken,
           refreshToken: nextRefreshToken,
         }
@@ -1059,35 +1210,104 @@ export class AuthService {
     return { user, created: true };
   }
 
-  async createSessionResponse(user: ReturnType<AuthService["mapUser"]>) {
+  async createSessionResponse(
+    user: ReturnType<AuthService["mapUser"]>,
+    options?: { requestId?: string; event?: string }
+  ) {
     const accessToken = this.randomToken();
     const refreshToken = this.randomToken();
     const accessExpiresAt = new Date(Date.now() + accessTtlMs).toISOString();
     const refreshExpiresAt = new Date(Date.now() + refreshTtlMs).toISOString();
-    await this.createSession(
+    const session = await this.createSession(
       user!.id,
       accessToken,
       refreshToken,
       accessExpiresAt,
       refreshExpiresAt
     );
+    if (options?.event) {
+      this.logAuthEvent("log", options.event, {
+        requestId: options.requestId || null,
+        userId: user?.id ?? null,
+        email: this.maskEmail(user?.email),
+        sessionId: session?.id ?? null,
+        accessTokenHashPrefix: this.hashPrefix(accessToken),
+        accessExpiresAt,
+        refreshExpiresAt,
+      });
+    }
     return this.authPayload(user, accessToken, refreshToken);
   }
 
-  async authenticate(authorizationHeader: string | undefined) {
+  async authenticate(
+    authorizationHeader: string | undefined,
+    options?: {
+      requestId?: string;
+      source?: string;
+    }
+  ) {
     const header = authorizationHeader || "";
     if (!header.startsWith("Bearer ")) {
+      this.logAuthEvent("warn", "lookup_failure", {
+        requestId: options?.requestId || null,
+        source: options?.source || null,
+        reason: "missing_authorization_header",
+      });
       throw new UnauthorizedException("UNAUTHORIZED");
     }
     const accessToken = header.slice("Bearer ".length).trim();
-    const result = await this.findSessionByAccessToken(accessToken);
-    if (!result) {
+    const session = await this.findSessionRecordByAccessToken(accessToken);
+    if (!session) {
+      this.logAuthEvent("warn", "lookup_failure", {
+        requestId: options?.requestId || null,
+        source: options?.source || null,
+        reason: "session_not_found",
+        accessTokenHashPrefix: this.hashPrefix(accessToken),
+      });
       throw new UnauthorizedException("INVALID_SESSION");
     }
+    if (session.revoked_at) {
+      const snapshot = await this.getAuthUserSessionSnapshot(session.user_id, session.id);
+      this.logAuthEvent("warn", "lookup_failure", {
+        requestId: options?.requestId || null,
+        source: options?.source || null,
+        reason: "session_revoked",
+        accessTokenHashPrefix: this.hashPrefix(accessToken),
+        sessionId: session.id,
+        snapshot,
+      });
+      throw new UnauthorizedException("INVALID_SESSION");
+    }
+    if (new Date(session.access_expires_at).getTime() < Date.now()) {
+      const snapshot = await this.getAuthUserSessionSnapshot(session.user_id, session.id);
+      this.logAuthEvent("warn", "lookup_failure", {
+        requestId: options?.requestId || null,
+        source: options?.source || null,
+        reason: "session_expired",
+        accessTokenHashPrefix: this.hashPrefix(accessToken),
+        sessionId: session.id,
+        snapshot,
+      });
+      throw new UnauthorizedException("INVALID_SESSION");
+    }
+    const user = await this.findUserById(session.user_id);
+    if (!user) {
+      const snapshot = await this.getAuthUserSessionSnapshot(session.user_id, session.id);
+      this.logAuthEvent("warn", "lookup_failure", {
+        requestId: options?.requestId || null,
+        source: options?.source || null,
+        reason: "user_not_found",
+        accessTokenHashPrefix: this.hashPrefix(accessToken),
+        sessionId: session.id,
+        snapshot,
+      });
+      throw new UnauthorizedException("INVALID_SESSION");
+    }
+    await this.touchSessionLastUsed(session.id);
     return {
       accessToken,
-      user: result.user,
-      session: result.session,
+      user,
+      session,
     };
   }
 
@@ -1544,26 +1764,64 @@ export class AuthService {
     };
   }
 
-  async signIn(input: { email: string; password: string }) {
+  async signIn(
+    input: { email: string; password: string },
+    options?: { requestId?: string }
+  ) {
     const user = await this.findUserByEmail(input.email);
     if (!user || !user.passwordHash) {
+      this.logAuthEvent("warn", "sign_in_failed", {
+        requestId: options?.requestId || null,
+        email: this.maskEmail(input.email),
+        reason: "INVALID_CREDENTIALS",
+      });
       return { error: "INVALID_CREDENTIALS" };
     }
     const validPassword = await this.verifyPassword(input.password, user.passwordHash);
     if (!validPassword) {
+      this.logAuthEvent("warn", "sign_in_failed", {
+        requestId: options?.requestId || null,
+        email: this.maskEmail(input.email),
+        userId: user.id,
+        reason: "INVALID_CREDENTIALS",
+      });
       return { error: "INVALID_CREDENTIALS" };
     }
     if (!user.emailVerified) {
+      this.logAuthEvent("warn", "sign_in_failed", {
+        requestId: options?.requestId || null,
+        email: this.maskEmail(input.email),
+        userId: user.id,
+        reason: "EMAIL_VERIFICATION_REQUIRED",
+      });
       return { error: "EMAIL_VERIFICATION_REQUIRED" };
     }
-    return this.createSessionResponse(user);
+    return this.createSessionResponse(user, {
+      requestId: options?.requestId,
+      event: "sign_in_succeeded",
+    });
   }
 
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string, options?: { requestId?: string }) {
     const rotated = await this.rotateSession(refreshToken);
     if (!rotated) {
+      this.logAuthEvent("warn", "refresh_failed", {
+        requestId: options?.requestId || null,
+        refreshTokenHashPrefix: this.hashPrefix(refreshToken),
+        reason: "INVALID_REFRESH_TOKEN",
+      });
       return { error: "INVALID_REFRESH_TOKEN" };
     }
+    this.logAuthEvent("log", "refresh_succeeded", {
+      requestId: options?.requestId || null,
+      userId: rotated.user.id,
+      email: this.maskEmail(rotated.user.email),
+      sessionId: rotated.sessionId,
+      accessTokenHashPrefix: this.hashPrefix(rotated.accessToken),
+      refreshTokenHashPrefix: this.hashPrefix(refreshToken),
+      accessExpiresAt: rotated.accessExpiresAt,
+      refreshExpiresAt: rotated.refreshExpiresAt,
+    });
     return this.authPayload(rotated.user, rotated.accessToken, rotated.refreshToken);
   }
 
@@ -1645,7 +1903,9 @@ export class AuthService {
   }
 
   async getMe(authorizationHeader: string | undefined) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "get_me",
+    });
     return {
       user: this.sanitizeUser(auth.user),
       needsProfileCompletion: !auth.user?.name || !auth.user?.dateOfBirth,
@@ -1657,7 +1917,9 @@ export class AuthService {
     authorizationHeader: string | undefined,
     updates: { name?: string; dateOfBirth?: string; profession?: string }
   ) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "update_me",
+    });
     if (updates.dateOfBirth) {
       const dobStatus = this.validateDob(updates.dateOfBirth);
       if (!dobStatus.valid) {
@@ -1672,9 +1934,26 @@ export class AuthService {
     };
   }
 
-  async completeOnboarding(authorizationHeader: string | undefined) {
-    const auth = await this.authenticate(authorizationHeader);
+  async completeOnboarding(
+    authorizationHeader: string | undefined,
+    options?: { requestId?: string }
+  ) {
+    const auth = await this.authenticate(authorizationHeader, {
+      requestId: options?.requestId,
+      source: "complete_onboarding",
+    });
+    const beforeSnapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     const user = await this.completeUserOnboarding(auth.user.id);
+    const afterSnapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
+    this.logAuthEvent("log", "onboarding_complete", {
+      requestId: options?.requestId || null,
+      userId: auth.user.id,
+      email: this.maskEmail(auth.user.email),
+      sessionId: auth.session.id,
+      accessTokenHashPrefix: this.hashPrefix(auth.accessToken),
+      beforeSnapshot,
+      afterSnapshot,
+    });
     return {
       status: "ok" as const,
       hasCompletedOnboarding: this.resolveHasCompletedOnboarding(user),
@@ -1682,7 +1961,9 @@ export class AuthService {
   }
 
   async getSettings(authorizationHeader: string | undefined) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "get_settings",
+    });
     const settings = await this.findUserSettings(auth.user.id);
     return {
       settings: this.sanitizeSettings(settings),
@@ -1699,7 +1980,9 @@ export class AuthService {
       personality?: string;
     }
   ) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "update_settings",
+    });
     const settings = await this.upsertUserSettings(auth.user.id, updates);
     return {
       settings: this.sanitizeSettings(settings),
@@ -1707,12 +1990,16 @@ export class AuthService {
   }
 
   async signOut(authorizationHeader: string | undefined) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "sign_out",
+    });
     await this.revokeSessionByAccessToken(auth.accessToken);
   }
 
   async deleteAccount(authorizationHeader: string | undefined) {
-    const auth = await this.authenticate(authorizationHeader);
+    const auth = await this.authenticate(authorizationHeader, {
+      source: "delete_account",
+    });
     const mediaAssets = await pool.query<{ storage_key: string | null }>(
       `SELECT DISTINCT ma.storage_key
        FROM media.media_assets ma

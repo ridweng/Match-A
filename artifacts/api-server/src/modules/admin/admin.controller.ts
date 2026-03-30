@@ -936,7 +936,7 @@ export class AdminController {
           <div class="actions">
             <button class="button primary" onclick="window.location.reload()">Refresh</button>
           </div>
-          <div class="meta">Live DB-backed internal view of approved source/projection architecture.</div>
+          <div class="meta">Live DB-backed internal view of approved source/projection architecture. Each refresh reads current relation presence, current row counts, and current freshness directly from the database.</div>
           ${warningBanner}
           <div class="card" style="margin-bottom:16px;">
             <h2>Legend</h2>

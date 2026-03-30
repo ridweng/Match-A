@@ -4,6 +4,7 @@ import DateTimePicker, {
 import { Feather } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -43,6 +44,7 @@ export function DateOfBirthField({
   const displayValue = formatDateForDisplay(value);
 
   const openPicker = () => {
+    Keyboard.dismiss();
     setDraftDate(getInitialPickerDate(value));
     setVisible(true);
   };
@@ -94,7 +96,7 @@ export function DateOfBirthField({
         <DateTimePicker
           value={draftDate}
           mode="date"
-          display="default"
+          display="spinner"
           maximumDate={maximumDate}
           onChange={handleChange}
         />

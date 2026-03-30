@@ -4,6 +4,7 @@ import {
   Get,
   HttpStatus,
   Inject,
+  Logger,
   Param,
   Patch,
   Post,
@@ -42,6 +43,8 @@ const profileUpdateSchema = z.object({
   hairColor: z.string().trim().max(120).optional(),
   ethnicity: z.string().trim().max(160).optional(),
   interests: z.array(z.string().trim().min(1).max(64)).max(24).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
 });
 
 const settingsUpdateSchema = z.object({
@@ -70,6 +73,8 @@ const goalReorderSchema = z.object({
 
 @Controller()
 export class ViewerController {
+  private readonly logger = new Logger(ViewerController.name);
+
   constructor(
     @Inject(AuthService) private readonly authService: AuthService,
     @Inject(ViewerService) private readonly viewerService: ViewerService,
@@ -83,6 +88,28 @@ export class ViewerController {
       : undefined;
   }
 
+  private getRequestId(req: Request) {
+    const header = req.headers["x-matcha-request-id"];
+    if (typeof header === "string" && header.trim()) {
+      return header.trim();
+    }
+    if (Array.isArray(header) && header[0]?.trim()) {
+      return header[0].trim();
+    }
+    return undefined;
+  }
+
+  private getLocationSource(req: Request) {
+    const header = req.headers["x-matcha-location-source"];
+    if (typeof header === "string" && header.trim()) {
+      return header.trim().slice(0, 64);
+    }
+    if (Array.isArray(header) && header[0]?.trim()) {
+      return header[0].trim().slice(0, 64);
+    }
+    return undefined;
+  }
+
   private sendAuthError(res: Response, error: unknown) {
     const message =
       error instanceof Error && error.message ? error.message : "UNAUTHORIZED";
@@ -92,7 +119,10 @@ export class ViewerController {
   @Get("viewer/bootstrap")
   async getViewerBootstrap(@Req() req: Request, @Res() res: Response) {
     try {
-      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
+        requestId: this.getRequestId(req),
+        source: "viewer_bootstrap",
+      });
       return res.json(await this.viewerService.getBootstrap(auth.user.id));
     } catch (error) {
       return this.sendAuthError(res, error);
@@ -102,7 +132,10 @@ export class ViewerController {
   @Get("me/profile")
   async getProfile(@Req() req: Request, @Res() res: Response) {
     try {
-      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
+        requestId: this.getRequestId(req),
+        source: "viewer_get_profile",
+      });
       return res.json(await this.viewerService.getProfile(auth.user.id));
     } catch (error) {
       return this.sendAuthError(res, error);
@@ -112,9 +145,26 @@ export class ViewerController {
   @Patch("me/profile")
   async updateProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
-      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
+      const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
+        requestId: this.getRequestId(req),
+        source: "viewer_update_profile",
+      });
       const payload = profileUpdateSchema.parse(body);
-      return res.json(await this.viewerService.updateProfile(auth.user.id, payload));
+      const requestId = this.getRequestId(req);
+      this.logger.log(
+        `[viewer-profile-update] ${JSON.stringify({
+          requestId: requestId || null,
+          userId: auth.user.id,
+          fields: Object.keys(payload || {}),
+          locationSource: this.getLocationSource(req) || null,
+        })}`
+      );
+      return res.json(
+        await this.viewerService.updateProfile(auth.user.id, payload, {
+          requestId,
+          locationSource: this.getLocationSource(req),
+        })
+      );
     } catch (error) {
       if (error instanceof ZodError) {
         return res.status(HttpStatus.BAD_REQUEST).json({
@@ -285,6 +335,13 @@ export class ViewerController {
             .refine((value) => value.ageMin <= value.ageMax),
         })
         .parse(body);
+      this.logger.log(
+        `[viewer-discovery-preferences] ${JSON.stringify({
+          requestId: this.getRequestId(req) || null,
+          userId: auth.user.id,
+          filters: payload.filters,
+        })}`
+      );
       return res.json(
         await this.discoveryService.updatePreferences(auth.user.id, payload.filters)
       );

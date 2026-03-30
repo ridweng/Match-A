@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
 
@@ -9,6 +10,7 @@ type Props = {
 };
 
 export function AppLoadingScreen({ visible, onHidden }: Props) {
+  const insets = useSafeAreaInsets();
   const screenOpacity = useRef(new Animated.Value(1)).current;
   const breathScale = useRef(new Animated.Value(1)).current;
   const glowOpacity = useRef(new Animated.Value(0.28)).current;
@@ -276,7 +278,12 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
         </Animated.Text>
       </Animated.View>
 
-      <View style={styles.shimmerTrack}>
+      <View
+        style={[
+          styles.shimmerTrack,
+          { bottom: Math.max(insets.bottom + 20, 32) },
+        ]}
+      >
         <Animated.View
           style={[
             styles.shimmerDot,
@@ -399,7 +406,6 @@ const styles = StyleSheet.create({
   },
   shimmerTrack: {
     position: "absolute",
-    bottom: 52,
     width: 144,
     height: 3,
     borderRadius: 2,

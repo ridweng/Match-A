@@ -5,7 +5,6 @@ import React from "react";
 import {
   Alert,
   Image,
-  Modal,
   Platform,
   Pressable,
   StatusBar,
@@ -17,6 +16,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { OverlaySelectField } from "@/components/OverlaySelectField";
+import { SpokenLanguagesPickerField } from "@/components/SpokenLanguagesPickerField";
+import { useBottomObstruction } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
 import {
   ALCOHOL_USE_OPTIONS,
@@ -36,13 +38,10 @@ import {
   getReligionImportanceLabel,
   getReligionLabel,
   getRelationshipGoalLabel,
-  getSpokenLanguageFlag,
-  getSpokenLanguageLabel,
   getTobaccoUseLabel,
   HAIR_COLORS,
   INTERESTS_LIST,
   MAX_PROFILE_PHOTOS,
-  matchesSpokenLanguageSearch,
   normalizeAlcoholUse,
   normalizeBodyType,
   normalizeChildrenPreference,
@@ -54,14 +53,12 @@ import {
   normalizeReligion,
   normalizeReligionImportance,
   normalizeRelationshipGoal,
-  normalizeSpokenLanguages,
   normalizeTobaccoUse,
   PHYSICAL_ACTIVITY_OPTIONS,
   POLITICAL_INTEREST_OPTIONS,
   RELIGION_IMPORTANCE_OPTIONS,
   RELIGION_OPTIONS,
   RELATIONSHIP_GOALS,
-  SPOKEN_LANGUAGES,
   TOBACCO_USE_OPTIONS,
 } from "@/constants/profile-options";
 import { useApp, type UserProfile } from "@/context/AppContext";
@@ -77,9 +74,8 @@ import {
   isStoredProfilePhoto,
   saveProfilePhotoLocally,
 } from "@/utils/profilePhotos";
-import type { ProfileEditableField, ProfileFieldSaveState } from "@/context/AppContext";
-
-const MAX_SPOKEN_LANGUAGES = 7;
+import type { ProfileEditableField } from "@/context/AppContext";
+import { debugLog } from "@/utils/debug";
 
 function SummaryField({
   label,
@@ -96,79 +92,34 @@ function SummaryField({
   );
 }
 
-function SelectField({
-  label,
-  value,
-  options,
-  onChange,
-  getOptionLabel,
-  saveState,
+type ProfileSaveStatus = "idle" | "saving" | "saved" | "error";
+
+function SaveFeedbackText({
+  status,
   t,
 }: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  getOptionLabel?: (value: string) => string;
-  saveState?: ProfileFieldSaveState;
+  status: ProfileSaveStatus;
   t: (es: string, en: string) => string;
 }) {
-  const [open, setOpen] = React.useState(false);
+  if (status === "idle") {
+    return null;
+  }
 
   return (
-    <View style={[styles.editField, open && styles.editFieldOpen]}>
-      <Text style={styles.editLabel}>{label}</Text>
-      <View style={[styles.selectWrap, open && styles.selectWrapOpen]}>
-        <Pressable onPress={() => setOpen((current) => !current)} style={styles.selectField}>
-          <Text style={[styles.selectValue, !value && styles.selectPlaceholder]}>
-            {value ? getOptionLabel?.(value) || value : "—"}
-          </Text>
-          <Feather
-            name={open ? "chevron-up" : "chevron-down"}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {open ? (
-          <View style={styles.dropdown}>
-            {options.map((option) => (
-              <Pressable
-                key={option}
-                onPress={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-                style={[styles.dropdownOption, value === option && styles.dropdownOptionActive]}
-              >
-                <Text
-                  style={[
-                    styles.dropdownOptionText,
-                    value === option && styles.dropdownOptionTextActive,
-                  ]}
-                >
-                  {getOptionLabel?.(option) || option}
-                </Text>
-                {value === option ? (
-                  <Feather name="check" size={14} color={Colors.primaryLight} />
-                ) : null}
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
-      <FieldSaveStateText state={saveState} t={t} />
-    </View>
+    <Text
+      style={[
+        styles.saveStateText,
+        status === "saved" && styles.saveStateTextSaved,
+        status === "error" && styles.saveStateTextError,
+      ]}
+    >
+      {status === "saving"
+        ? t("Guardando cambios...", "Saving changes...")
+        : status === "saved"
+          ? t("Cambios guardados", "Changes saved")
+          : t("No se pudo guardar. Intenta otra vez.", "Could not save. Try again.")}
+    </Text>
   );
-}
-
-function FieldSaveStateText({
-  state,
-  t,
-}: {
-  state?: ProfileFieldSaveState;
-  t: (es: string, en: string) => string;
-}) {
-  return null;
 }
 
 function normalizeHeightInput(value: string) {
@@ -239,15 +190,19 @@ export default function ProfileScreen() {
     accountProfile,
     heightUnit,
     language,
-    profileSaveStates,
     removeProfilePhoto,
+    saveProfileChanges,
     setProfilePhoto,
-    updateProfileField,
   } = useApp();
 
   const placeholder = t("Ninguno", "None");
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
-  const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 100);
+  const {
+    restingBottomInset: profileRestingBottomInset,
+  } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: Platform.OS === "web" ? 34 : 100,
+  });
   const calculatedAge = getAgeFromIsoDate(accountProfile.dateOfBirth);
   const zodiacLabel = getZodiacSignLabel(
     getZodiacSignFromIsoDate(accountProfile.dateOfBirth),
@@ -265,47 +220,26 @@ export default function ProfileScreen() {
   const previewInterests = accountProfile.interests.slice(0, 3);
   const heightUnitLabel = heightUnit === "imperial" ? "in" : "cm";
   const heightMax = getHeightLimit(heightUnit);
-  const heightOutOfRange = isHeightOutOfRange(accountProfile.height, heightUnit);
+  const [draftProfile, setDraftProfile] = React.useState(accountProfile);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState(false);
+  const [saveStatus, setSaveStatus] = React.useState<ProfileSaveStatus>("idle");
+  const heightOutOfRange = isHeightOutOfRange(draftProfile.height, heightUnit);
   const heightPlaceholder =
     heightUnit === "imperial"
       ? t("Tu altura en pulgadas", "Your height in inches")
       : t("Tu altura en cm", "Your height in cm");
-  const spokenLanguages = normalizeSpokenLanguages(accountProfile.languagesSpoken);
-  const [languagesModalOpen, setLanguagesModalOpen] = React.useState(false);
-  const [languageSearch, setLanguageSearch] = React.useState("");
-  const [draftLanguages, setDraftLanguages] = React.useState<string[]>(
-    spokenLanguages
-  );
-  const selectedLanguageOptions = React.useMemo(
-    () =>
-      spokenLanguages
-        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
-        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
-    [spokenLanguages]
-  );
-  const selectedDraftLanguageOptions = React.useMemo(
-    () =>
-      draftLanguages
-        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
-        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
-    [draftLanguages]
-  );
-
-  const filteredLanguages = React.useMemo(() => {
-    return SPOKEN_LANGUAGES.filter((item) => {
-      if (draftLanguages.includes(item.value)) {
-        return false;
-      }
-      return matchesSpokenLanguageSearch(item.value, languageSearch);
-    });
-  }, [draftLanguages, languageSearch]);
-
   const showValue = (value: string | string[]) => {
     if (Array.isArray(value)) {
       return value.length ? value.join(", ") : placeholder;
     }
     return value?.trim() ? value : placeholder;
   };
+
+  React.useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setDraftProfile(accountProfile);
+    }
+  }, [accountProfile, hasUnsavedChanges]);
 
   const savePickedPhoto = async (index: number, sourceUri: string) => {
     if (!sourceUri) {
@@ -440,46 +374,14 @@ export default function ProfileScreen() {
   };
 
   const update = <K extends ProfileEditableField>(key: K, value: UserProfile[K]) => {
-    updateProfileField(key, value);
-  };
-
-  const getFieldState = (field: ProfileEditableField) => profileSaveStates[field];
-
-  const openLanguagesModal = () => {
-    setDraftLanguages(spokenLanguages);
-    setLanguageSearch("");
-    setLanguagesModalOpen(true);
-  };
-
-  const closeLanguagesModal = () => {
-    setLanguagesModalOpen(false);
-    setLanguageSearch("");
-  };
-
-  const toggleSpokenLanguage = (value: string) => {
-    setDraftLanguages((current) => {
-      if (current.includes(value)) {
-        return current.filter((item) => item !== value);
-      }
-
-      if (current.length >= MAX_SPOKEN_LANGUAGES) {
-        Alert.alert(
-          t("Máximo alcanzado", "Maximum reached"),
-          t(
-            "Puedes seleccionar hasta 7 idiomas.",
-            "You can select up to 7 languages."
-          )
-        );
-        return current;
-      }
-
-      return [...current, value];
-    });
-  };
-
-  const acceptLanguages = () => {
-    update("languagesSpoken", draftLanguages);
-    closeLanguagesModal();
+    setDraftProfile((current) => ({
+      ...current,
+      [key]: value,
+    }));
+    setHasUnsavedChanges(true);
+    if (saveStatus !== "idle") {
+      setSaveStatus("idle");
+    }
   };
 
   const updateHeight = (value: string) => {
@@ -495,9 +397,9 @@ export default function ProfileScreen() {
   };
 
   const toggleInterest = (interest: string) => {
-    const next = accountProfile.interests.includes(interest)
-      ? accountProfile.interests.filter((item) => item !== interest)
-      : [...accountProfile.interests, interest];
+    const next = draftProfile.interests.includes(interest)
+      ? draftProfile.interests.filter((item) => item !== interest)
+      : [...draftProfile.interests, interest];
     update("interests", next);
   };
 
@@ -505,17 +407,60 @@ export default function ProfileScreen() {
     getProfilePhotoBySortOrder(accountProfile.photos, 0)
   );
 
+  const handleSave = async () => {
+    if (!hasUnsavedChanges) {
+      setSaveStatus("saved");
+      return;
+    }
+
+    setSaveStatus("saving");
+    const patch: Partial<Omit<UserProfile, "age" | "photos">> = {
+      bio: draftProfile.bio,
+      relationshipGoals: normalizeRelationshipGoal(draftProfile.relationshipGoals),
+      education: normalizeEducation(draftProfile.education),
+      childrenPreference: normalizeChildrenPreference(draftProfile.childrenPreference),
+      languagesSpoken: draftProfile.languagesSpoken,
+      physicalActivity: normalizePhysicalActivity(draftProfile.physicalActivity),
+      alcoholUse: normalizeAlcoholUse(draftProfile.alcoholUse),
+      tobaccoUse: normalizeTobaccoUse(draftProfile.tobaccoUse),
+      politicalInterest: normalizePoliticalInterest(draftProfile.politicalInterest),
+      religionImportance: normalizeReligionImportance(draftProfile.religionImportance),
+      religion: normalizeReligion(draftProfile.religion),
+      bodyType: normalizeBodyType(draftProfile.bodyType),
+      height: validateHeightValue(draftProfile.height, heightUnit),
+      hairColor: normalizeHairColor(draftProfile.hairColor),
+      ethnicity: normalizeEthnicity(draftProfile.ethnicity),
+      interests: draftProfile.interests,
+    };
+
+    debugLog("[profile-save] tapped", {
+      fields: Object.keys(patch),
+    });
+    const ok = await saveProfileChanges(patch);
+    setSaveStatus(ok ? "saved" : "error");
+    if (ok) {
+      setHasUnsavedChanges(false);
+    }
+  };
+
   return (
-    <View style={[styles.container, { paddingTop: topPad }]}>
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       <KeyboardAwareScrollViewCompat
-        contentContainerStyle={{ paddingBottom: bottomPad }}
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: topPad,
+            paddingBottom: profileRestingBottomInset,
+          },
+        ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        bottomOffset={bottomPad}
+        bottomOffset={profileRestingBottomInset}
         extraKeyboardSpace={28}
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardDismissMode="none"
       >
         <View style={styles.header}>
           <View>
@@ -647,146 +592,104 @@ export default function ProfileScreen() {
               <Text style={styles.editLabel}>{t("Sobre mí", "About me")}</Text>
               <TextInput
                 style={[styles.editInput, styles.editInputMultiline]}
-                value={accountProfile.bio}
+                value={draftProfile.bio}
                 onChangeText={(value) => update("bio", value)}
                 placeholder={t("Cuéntanos algo sobre ti...", "Tell us something about you...")}
                 placeholderTextColor={Colors.textMuted}
                 multiline
                 numberOfLines={5}
+                scrollEnabled
                 textAlignVertical="top"
               />
-              <FieldSaveStateText state={getFieldState("bio")} t={t} />
             </View>
-            <SelectField
+            <OverlaySelectField
               label={t("Metas de tu relación", "Your relationship goals")}
-              value={normalizeRelationshipGoal(accountProfile.relationshipGoals)}
+              value={normalizeRelationshipGoal(draftProfile.relationshipGoals)}
               options={RELATIONSHIP_GOALS}
               onChange={(value) => update("relationshipGoals", value)}
               getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
-              saveState={getFieldState("relationshipGoals")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Educación", "Education")}
-              value={normalizeEducation(accountProfile.education)}
+              value={normalizeEducation(draftProfile.education)}
               options={EDUCATION_LEVELS}
               onChange={(value) => update("education", value)}
               getOptionLabel={(value) => getEducationLabel(value, t)}
-              saveState={getFieldState("education")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Quiero tener hijxs", "Having children")}
-              value={normalizeChildrenPreference(accountProfile.childrenPreference)}
+              value={normalizeChildrenPreference(draftProfile.childrenPreference)}
               options={CHILDREN_PREFERENCES}
               onChange={(value) => update("childrenPreference", value)}
               getOptionLabel={(value) => getChildrenPreferenceLabel(value, t)}
-              saveState={getFieldState("childrenPreference")}
+              placeholder={t("Selecciona una opción", "Select an option")}
+            />
+            <SpokenLanguagesPickerField
+              style={styles.editField}
+              label={t("Idiomas que hablo", "Languages I speak")}
+              values={draftProfile.languagesSpoken}
+              onChange={(values) => update("languagesSpoken", values)}
+              language={language}
               t={t}
             />
-            <View style={styles.editField}>
-              <Text style={styles.editLabel}>{t("Idiomas que hablo", "Languages I speak")}</Text>
-              <Pressable
-                onPress={openLanguagesModal}
-                style={({ pressed }) => [
-                  styles.selectField,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.selectValue,
-                    !selectedLanguageOptions.length && styles.selectPlaceholder,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedLanguageOptions.length
-                    ? t(
-                        `${selectedLanguageOptions.length} idiomas seleccionados`,
-                        `${selectedLanguageOptions.length} languages selected`
-                      )
-                    : t("Selecciona idiomas", "Select languages")}
-                </Text>
-                <Feather name="chevron-right" size={16} color={Colors.textSecondary} />
-              </Pressable>
-              {selectedLanguageOptions.length ? (
-                <View style={styles.languageChipsWrap}>
-                  {selectedLanguageOptions.map((item) => (
-                    <View key={item.value} style={styles.languageChip}>
-                      <Text style={styles.languageChipFlag}>
-                        {item.flag || getSpokenLanguageFlag(item.value)}
-                      </Text>
-                      <Text style={styles.languageChipText}>
-                        {getSpokenLanguageLabel(item.value, language)}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-              <FieldSaveStateText state={getFieldState("languagesSpoken")} t={t} />
-            </View>
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t("Estilo de vida", "Life Style")}</Text>
           <View style={styles.card}>
-            <SelectField
+            <OverlaySelectField
               label={t("Actividad física", "Physical activity")}
-              value={normalizePhysicalActivity(accountProfile.physicalActivity)}
+              value={normalizePhysicalActivity(draftProfile.physicalActivity)}
               options={PHYSICAL_ACTIVITY_OPTIONS}
               onChange={(value) => update("physicalActivity", value)}
               getOptionLabel={(value) => getPhysicalActivityLabel(value, t)}
-              saveState={getFieldState("physicalActivity")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Bebida", "Drink")}
-              value={normalizeAlcoholUse(accountProfile.alcoholUse)}
+              value={normalizeAlcoholUse(draftProfile.alcoholUse)}
               options={ALCOHOL_USE_OPTIONS}
               onChange={(value) => update("alcoholUse", value)}
               getOptionLabel={(value) => getAlcoholUseLabel(value, t)}
-              saveState={getFieldState("alcoholUse")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Tabaco", "Smoke")}
-              value={normalizeTobaccoUse(accountProfile.tobaccoUse)}
+              value={normalizeTobaccoUse(draftProfile.tobaccoUse)}
               options={TOBACCO_USE_OPTIONS}
               onChange={(value) => update("tobaccoUse", value)}
               getOptionLabel={(value) => getTobaccoUseLabel(value, t)}
-              saveState={getFieldState("tobaccoUse")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Interés en la política", "Interest in politics")}
-              value={normalizePoliticalInterest(accountProfile.politicalInterest)}
+              value={normalizePoliticalInterest(draftProfile.politicalInterest)}
               options={POLITICAL_INTEREST_OPTIONS}
               onChange={(value) => update("politicalInterest", value)}
               getOptionLabel={(value) => getPoliticalInterestLabel(value, t)}
-              saveState={getFieldState("politicalInterest")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t(
                 "Importancia de la religión en tu vida",
                 "Importance of religion in your life"
               )}
-              value={normalizeReligionImportance(accountProfile.religionImportance)}
+              value={normalizeReligionImportance(draftProfile.religionImportance)}
               options={RELIGION_IMPORTANCE_OPTIONS}
               onChange={(value) => update("religionImportance", value)}
               getOptionLabel={(value) => getReligionImportanceLabel(value, t)}
-              saveState={getFieldState("religionImportance")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Religión", "Religion")}
-              value={normalizeReligion(accountProfile.religion)}
+              value={normalizeReligion(draftProfile.religion)}
               options={RELIGION_OPTIONS}
               onChange={(value) => update("religion", value)}
               getOptionLabel={(value) => getReligionLabel(value, t)}
-              saveState={getFieldState("religion")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
           </View>
         </View>
@@ -796,26 +699,29 @@ export default function ProfileScreen() {
             {t("Atributos físicos", "Physical attributes")}
           </Text>
           <View style={styles.card}>
-            <SelectField
+            <OverlaySelectField
               label={t("Tipo de cuerpo", "Body type")}
-              value={normalizeBodyType(accountProfile.bodyType)}
+              value={normalizeBodyType(draftProfile.bodyType)}
               options={BODY_TYPES}
               onChange={(value) => update("bodyType", value)}
               getOptionLabel={(value) => getBodyTypeLabel(value, t)}
-              saveState={getFieldState("bodyType")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
             <View style={styles.editField}>
               <Text style={styles.editLabel}>{t("Altura", "Height")}</Text>
               <View style={styles.heightRow}>
                 <TextInput
                   style={[styles.editInput, styles.heightInput]}
-                  value={normalizeHeightInput(accountProfile.height)}
+                  value={normalizeHeightInput(draftProfile.height)}
                   onChangeText={updateHeight}
-                  onBlur={() => update("height", validateHeightValue(accountProfile.height, heightUnit))}
+                  onBlur={() => update("height", validateHeightValue(draftProfile.height, heightUnit))}
+                  onEndEditing={() =>
+                    update("height", validateHeightValue(draftProfile.height, heightUnit))
+                  }
                   placeholder={heightPlaceholder}
                   placeholderTextColor={Colors.textMuted}
                   keyboardType={Platform.OS === "ios" ? "decimal-pad" : "numeric"}
+                  returnKeyType="done"
                 />
                 <View style={styles.heightUnitBadge}>
                   <Text style={styles.heightUnitText}>{heightUnitLabel}</Text>
@@ -827,25 +733,22 @@ export default function ProfileScreen() {
                   {heightUnitLabel}
                 </Text>
               ) : null}
-              <FieldSaveStateText state={getFieldState("height")} t={t} />
             </View>
-            <SelectField
+            <OverlaySelectField
               label={t("Color de cabello", "Hair color")}
-              value={normalizeHairColor(accountProfile.hairColor)}
+              value={normalizeHairColor(draftProfile.hairColor)}
               options={HAIR_COLORS}
               onChange={(value) => update("hairColor", value)}
               getOptionLabel={(value) => getHairColorLabel(value, t)}
-              saveState={getFieldState("hairColor")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
-            <SelectField
+            <OverlaySelectField
               label={t("Etnia", "Ethnicity")}
-              value={normalizeEthnicity(accountProfile.ethnicity)}
+              value={normalizeEthnicity(draftProfile.ethnicity)}
               options={ETHNICITIES}
               onChange={(value) => update("ethnicity", value)}
               getOptionLabel={(value) => getEthnicityLabel(value, t)}
-              saveState={getFieldState("ethnicity")}
-              t={t}
+              placeholder={t("Selecciona una opción", "Select an option")}
             />
           </View>
         </View>
@@ -855,7 +758,7 @@ export default function ProfileScreen() {
           <View style={styles.card}>
             <View style={styles.interestsWrap}>
               {INTERESTS_LIST.map((interest) => {
-                const selected = accountProfile.interests.includes(interest);
+                const selected = draftProfile.interests.includes(interest);
                 return (
                   <Pressable
                     key={interest}
@@ -877,160 +780,32 @@ export default function ProfileScreen() {
                 );
               })}
             </View>
-            <FieldSaveStateText state={getFieldState("interests")} t={t} />
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Pressable
+            onPress={() => {
+              void handleSave();
+            }}
+            disabled={saveStatus === "saving"}
+            style={({ pressed }) => [
+              styles.saveButton,
+              (!hasUnsavedChanges || saveStatus === "saving") && styles.saveButtonDisabled,
+              pressed && hasUnsavedChanges && saveStatus !== "saving" && styles.saveButtonPressed,
+            ]}
+          >
+            <Text style={styles.saveButtonText}>
+              {saveStatus === "saving"
+                ? t("Guardando...", "Saving...")
+                : t("Guardar cambios", "Save changes")}
+            </Text>
+          </Pressable>
+          <SaveFeedbackText status={saveStatus} t={t} />
         </View>
 
       </KeyboardAwareScrollViewCompat>
 
-      <Modal
-        visible={languagesModalOpen}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        transparent
-        onRequestClose={closeLanguagesModal}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalKeyboardAvoider}>
-            <View
-              style={[
-                styles.modalContainer,
-                {
-                  marginTop: insets.top + 16,
-                  marginBottom: insets.bottom + 16,
-                },
-              ]}
-            >
-            <View style={styles.modalHeader}>
-              <Pressable
-                onPress={closeLanguagesModal}
-                style={({ pressed }) => [
-                  styles.modalHeaderBtn,
-                  pressed && { opacity: 0.75 },
-                ]}
-              >
-                <Feather name="chevron-left" size={20} color={Colors.text} />
-              </Pressable>
-              <Pressable
-                onPress={acceptLanguages}
-                style={({ pressed }) => [
-                  styles.modalAcceptBtn,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text style={styles.modalAcceptText}>{t("Aceptar", "Done")}</Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.modalTitle}>{t("Idiomas que hablo", "Languages I speak")}</Text>
-            <Text style={styles.modalDescription}>
-              {t(
-                "Selecciona hasta 7 idiomas que hables para añadirlos a tu perfil.",
-                "Select up to 7 languages you speak to add them to your profile."
-              )}
-            </Text>
-            <Text style={styles.modalCounter}>
-              {draftLanguages.length}/{MAX_SPOKEN_LANGUAGES}{" "}
-              {t("seleccionados", "selected")}
-            </Text>
-
-            <View style={styles.searchField}>
-              <Feather name="search" size={15} color={Colors.textMuted} />
-              <TextInput
-                style={styles.searchInput}
-                value={languageSearch}
-                onChangeText={setLanguageSearch}
-                placeholder={t("Buscar idioma", "Search language")}
-                placeholderTextColor={Colors.textMuted}
-                selectionColor={Colors.primaryLight}
-              />
-            </View>
-
-            {selectedDraftLanguageOptions.length ? (
-              <View style={styles.selectedLanguagesBlock}>
-                <Text style={styles.selectedLanguagesLabel}>
-                  {t("Seleccionados", "Selected")}
-                </Text>
-                <View style={styles.selectedLanguagesRow}>
-                  {selectedDraftLanguageOptions.map((item) => (
-                    <Pressable
-                      key={item.value}
-                      onPress={() => toggleSpokenLanguage(item.value)}
-                      style={({ pressed }) => [
-                        styles.selectedLanguageChip,
-                        pressed && { opacity: 0.82 },
-                      ]}
-                    >
-                      <Text style={styles.selectedLanguageFlag}>
-                        {item.flag || getSpokenLanguageFlag(item.value)}
-                      </Text>
-                      <Text style={styles.selectedLanguageText}>
-                        {getSpokenLanguageLabel(item.value, language)}
-                      </Text>
-                      <Feather name="x" size={12} color={Colors.primaryLight} />
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
-            <KeyboardAwareScrollViewCompat
-              style={styles.modalScroll}
-              contentContainerStyle={styles.modalScrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              bottomOffset={insets.bottom + 16}
-              extraKeyboardSpace={18}
-            >
-              <View style={styles.modalOptionsWrap}>
-                {filteredLanguages.map((item) => {
-                  const selected = draftLanguages.includes(item.value);
-                  return (
-                    <Pressable
-                      key={item.value}
-                      onPress={() => toggleSpokenLanguage(item.value)}
-                      style={[
-                        styles.modalOption,
-                        selected && styles.modalOptionSelected,
-                      ]}
-                    >
-                      <Text style={styles.modalOptionFlag}>
-                        {item.flag || getSpokenLanguageFlag(item.value)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          selected && styles.modalOptionTextSelected,
-                        ]}
-                      >
-                        {getSpokenLanguageLabel(item.value, language)}
-                      </Text>
-                      {selected ? (
-                        <Feather name="check" size={13} color={Colors.primaryLight} />
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-                {!filteredLanguages.length ? (
-                  <View style={styles.languageEmptyState}>
-                    <Feather name="search" size={18} color={Colors.textMuted} />
-                    <Text style={styles.languageEmptyTitle}>
-                      {t("No encontramos idiomas", "No languages found")}
-                    </Text>
-                    <Text style={styles.languageEmptyText}>
-                      {t(
-                        "Prueba otra búsqueda o elimina uno de los idiomas seleccionados.",
-                        "Try another search or remove one of the selected languages."
-                      )}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </KeyboardAwareScrollViewCompat>
-          </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -1039,6 +814,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   header: {
     flexDirection: "row",
@@ -1194,6 +975,25 @@ const styles = StyleSheet.create({
   },
   saveStateTextError: {
     color: Colors.error,
+  },
+  saveButton: {
+    minHeight: 54,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.primaryLight,
+    paddingHorizontal: 18,
+  },
+  saveButtonDisabled: {
+    opacity: 0.55,
+  },
+  saveButtonPressed: {
+    opacity: 0.88,
+  },
+  saveButtonText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 15,
+    color: Colors.textInverted,
   },
   photoGrid: {
     flexDirection: "row",
@@ -1449,6 +1249,9 @@ const styles = StyleSheet.create({
   },
   modalKeyboardAvoider: {
     flex: 1,
+  },
+  modalKeyboardContent: {
+    flexGrow: 1,
     justifyContent: "center",
   },
   modalContainer: {
@@ -1568,6 +1371,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   modalScrollContent: {
+    flexGrow: 1,
     paddingBottom: 24,
   },
   modalOptionsWrap: {

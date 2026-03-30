@@ -6,7 +6,7 @@ import { usePathname } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
-  Dimensions,
+  Keyboard,
   Modal,
   PanResponder,
   Platform,
@@ -16,11 +16,17 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useNetInfo } from "@react-native-community/netinfo";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
+import { KeyboardSheet } from "@/components/KeyboardSheet";
+import {
+  KEYBOARD_SURFACE_GAP,
+  useBottomObstruction,
+} from "@/components/useBottomObstruction";
 import {
   getAlcoholUseLabel,
   getBodyTypeLabel,
@@ -60,9 +66,6 @@ import type {
   TherianMode,
 } from "@/services/auth";
 
-const { width, height } = Dimensions.get("window");
-const CARD_WIDTH = width - 32;
-const CARD_HEIGHT = height * 0.62;
 const SWIPE_THRESHOLD = 80;
 const SWIPE_FEEDBACK_DISTANCE = 150;
 const SWIPE_FEEDBACK_BUTTON_DURATION = 210;
@@ -648,6 +651,7 @@ function AgeRangeFields({
             placeholderTextColor={Colors.textMuted}
             selectionColor={Colors.primaryLight}
             maxLength={3}
+            returnKeyType="done"
           />
         </View>
         <View style={styles.ageNumberField}>
@@ -663,6 +667,7 @@ function AgeRangeFields({
             placeholderTextColor={Colors.textMuted}
             selectionColor={Colors.primaryLight}
             maxLength={3}
+            returnKeyType="done"
           />
         </View>
       </View>
@@ -677,6 +682,16 @@ export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const netInfo = useNetInfo();
   const pathname = usePathname();
+  const { width, height } = useWindowDimensions();
+  const CARD_WIDTH = width - 32;
+  const CARD_HEIGHT = height * 0.62;
+  const cardFrameStyle = useMemo(
+    () => ({
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+    }),
+    [CARD_HEIGHT, CARD_WIDTH]
+  );
   const {
     t,
     likeProfile,
@@ -689,6 +704,7 @@ export default function DiscoverScreen() {
     discoveryFilters,
     lastServerSyncAt,
     recordDiscoverySwipe,
+    refreshProfileLocation,
     refreshDiscoveryCandidates,
     fetchNextDiscoveryWindow,
     saveDiscoveryFilters,
@@ -749,6 +765,16 @@ export default function DiscoverScreen() {
     },
     [traceFocused]
   );
+
+  useEffect(() => {
+    if (!pathname.endsWith("/discover")) {
+      return;
+    }
+
+    void refreshProfileLocation({
+      reason: "discover_entry",
+    });
+  }, [pathname, refreshProfileLocation]);
 
   const rotate = position.x.interpolate({
     inputRange: [-width / 2, 0, width / 2],
@@ -941,6 +967,14 @@ export default function DiscoverScreen() {
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
+  const { bottomObstructionHeight: filterBottomObstruction } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: 16,
+    extraKeyboardSpacing:
+      Platform.OS === "ios" ? KEYBOARD_SURFACE_GAP.ios : KEYBOARD_SURFACE_GAP.android,
+    enabled: isFilterVisible,
+  });
+  const filterActionsInset = insets.bottom + 112;
   const shouldFreezeReadinessWrites =
     traceFocused && DISCOVERY_ISOLATION_MODE === "A" && isDeckAnimating;
   const shouldDeferDeckRebuild =
@@ -1739,7 +1773,13 @@ export default function DiscoverScreen() {
     Haptics.selectionAsync().catch(() => {});
   };
 
+  const closeFilters = () => {
+    Keyboard.dismiss();
+    setIsFilterVisible(false);
+  };
+
   const applyFilters = () => {
+    Keyboard.dismiss();
     void saveDiscoveryFilters({
       ...draftFilters,
       selectedGenders: [...draftFilters.selectedGenders],
@@ -1749,6 +1789,7 @@ export default function DiscoverScreen() {
   };
 
   const clearFilters = () => {
+    Keyboard.dismiss();
     setDraftFilters({
       ...defaultFilters,
       selectedGenders: [...defaultFilters.selectedGenders],
@@ -2179,6 +2220,7 @@ export default function DiscoverScreen() {
               pointerEvents="none"
               style={[
                 styles.cardBase,
+                cardFrameStyle,
                 styles.cardThird,
                 !thirdProfile && styles.cardSlotHidden,
                 {
@@ -2198,6 +2240,7 @@ export default function DiscoverScreen() {
               pointerEvents="none"
               style={[
                 styles.cardBase,
+                cardFrameStyle,
                 styles.cardSecond,
                 !secondProfile && styles.cardSlotHidden,
                 {
@@ -2266,6 +2309,7 @@ export default function DiscoverScreen() {
               {...panResponder.panHandlers}
               style={[
                 styles.cardBase,
+                cardFrameStyle,
                 styles.cardInteractive,
                 {
                   transform: [
@@ -2658,7 +2702,7 @@ export default function DiscoverScreen() {
         </>
       ) : isOfflineDeckExhausted ? (
         <View style={styles.cardStack}>
-          <View style={[styles.cardBase, styles.emptyCard]}>
+          <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
             <View style={styles.emptyCardIconWrap}>
               <Feather name="wifi-off" size={24} color={Colors.info} />
             </View>
@@ -2701,7 +2745,7 @@ export default function DiscoverScreen() {
         </View>
       ) : isOnlineDeckExhausted ? (
         <View style={styles.cardStack}>
-          <View style={[styles.cardBase, styles.emptyCard]}>
+          <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
             <View style={styles.emptyCardIconWrap}>
               <Feather name="check-circle" size={24} color={Colors.info} />
             </View>
@@ -2750,7 +2794,7 @@ export default function DiscoverScreen() {
         </View>
       ) : isSeenDeckExhausted ? (
         <View style={styles.cardStack}>
-          <View style={[styles.cardBase, styles.emptyCard]}>
+          <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
             <View style={styles.emptyCardIconWrap}>
               <Feather name="refresh-ccw" size={24} color={Colors.info} />
             </View>
@@ -2802,7 +2846,7 @@ export default function DiscoverScreen() {
         </View>
       ) : (
         <View style={styles.cardStack}>
-          <View style={[styles.cardBase, styles.emptyCard]}>
+          <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
             <View style={styles.emptyCardIconWrap}>
               <Feather name="sliders" size={24} color={Colors.info} />
             </View>
@@ -2855,105 +2899,129 @@ export default function DiscoverScreen() {
         visible={isFilterVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setIsFilterVisible(false)}
+        onRequestClose={closeFilters}
       >
         <View style={styles.filterModalRoot}>
           <Pressable
             style={styles.filterBackdrop}
-            onPress={() => setIsFilterVisible(false)}
+            onPress={closeFilters}
           />
-          <View style={[styles.filterSheet, { top: topPad + 6 }]}>
-            <View style={styles.filterSheetHeader}>
-              <View>
-                <Text style={styles.filterSheetTitle}>{t("Filtros", "Filters")}</Text>
-                <Text style={styles.filterSheetSub}>
-                  {t(
-                    "Ajusta interés y rango de edad",
-                    "Adjust interest and age range"
-                  )}
-                </Text>
+          <KeyboardSheet
+            style={styles.filterKeyboardSheet}
+            contentStyle={styles.filterKeyboardContent}
+            keyboardVerticalOffset={topPad + 6}
+            bottomInset={0}
+          >
+            <View
+              style={[
+                styles.filterSheet,
+                {
+                  top: topPad + 6,
+                  width: Math.min(width - 32, 340),
+                  maxHeight: height - topPad - filterBottomObstruction - 24,
+                },
+              ]}
+            >
+              <View style={styles.filterSheetHeader}>
+                <View>
+                  <Text style={styles.filterSheetTitle}>{t("Filtros", "Filters")}</Text>
+                  <Text style={styles.filterSheetSub}>
+                    {t(
+                      "Ajusta interés y rango de edad",
+                      "Adjust interest and age range"
+                    )}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={closeFilters}
+                  style={({ pressed }) => [styles.filterCloseBtn, pressed && { opacity: 0.7 }]}
+                >
+                  <Feather name="x" size={18} color={Colors.textSecondary} />
+                </Pressable>
               </View>
-              <Pressable
-                onPress={() => setIsFilterVisible(false)}
-                style={({ pressed }) => [styles.filterCloseBtn, pressed && { opacity: 0.7 }]}
-              >
-                <Feather name="x" size={18} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
 
-            <View style={styles.filterField}>
-              <Text style={styles.filterLabel}>{t("Interés", "Interest")}</Text>
-              <View style={styles.filterCheckboxGroup}>
-                {baseGenderOptions.map((option) => (
-                  <FilterCheckboxRow
-                    key={option.value}
-                    label={option.label}
-                    selected={draftFilters.selectedGenders.includes(option.value)}
-                    onPress={() => toggleBaseGender(option.value)}
-                  />
-                ))}
-              </View>
-              <View style={styles.filterTherianGroup}>
-                <FilterCheckboxRow
-                  label={t("Incluir Therians", "Include Therians")}
-                  selected={draftFilters.therianMode === "include"}
-                  onPress={() => toggleTherianMode("include")}
-                  compact
+              <ScrollView
+                style={styles.filterSheetBody}
+                contentContainerStyle={styles.filterSheetBodyContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="none"
+              >
+                <View style={styles.filterField}>
+                  <Text style={styles.filterLabel}>{t("Interés", "Interest")}</Text>
+                  <View style={styles.filterCheckboxGroup}>
+                    {baseGenderOptions.map((option) => (
+                      <FilterCheckboxRow
+                        key={option.value}
+                        label={option.label}
+                        selected={draftFilters.selectedGenders.includes(option.value)}
+                        onPress={() => toggleBaseGender(option.value)}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.filterTherianGroup}>
+                    <FilterCheckboxRow
+                      label={t("Incluir Therians", "Include Therians")}
+                      selected={draftFilters.therianMode === "include"}
+                      onPress={() => toggleTherianMode("include")}
+                      compact
+                    />
+                    <FilterCheckboxRow
+                      label={t("Solo Therians", "Only Therians")}
+                      selected={draftFilters.therianMode === "only"}
+                      onPress={() => toggleTherianMode("only")}
+                      compact
+                    />
+                  </View>
+                </View>
+
+                <AgeRangeFields
+                  bounds={ageBounds}
+                  valueMin={draftFilters.ageMin}
+                  valueMax={draftFilters.ageMax}
+                  onChange={(ageMin, ageMax) =>
+                    setDraftFilters((current) => ({ ...current, ageMin, ageMax }))
+                  }
+                  t={t}
                 />
-                <FilterCheckboxRow
-                  label={t("Solo Therians", "Only Therians")}
-                  selected={draftFilters.therianMode === "only"}
-                  onPress={() => toggleTherianMode("only")}
-                  compact
-                />
-              </View>
-            </View>
+              </ScrollView>
 
-            <AgeRangeFields
-              bounds={ageBounds}
-              valueMin={draftFilters.ageMin}
-              valueMax={draftFilters.ageMax}
-              onChange={(ageMin, ageMax) =>
-                setDraftFilters((current) => ({ ...current, ageMin, ageMax }))
-              }
-              t={t}
-            />
-
-            <View style={styles.filterFooter}>
-              <Pressable
-                onPress={clearFilters}
-                style={({ pressed }) => [
-                  styles.filterFooterBtn,
-                  styles.filterFooterBtnSecondary,
-                  pressed && { opacity: 0.8 },
-                ]}
-              >
-                <Text style={styles.filterFooterBtnSecondaryText}>
-                  {t("Limpiar", "Clear")}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={applyFilters}
-                disabled={!canApplyFilters}
-                style={({ pressed }) => [
-                  styles.filterFooterBtn,
-                  canApplyFilters
-                    ? styles.filterFooterBtnPrimary
-                    : styles.filterFooterBtnPrimaryDisabled,
-                  pressed && canApplyFilters && { opacity: 0.84 },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.filterFooterBtnPrimaryText,
-                    !canApplyFilters && styles.filterFooterBtnPrimaryTextDisabled,
+              <View style={styles.filterFooter}>
+                <Pressable
+                  onPress={clearFilters}
+                  style={({ pressed }) => [
+                    styles.filterFooterBtn,
+                    styles.filterFooterBtnSecondary,
+                    pressed && { opacity: 0.8 },
                   ]}
                 >
-                  {t("Aplicar", "Apply")}
-                </Text>
-              </Pressable>
+                  <Text style={styles.filterFooterBtnSecondaryText}>
+                    {t("Limpiar", "Clear")}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={applyFilters}
+                  disabled={!canApplyFilters}
+                  style={({ pressed }) => [
+                    styles.filterFooterBtn,
+                    canApplyFilters
+                      ? styles.filterFooterBtnPrimary
+                      : styles.filterFooterBtnPrimaryDisabled,
+                    pressed && canApplyFilters && { opacity: 0.84 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterFooterBtnPrimaryText,
+                      !canApplyFilters && styles.filterFooterBtnPrimaryTextDisabled,
+                    ]}
+                  >
+                    {t("Aplicar", "Apply")}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
+          </KeyboardSheet>
         </View>
       </Modal>
 
@@ -3137,6 +3205,12 @@ const styles = StyleSheet.create({
   filterModalRoot: {
     flex: 1,
   },
+  filterKeyboardSheet: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  filterKeyboardContent: {
+    flex: 1,
+  },
   filterBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(5,10,8,0.48)",
@@ -3144,7 +3218,6 @@ const styles = StyleSheet.create({
   filterSheet: {
     position: "absolute",
     right: 16,
-    width: Math.min(width - 32, 340),
     borderRadius: 24,
     padding: 18,
     backgroundColor: Colors.backgroundCard,
@@ -3162,6 +3235,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 12,
+  },
+  filterSheetBody: {
+    flexGrow: 0,
+    flexShrink: 1,
+    minHeight: 0,
+  },
+  filterSheetBodyContent: {
+    gap: 16,
+    paddingBottom: 8,
   },
   filterSheetTitle: {
     fontFamily: "Inter_700Bold",
@@ -3396,8 +3478,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   cardBase: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
     borderRadius: 20,
     overflow: "hidden",
     position: "absolute",

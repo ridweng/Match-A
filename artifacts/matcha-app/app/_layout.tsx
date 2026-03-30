@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, Stack, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -29,9 +29,9 @@ function RootLayoutNav() {
   const {
     authStatus,
     authBusy,
+    postAuthRedirectRoute,
+    clearPostAuthRedirectRoute,
     biometricLockRequired,
-    needsProfileCompletion,
-    hasCompletedOnboarding,
     t,
     goalsUnlockPromptVisible,
     dismissGoalsUnlockPrompt,
@@ -40,55 +40,65 @@ function RootLayoutNav() {
   const isAuthCallbackActive = pathname === "/auth-callback";
   const isLocked = authStatus === "authenticated" && biometricLockRequired;
   const shouldShowTabs =
-    authStatus === "authenticated" &&
-    !biometricLockRequired &&
-    !needsProfileCompletion &&
-    hasCompletedOnboarding;
-  const shouldShowCompleteProfile =
-    authStatus === "authenticated" &&
-    !biometricLockRequired &&
-    needsProfileCompletion;
-  const shouldShowOnboarding =
-    authStatus === "authenticated" &&
-    !biometricLockRequired &&
-    !needsProfileCompletion &&
-    !hasCompletedOnboarding;
+    authStatus === "authenticated" && !biometricLockRequired;
 
   const [loadingVisible, setLoadingVisible] = useState(true);
   const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
     useState(true);
+  const lastRedirectRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (authStatus === "loading") return;
-    if (isAuthCallbackActive && authBusy) {
+    if (loadingVisible) {
+      setShouldRenderLoadingScreen(true);
+    }
+  }, [loadingVisible]);
+
+  useEffect(() => {
+    if (authStatus === "loading") {
+      setLoadingVisible(true);
       return;
     }
 
+    if (isAuthCallbackActive && authBusy) {
+      setLoadingVisible(true);
+      return;
+    }
+
+    let nextRoute: string | null = null;
+
     if (authStatus !== "authenticated") {
       if (pathname !== "/login" && !isAuthCallbackActive) {
-        router.replace("/login" as any);
+        nextRoute = "/login";
       }
     } else if (isLocked) {
       if (pathname !== "/biometric-lock") {
-        router.replace("/biometric-lock" as any);
+        nextRoute = "/biometric-lock";
       }
-    } else if (shouldShowCompleteProfile) {
-      if (pathname !== "/complete-profile") {
-        router.replace("/complete-profile" as any);
+    } else if (postAuthRedirectRoute) {
+      if (pathname === postAuthRedirectRoute) {
+        clearPostAuthRedirectRoute();
+      } else {
+        nextRoute = postAuthRedirectRoute;
       }
-    } else if (shouldShowOnboarding) {
-      if (pathname !== "/onboarding") {
-        router.replace("/onboarding" as any);
-      }
-    } else if (shouldShowTabs && (
-      pathname === "/login" ||
-      pathname === "/biometric-lock" ||
-      pathname === "/complete-profile" ||
-      pathname === "/onboarding" ||
-      pathname === "/auth-callback"
-    )) {
-      router.replace("/(tabs)/discover" as any);
+    } else if (
+      shouldShowTabs &&
+      (pathname === "/login" ||
+        pathname === "/biometric-lock" ||
+        pathname === "/auth-callback")
+    ) {
+      nextRoute = "/(tabs)/discover";
     }
+
+    if (nextRoute) {
+      setLoadingVisible(true);
+      if (lastRedirectRef.current !== nextRoute) {
+        lastRedirectRef.current = nextRoute;
+        router.replace(nextRoute as any);
+      }
+      return;
+    }
+
+    lastRedirectRef.current = null;
 
     const frame = requestAnimationFrame(() => {
       setLoadingVisible(false);
@@ -98,11 +108,11 @@ function RootLayoutNav() {
   }, [
     authStatus,
     authBusy,
+    clearPostAuthRedirectRoute,
     isAuthCallbackActive,
     isLocked,
     pathname,
-    shouldShowCompleteProfile,
-    shouldShowOnboarding,
+    postAuthRedirectRoute,
     shouldShowTabs,
   ]);
 
@@ -124,101 +134,103 @@ function RootLayoutNav() {
         />
       ) : null}
 
-      <Modal
-        transparent
-        animationType="fade"
-        visible={Boolean(shouldShowTabs && goalsUnlockPromptVisible)}
-        onRequestClose={() => {
-          void dismissGoalsUnlockPrompt();
-        }}
-      >
-        <View style={styles.unlockOverlay}>
-          <View style={styles.unlockCardShell}>
-            <LinearGradient
-              colors={[Colors.backgroundElevated, Colors.backgroundCard]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.unlockCard}
-            >
-              <View style={styles.unlockHeaderRow}>
-                <View style={styles.unlockBadge}>
-                  <Feather name="target" size={18} color={Colors.primaryLight} />
+      {shouldShowTabs && goalsUnlockPromptVisible ? (
+        <Modal
+          transparent
+          animationType="fade"
+          visible
+          onRequestClose={() => {
+            void dismissGoalsUnlockPrompt();
+          }}
+        >
+          <View style={styles.unlockOverlay}>
+            <View style={styles.unlockCardShell}>
+              <LinearGradient
+                colors={[Colors.backgroundElevated, Colors.backgroundCard]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.unlockCard}
+              >
+                <View style={styles.unlockHeaderRow}>
+                  <View style={styles.unlockBadge}>
+                    <Feather name="target" size={18} color={Colors.primaryLight} />
+                  </View>
+                  <View style={styles.unlockEyebrowPill}>
+                    <Text style={styles.unlockEyebrow}>
+                      {t("Metas desbloqueadas", "Goals unlocked")}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.unlockEyebrowPill}>
-                  <Text style={styles.unlockEyebrow}>
-                    {t("Metas desbloqueadas", "Goals unlocked")}
-                  </Text>
-                </View>
-              </View>
 
-              <Text style={styles.unlockTitle}>
-                {t(
-                  "Ya puedes entrar en Mis Metas",
-                  "You can now enter My Goals"
-                )}
-              </Text>
-              <Text style={styles.unlockCopy}>
-                {t(
-                  "Llegaste a 30 likes. Tus tendencias, objetivos y progreso personalizado ya están listos.",
-                  "You reached 30 likes. Your trends, targets, and personalized progress are now ready."
-                )}
-              </Text>
+                <Text style={styles.unlockTitle}>
+                  {t(
+                    "Ya puedes entrar en Mis Metas",
+                    "You can now enter My Goals"
+                  )}
+                </Text>
+                <Text style={styles.unlockCopy}>
+                  {t(
+                    "Llegaste a 30 likes. Tus tendencias, objetivos y progreso personalizado ya están listos.",
+                    "You reached 30 likes. Your trends, targets, and personalized progress are now ready."
+                  )}
+                </Text>
 
-              <View style={styles.unlockHighlight}>
-                <View style={styles.unlockHighlightMetric}>
-                  <Text style={styles.unlockHighlightValue}>30</Text>
-                  <Text style={styles.unlockHighlightLabel}>
-                    {t("likes alcanzados", "likes reached")}
-                  </Text>
+                <View style={styles.unlockHighlight}>
+                  <View style={styles.unlockHighlightMetric}>
+                    <Text style={styles.unlockHighlightValue}>30</Text>
+                    <Text style={styles.unlockHighlightLabel}>
+                      {t("likes alcanzados", "likes reached")}
+                    </Text>
+                  </View>
+                  <View style={styles.unlockHighlightDivider} />
+                  <View style={styles.unlockHighlightList}>
+                    <Text style={styles.unlockHighlightItem}>
+                      {t("Tendencias visibles", "Visible trends")}
+                    </Text>
+                    <Text style={styles.unlockHighlightItem}>
+                      {t("Objetivos activos", "Active goals")}
+                    </Text>
+                    <Text style={styles.unlockHighlightItem}>
+                      {t("Progreso desbloqueado", "Progress unlocked")}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.unlockHighlightDivider} />
-                <View style={styles.unlockHighlightList}>
-                  <Text style={styles.unlockHighlightItem}>
-                    {t("Tendencias visibles", "Visible trends")}
-                  </Text>
-                  <Text style={styles.unlockHighlightItem}>
-                    {t("Objetivos activos", "Active goals")}
-                  </Text>
-                  <Text style={styles.unlockHighlightItem}>
-                    {t("Progreso desbloqueado", "Progress unlocked")}
-                  </Text>
-                </View>
-              </View>
 
-              <View style={styles.unlockActions}>
-                <Pressable
-                  onPress={() => {
-                    void dismissGoalsUnlockPrompt().then(() => {
-                      router.push("/(tabs)/goals" as any);
-                    });
-                  }}
-                  style={({ pressed }) => [
-                    styles.unlockPrimary,
-                    pressed && styles.unlockPrimaryPressed,
-                  ]}
-                >
-                  <Text style={styles.unlockPrimaryText}>
-                    {t("Ir a Mis Metas", "Go to My Goals")}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    void dismissGoalsUnlockPrompt();
-                  }}
-                  style={({ pressed }) => [
-                    styles.unlockSecondary,
-                    pressed && styles.unlockSecondaryPressed,
-                  ]}
-                >
-                  <Text style={styles.unlockSecondaryText}>
-                    {t("Ahora no", "Not now")}
-                  </Text>
-                </Pressable>
-              </View>
-            </LinearGradient>
+                <View style={styles.unlockActions}>
+                  <Pressable
+                    onPress={() => {
+                      void dismissGoalsUnlockPrompt().then(() => {
+                        router.push("/(tabs)/goals" as any);
+                      });
+                    }}
+                    style={({ pressed }) => [
+                      styles.unlockPrimary,
+                      pressed && styles.unlockPrimaryPressed,
+                    ]}
+                  >
+                    <Text style={styles.unlockPrimaryText}>
+                      {t("Ir a Mis Metas", "Go to My Goals")}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      void dismissGoalsUnlockPrompt();
+                    }}
+                    style={({ pressed }) => [
+                      styles.unlockSecondary,
+                      pressed && styles.unlockSecondaryPressed,
+                    ]}
+                  >
+                    <Text style={styles.unlockSecondaryText}>
+                      {t("Ahora no", "Not now")}
+                    </Text>
+                  </Pressable>
+                </View>
+              </LinearGradient>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      ) : null}
     </>
   );
 }

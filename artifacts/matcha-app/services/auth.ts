@@ -62,6 +62,10 @@ export type VerificationStatusResponse = {
   status: "pending" | "verified";
 };
 
+export type VerificationResendResponse = {
+  message: string;
+};
+
 export type AuthCallbackPayload = {
   status?: string;
   provider?: AuthCallbackProvider | string;
@@ -461,7 +465,13 @@ type RequestOptions = {
   body?: unknown;
   accessToken?: string | null;
   headers?: Record<string, string>;
+  timeoutMs?: number;
 };
+
+type ProtectedRequestOptions = Pick<RequestOptions, "headers">;
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const MEDIA_UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
 
 class ApiError extends Error {
   code: string;
@@ -498,18 +508,21 @@ function normalizeRemoteMediaUrl(url: string) {
     return "";
   }
 
+  const apiBase = new URL(getBaseUrl());
+
   if (trimmed.startsWith("/")) {
-    return `${getBaseUrl()}${trimmed}`;
+    return `${apiBase.toString().replace(/\/$/, "")}${trimmed}`;
   }
 
   try {
     const parsed = new URL(trimmed);
+    const isPublicMediaPath = parsed.pathname.startsWith("/api/media/public/");
     if (
+      isPublicMediaPath ||
       parsed.hostname === "localhost" ||
       parsed.hostname === "127.0.0.1" ||
       parsed.hostname === "0.0.0.0"
     ) {
-      const apiBase = new URL(getBaseUrl());
       parsed.protocol = apiBase.protocol;
       parsed.host = apiBase.host;
       return parsed.toString();
@@ -523,9 +536,13 @@ function normalizeRemoteMediaUrl(url: string) {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const controller =
+    typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let response: Response;
   try {
-    response = await fetch(`${getBaseUrl()}${path}`, {
+    const fetchPromise = fetch(`${getBaseUrl()}${path}`, {
       method: options.method || "GET",
       headers: {
         ...(isFormData ? {} : { "Content-Type": "application/json" }),
@@ -539,17 +556,39 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
           ? (options.body as BodyInit)
           : JSON.stringify(options.body)
         : undefined,
+      ...(controller ? { signal: controller.signal } : {}),
     });
+
+    const timeoutPromise = new Promise<Response>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        controller?.abort();
+        reject(new Error(`Request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    response = await Promise.race([fetchPromise, timeoutPromise]);
   } catch (error: any) {
+    const isTimeoutError =
+      error?.name === "AbortError" ||
+      (typeof error?.message === "string" &&
+        error.message.includes("Request timed out"));
     debugWarn("[api] network request failed", {
       path,
       method: options.method || "GET",
-      message: error?.message || "Network request failed",
+      message: isTimeoutError
+        ? `Request timed out after ${timeoutMs}ms`
+        : error?.message || "Network request failed",
     });
     throw new ApiError(
       "NETWORK_REQUEST_FAILED",
-      error?.message || "Network request failed"
+      isTimeoutError
+        ? `Request timed out after ${timeoutMs}ms`
+        : error?.message || "Network request failed"
     );
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   if (response.status === 204) {
@@ -721,7 +760,11 @@ export async function getViewerProfile(accessToken: string) {
 
 export async function updateViewerProfile(
   accessToken: string,
-  payload: Partial<Omit<ViewerProfileResponse, "age" | "photos">>
+  payload: Partial<Omit<ViewerProfileResponse, "age" | "photos">> & {
+    latitude?: number;
+    longitude?: number;
+  },
+  options: ProtectedRequestOptions = {}
 ) {
   if (isDemoToken(accessToken)) {
     Object.assign(DEMO_VIEWER_PROFILE, payload);
@@ -741,6 +784,7 @@ export async function updateViewerProfile(
     method: "PATCH",
     accessToken,
     body: payload,
+    headers: options.headers,
   });
 }
 
@@ -806,7 +850,23 @@ export async function checkVerificationStatus(email: string) {
   });
 }
 
-export async function completeOnboarding(accessToken: string) {
+export async function resendVerificationEmail(email: string) {
+  if (email.trim().toLowerCase() === DEMO_EMAIL) {
+    return {
+      message:
+        "If the account exists and still needs verification, a new email will be sent.",
+    } satisfies VerificationResendResponse;
+  }
+  return request<VerificationResendResponse>("/api/auth/verify-email/resend", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export async function completeOnboarding(
+  accessToken: string,
+  options: ProtectedRequestOptions = {}
+) {
   if (isDemoToken(accessToken)) {
     DEMO_HAS_COMPLETED_ONBOARDING = true;
     return {
@@ -817,6 +877,7 @@ export async function completeOnboarding(accessToken: string) {
   return request<CompleteOnboardingResponse>("/api/auth/onboarding/complete", {
     method: "POST",
     accessToken,
+    headers: options.headers,
   });
 }
 
@@ -843,7 +904,8 @@ export async function listProfilePhotos(accessToken: string) {
 export async function uploadProfilePhoto(
   accessToken: string,
   sortOrder: number,
-  localUri: string
+  localUri: string,
+  options: ProtectedRequestOptions = {}
 ) {
   const form = new FormData();
   form.append("sortOrder", String(sortOrder));
@@ -857,6 +919,8 @@ export async function uploadProfilePhoto(
     method: "POST",
     accessToken,
     body: form,
+    headers: options.headers,
+    timeoutMs: MEDIA_UPLOAD_REQUEST_TIMEOUT_MS,
   });
   return {
     ...response,
@@ -1209,7 +1273,8 @@ export async function passDiscoveryProfile(
 
 export async function updateDiscoveryPreferences(
   accessToken: string,
-  filters: DiscoveryFilters
+  filters: DiscoveryFilters,
+  options: ProtectedRequestOptions = {}
 ) {
   if (isDemoToken(accessToken)) {
     DEMO_DISCOVERY_PREFERENCES.filters = filters;
@@ -1221,6 +1286,7 @@ export async function updateDiscoveryPreferences(
     method: "PATCH",
     accessToken,
     body: { filters },
+    headers: options.headers,
   });
 }
 
@@ -1381,6 +1447,8 @@ export function toReadableAuthError(code: string) {
       return "UNDERAGE";
     case "PROVIDER_UNAVAILABLE":
       return "PROVIDER_UNAVAILABLE";
+    case "SESSION_EXPIRED":
+      return "SESSION_EXPIRED";
     default:
       return code || "UNKNOWN_ERROR";
   }

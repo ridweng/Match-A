@@ -147,8 +147,9 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
                 style={styles.modalScrollView}
                 contentContainerStyle={[
                   styles.modalScrollContent,
-                  { paddingBottom: insets.bottom + 16 },
+                  { paddingBottom: insets.bottom + 24 },
                 ]}
+                keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator
               >
                 <View
@@ -244,6 +245,7 @@ const styles = StyleSheet.create({
   modalContainer: {
     width: "100%",
     height: "90%",
+    flexShrink: 1,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
@@ -268,6 +270,7 @@ const styles = StyleSheet.create({
   },
   modalScrollView: {
     flex: 1,
+    minHeight: 0,
   },
   modalScrollContent: {
     padding: 16,

@@ -2,7 +2,7 @@
   "expo": {
     "name": "MatchA",
     "slug": "matcha-app",
-    "version": "3.1.1",
+    "version": "3.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "matcha",
@@ -18,10 +18,14 @@
       "bundleIdentifier": "com.xylo.matcha",
       "infoPlist": {
         "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely.",
-        "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile."
+        "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0F1A14"

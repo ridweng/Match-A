@@ -4,12 +4,7 @@ import { Redirect } from "expo-router";
 import { useApp } from "@/context/AppContext";
 
 export default function Entry() {
-  const {
-    authStatus,
-    biometricLockRequired,
-    needsProfileCompletion,
-    hasCompletedOnboarding,
-  } = useApp();
+  const { authStatus, biometricLockRequired } = useApp();
 
   if (authStatus === "loading") {
     return null;
@@ -21,14 +16,6 @@ export default function Entry() {
 
   if (biometricLockRequired) {
     return <Redirect href="/biometric-lock" />;
-  }
-
-  if (needsProfileCompletion) {
-    return <Redirect href="/complete-profile" />;
-  }
-
-  if (!hasCompletedOnboarding) {
-    return <Redirect href="/onboarding" />;
   }
 
   return <Redirect href="/(tabs)/discover" />;

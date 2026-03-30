@@ -2,23 +2,24 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Alert,
   Animated,
   Image,
-  Modal,
   Platform,
   Pressable,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { OverlaySelectField } from "@/components/OverlaySelectField";
+import { SpokenLanguagesPickerField } from "@/components/SpokenLanguagesPickerField";
+import { useBottomObstruction } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
 import {
   BODY_TYPES,
@@ -36,9 +37,6 @@ import {
   getPhysicalActivityLabel,
   getPronounLabel,
   getRelationshipGoalLabel,
-  getSpokenLanguageFlag,
-  getSpokenLanguageLabel,
-  matchesSpokenLanguageSearch,
   normalizeBodyType,
   normalizeChildrenPreference,
   normalizeEducation,
@@ -51,7 +49,6 @@ import {
   PERSONALITY_TRAITS,
   PHYSICAL_ACTIVITY_OPTIONS,
   RELATIONSHIP_GOALS,
-  SPOKEN_LANGUAGES,
   SPANISH_PRONOUNS,
 } from "@/constants/profile-options";
 import { useApp } from "@/context/AppContext";
@@ -66,7 +63,6 @@ import {
 } from "@/utils/profilePhotos";
 
 const TOTAL_STEPS = 3;
-const MAX_SPOKEN_LANGUAGES = 7;
 
 function ProgressBar({
   currentStep,
@@ -103,74 +99,6 @@ function ProgressBar({
   );
 }
 
-function SelectField({
-  label,
-  value,
-  options,
-  onChange,
-  placeholder,
-  getOptionLabel,
-}: {
-  label: string;
-  value: string;
-  options: readonly string[];
-  onChange: (value: string) => void;
-  placeholder: string;
-  getOptionLabel: (value: string) => string;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <View style={[styles.field, open && styles.fieldOpen]}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <View style={[styles.selectWrap, open && styles.selectWrapOpen]}>
-        <Pressable
-          onPress={() => setOpen((current) => !current)}
-          style={styles.selectField}
-        >
-          <Text style={[styles.selectValue, !value && styles.placeholderText]}>
-            {value ? getOptionLabel(value) : placeholder}
-          </Text>
-          <Feather
-            name={open ? "chevron-up" : "chevron-down"}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {open ? (
-          <View style={styles.dropdown}>
-            {options.map((option) => (
-              <Pressable
-                key={option}
-                onPress={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-                style={[
-                  styles.dropdownOption,
-                  value === option && styles.dropdownOptionActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.dropdownOptionText,
-                    value === option && styles.dropdownOptionTextActive,
-                  ]}
-                >
-                  {getOptionLabel(option)}
-                </Text>
-                {value === option ? (
-                  <Feather name="check" size={14} color={Colors.primaryLight} />
-                ) : null}
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const {
@@ -182,16 +110,16 @@ export default function OnboardingScreen() {
     hasCompletedOnboarding,
     language,
     needsProfileCompletion,
+    onboardingResumeStep,
     saveOnboardingDraft,
-    setProfilePhoto,
+    setOnboardingResumeStep,
     t,
   } = useApp();
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const [step, setStep] = useState(1);
+  const hasLocalPhotoDraftChangesRef = useRef(false);
+  const [step, setStep] = useState(onboardingResumeStep);
   const [formError, setFormError] = useState<string | null>(null);
-  const [languagesModalOpen, setLanguagesModalOpen] = useState(false);
-  const [languageSearch, setLanguageSearch] = useState("");
   const [genderIdentity, setGenderIdentity] = useState(accountProfile.genderIdentity || "");
   const [pronouns, setPronouns] = useState(accountProfile.pronouns || "");
   const [photos, setPhotos] = useState<UserProfilePhoto[]>(accountProfile.photos || []);
@@ -206,7 +134,6 @@ export default function OnboardingScreen() {
       ? normalizeSpokenLanguages(accountProfile.languagesSpoken)
       : [getDefaultSpokenLanguageValue(language)]
   );
-  const [draftLanguages, setDraftLanguages] = useState<string[]>(languagesSpoken);
   const [education, setEducation] = useState(accountProfile.education || "");
   const [physicalActivity, setPhysicalActivity] = useState(
     accountProfile.physicalActivity || ""
@@ -215,8 +142,14 @@ export default function OnboardingScreen() {
   const [personality, setPersonality] = useState(accountProfile.personality || "");
 
   React.useEffect(() => {
-    setPhotos(accountProfile.photos || []);
+    if (!hasLocalPhotoDraftChangesRef.current) {
+      setPhotos(accountProfile.photos || []);
+    }
   }, [accountProfile.photos]);
+
+  React.useEffect(() => {
+    setStep(onboardingResumeStep);
+  }, [onboardingResumeStep]);
 
   React.useEffect(() => {
     if (authStatus !== "authenticated") {
@@ -233,35 +166,16 @@ export default function OnboardingScreen() {
   }, [authStatus, hasCompletedOnboarding, needsProfileCompletion]);
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
-  const bottomPad = insets.bottom + 24;
+  const { restingBottomInset } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: 16,
+  });
   const getPhotoForSlot = React.useCallback(
     (index: number) => getProfilePhotoBySortOrder(photos, index),
     [photos]
   );
   const mainPhoto = getProfilePhotoDisplayUri(getPhotoForSlot(0));
   const pronounOptions = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
-  const selectedLanguageOptions = useMemo(
-    () =>
-      languagesSpoken
-        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
-        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
-    [languagesSpoken]
-  );
-  const selectedDraftLanguageOptions = useMemo(
-    () =>
-      draftLanguages
-        .map((value) => SPOKEN_LANGUAGES.find((item) => item.value === value))
-        .filter((item): item is (typeof SPOKEN_LANGUAGES)[number] => Boolean(item)),
-    [draftLanguages]
-  );
-  const filteredLanguages = useMemo(() => {
-    return SPOKEN_LANGUAGES.filter((item) => {
-      if (draftLanguages.includes(item.value)) {
-        return false;
-      }
-      return matchesSpokenLanguageSearch(item.value, languageSearch);
-    });
-  }, [draftLanguages, languageSearch]);
 
   const isFormComplete =
     Boolean(genderIdentity) &&
@@ -289,36 +203,29 @@ export default function OnboardingScreen() {
       }),
     ]).start();
     setStep(nextStep);
+    void setOnboardingResumeStep(nextStep);
   };
 
   const savePickedPhoto = async (index: number, sourceUri: string) => {
     const targetUri = await saveProfilePhotoLocally(index, sourceUri);
     const previous = getPhotoForSlot(index);
-    const syncedPhoto = await setProfilePhoto(index, targetUri);
-    if (syncedPhoto?.status === "error") {
-      Alert.alert(
-        t("No se pudo subir la foto", "Couldn't upload photo"),
-        t(
-          "La foto quedó como pendiente con error. Puedes volver a intentarlo o eliminarla.",
-          "The photo stayed in an error state. You can retry or remove it."
-        )
-      );
-    }
-    if (
-      syncedPhoto?.status !== "error" &&
-      previous?.localUri &&
-      previous.localUri !== targetUri &&
-      isStoredProfilePhoto(previous.localUri)
-    ) {
+    const nextPhoto: UserProfilePhoto = {
+      localUri: targetUri,
+      remoteUrl: "",
+      mediaAssetId: null,
+      profileImageId: null,
+      sortOrder: index,
+      status: "ready",
+    };
+    hasLocalPhotoDraftChangesRef.current = true;
+    if (previous?.localUri && previous.localUri !== targetUri && isStoredProfilePhoto(previous.localUri)) {
       deleteStoredProfilePhoto(previous.localUri).catch(() => {});
     }
     setPhotos((current) => {
       const next = normalizeStoredProfilePhotos(current).filter(
         (photo) => photo.sortOrder !== index
       );
-      if (syncedPhoto) {
-        next.push(syncedPhoto);
-      }
+      next.push(nextPhoto);
       return next.sort((a, b) => a.sortOrder - b.sortOrder);
     });
   };
@@ -338,7 +245,7 @@ export default function OnboardingScreen() {
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
+      allowsEditing: Platform.OS === "ios",
       quality: 0.85,
       aspect: [4, 5],
     });
@@ -362,7 +269,7 @@ export default function OnboardingScreen() {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
+      allowsEditing: Platform.OS === "ios",
       quality: 0.85,
       aspect: [4, 5],
     });
@@ -402,34 +309,6 @@ export default function OnboardingScreen() {
     );
   };
 
-  const openLanguagesModal = () => {
-    setDraftLanguages(languagesSpoken);
-    setLanguageSearch("");
-    setLanguagesModalOpen(true);
-  };
-
-  const closeLanguagesModal = () => {
-    setLanguagesModalOpen(false);
-    setLanguageSearch("");
-  };
-
-  const acceptLanguages = () => {
-    setLanguagesSpoken(draftLanguages);
-    closeLanguagesModal();
-  };
-
-  const toggleLanguage = (value: string) => {
-    setDraftLanguages((current) => {
-      if (current.includes(value)) {
-        return current.filter((item) => item !== value);
-      }
-      if (current.length >= MAX_SPOKEN_LANGUAGES) {
-        return current;
-      }
-      return [...current, value];
-    });
-  };
-
   const handleContinueFromIntro = () => {
     Haptics.selectionAsync().catch(() => {});
     animateToStep(2);
@@ -447,6 +326,7 @@ export default function OnboardingScreen() {
     }
 
     setFormError(null);
+    const requestId = `onboarding_draft_${Date.now()}`;
     const ok = await saveOnboardingDraft({
       genderIdentity,
       pronouns,
@@ -458,6 +338,9 @@ export default function OnboardingScreen() {
       physicalActivity,
       bodyType,
       photos,
+    }, {
+      requestId,
+      step,
     });
     if (!ok) {
       return;
@@ -467,8 +350,49 @@ export default function OnboardingScreen() {
   };
 
   const handleFinish = async () => {
+    if (!isFormComplete) {
+      setFormError(
+        t(
+          "Completa todos los campos antes de continuar.",
+          "Complete all fields before continuing."
+        )
+      );
+      animateToStep(2);
+      return;
+    }
+
     setFormError(null);
-    const ok = await finishOnboarding();
+    const draftSaved = await saveOnboardingDraft({
+      genderIdentity,
+      pronouns,
+      personality,
+      relationshipGoals,
+      childrenPreference,
+      languagesSpoken,
+      education,
+      physicalActivity,
+      bodyType,
+      photos,
+    }, {
+      requestId: `onboarding_finish_draft_${Date.now()}`,
+      step,
+    });
+    if (!draftSaved) {
+      return;
+    }
+
+    const ok = await finishOnboarding({
+      genderIdentity,
+      pronouns,
+      personality,
+      relationshipGoals,
+      childrenPreference,
+      languagesSpoken,
+      education,
+      physicalActivity,
+      bodyType,
+      photos,
+    });
     if (!ok) {
       return;
     }
@@ -525,7 +449,7 @@ export default function OnboardingScreen() {
           )}
         </Text>
 
-        <SelectField
+        <OverlaySelectField
           label={t("Cómo te identificas", "How do you identify")}
           value={genderIdentity}
           options={GENDER_IDENTITIES}
@@ -534,7 +458,7 @@ export default function OnboardingScreen() {
           getOptionLabel={(value) => getGenderIdentityLabel(value, t)}
         />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Pronombres", "Pronouns")}
           value={pronouns}
           options={pronounOptions}
@@ -614,7 +538,7 @@ export default function OnboardingScreen() {
           </View>
         </View>
 
-        <SelectField
+        <OverlaySelectField
           label={t("Qué estás buscando", "What are you looking for")}
           value={relationshipGoals}
           options={RELATIONSHIP_GOALS}
@@ -623,7 +547,7 @@ export default function OnboardingScreen() {
           getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
         />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Quieres tener hijxs", "Do you want kids")}
           value={childrenPreference}
           options={CHILDREN_PREFERENCES}
@@ -644,45 +568,16 @@ export default function OnboardingScreen() {
           )}
         </Text>
 
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>{t("Idiomas", "Languages")}</Text>
-          <Pressable
-            onPress={openLanguagesModal}
-            style={styles.languagePickerButton}
-          >
-            <Text
-              style={[
-                styles.selectValue,
-                !selectedLanguageOptions.length && styles.placeholderText,
-              ]}
-              numberOfLines={1}
-            >
-              {selectedLanguageOptions.length
-                ? t(
-                    `${selectedLanguageOptions.length} idiomas seleccionados`,
-                    `${selectedLanguageOptions.length} languages selected`
-                  )
-                : t("Selecciona idiomas", "Select languages")}
-            </Text>
-            <Feather name="chevron-right" size={16} color={Colors.textSecondary} />
-          </Pressable>
-          {selectedLanguageOptions.length ? (
-            <View style={styles.languageChipRow}>
-              {selectedLanguageOptions.map((item) => (
-                <View key={item.value} style={styles.languageChip}>
-                  <Text style={styles.languageChipFlag}>
-                    {item.flag || getSpokenLanguageFlag(item.value)}
-                  </Text>
-                  <Text style={styles.languageChipText}>
-                    {getSpokenLanguageLabel(item.value, language)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
+        <SpokenLanguagesPickerField
+          style={styles.field}
+          label={t("Idiomas que hablo", "Languages I speak")}
+          values={languagesSpoken}
+          onChange={setLanguagesSpoken}
+          language={language}
+          t={t}
+        />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Educación", "Education")}
           value={education}
           options={EDUCATION_LEVELS}
@@ -691,7 +586,7 @@ export default function OnboardingScreen() {
           getOptionLabel={(value) => getEducationLabel(value, t)}
         />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Con qué frecuencia entrenas", "How often do you train")}
           value={physicalActivity}
           options={PHYSICAL_ACTIVITY_OPTIONS}
@@ -700,7 +595,7 @@ export default function OnboardingScreen() {
           getOptionLabel={(value) => getPhysicalActivityLabel(value, t)}
         />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Tipo de cuerpo", "Body type")}
           value={bodyType}
           options={BODY_TYPES}
@@ -709,7 +604,7 @@ export default function OnboardingScreen() {
           getOptionLabel={(value) => getBodyTypeLabel(value, t)}
         />
 
-        <SelectField
+        <OverlaySelectField
           label={t("Personalidad", "Personality")}
           value={personality}
           options={PERSONALITY_TRAITS}
@@ -791,13 +686,16 @@ export default function OnboardingScreen() {
     <View style={[styles.container, { paddingTop: topPad }]}>
       <StatusBar barStyle="light-content" />
       <KeyboardAwareScrollViewCompat
-        contentContainerStyle={{ paddingBottom: bottomPad }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        bottomOffset={bottomPad}
-        extraKeyboardSpace={28}
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-      >
+        style={styles.modalScroll}
+        contentContainerStyle={[
+          styles.modalScrollContent,
+            { paddingBottom: restingBottomInset + 8 },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          bottomOffset={restingBottomInset}
+          extraKeyboardSpace={18}
+        >
         <ProgressBar currentStep={step} t={t} />
         <Animated.View
           style={[
@@ -818,157 +716,6 @@ export default function OnboardingScreen() {
           {step === 1 ? renderIntro() : step === 2 ? renderForm() : renderCompletion()}
         </Animated.View>
       </KeyboardAwareScrollViewCompat>
-
-      <Modal
-        visible={languagesModalOpen}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        transparent
-        onRequestClose={closeLanguagesModal}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalKeyboardAvoider}>
-            <View
-              style={[
-                styles.modalContainer,
-                {
-                  marginTop: insets.top + 16,
-                  marginBottom: insets.bottom + 16,
-                },
-              ]}
-            >
-            <View style={styles.modalHeader}>
-              <Pressable
-                onPress={closeLanguagesModal}
-                style={({ pressed }) => [
-                  styles.modalHeaderBtn,
-                  pressed && { opacity: 0.75 },
-                ]}
-              >
-                <Feather name="chevron-left" size={20} color={Colors.text} />
-              </Pressable>
-              <Pressable
-                onPress={acceptLanguages}
-                style={({ pressed }) => [
-                  styles.modalAcceptBtn,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text style={styles.modalAcceptText}>{t("Aceptar", "Done")}</Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.modalTitle}>
-              {t("Idiomas que hablo", "Languages I speak")}
-            </Text>
-            <Text style={styles.modalDescription}>
-              {t(
-                "Selecciona hasta 7 idiomas que hables para añadirlos a tu perfil.",
-                "Select up to 7 languages you speak to add them to your profile."
-              )}
-            </Text>
-            <Text style={styles.modalCounter}>
-              {draftLanguages.length}/{MAX_SPOKEN_LANGUAGES}{" "}
-              {t("seleccionados", "selected")}
-            </Text>
-
-            <View style={styles.searchField}>
-              <Feather name="search" size={15} color={Colors.textMuted} />
-            <TextInput
-              value={languageSearch}
-              onChangeText={setLanguageSearch}
-              placeholder={t("Buscar idioma", "Search language")}
-              placeholderTextColor={Colors.textMuted}
-              style={styles.searchInput}
-              selectionColor={Colors.primaryLight}
-            />
-            </View>
-
-            {selectedDraftLanguageOptions.length ? (
-              <View style={styles.selectedLanguagesBlock}>
-                <Text style={styles.selectedLanguagesLabel}>
-                  {t("Seleccionados", "Selected")}
-                </Text>
-                <View style={styles.selectedLanguagesRow}>
-                  {selectedDraftLanguageOptions.map((item) => (
-                    <Pressable
-                      key={item.value}
-                      onPress={() => toggleLanguage(item.value)}
-                      style={({ pressed }) => [
-                        styles.selectedLanguageChip,
-                        pressed && { opacity: 0.82 },
-                      ]}
-                    >
-                      <Text style={styles.selectedLanguageFlag}>
-                        {item.flag || getSpokenLanguageFlag(item.value)}
-                      </Text>
-                      <Text style={styles.selectedLanguageText}>
-                        {language === "es" ? item.es : item.en}
-                      </Text>
-                      <Feather name="x" size={12} color={Colors.primaryLight} />
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
-            <KeyboardAwareScrollViewCompat
-              style={styles.modalScroll}
-              contentContainerStyle={styles.modalScrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              bottomOffset={insets.bottom + 16}
-              extraKeyboardSpace={18}
-            >
-              <View style={styles.modalOptionsWrap}>
-                {filteredLanguages.map((item) => {
-                  const selected = draftLanguages.includes(item.value);
-                  return (
-                    <Pressable
-                      key={item.value}
-                      onPress={() => toggleLanguage(item.value)}
-                      style={[
-                        styles.modalOption,
-                        selected && styles.modalOptionSelected,
-                      ]}
-                    >
-                      <Text style={styles.modalOptionFlag}>
-                        {item.flag || getSpokenLanguageFlag(item.value)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.modalOptionText,
-                          selected && styles.modalOptionTextSelected,
-                        ]}
-                      >
-                        {getSpokenLanguageLabel(item.value, language)}
-                      </Text>
-                      {selected ? (
-                        <Feather name="check" size={13} color={Colors.primaryLight} />
-                      ) : null}
-                    </Pressable>
-                  );
-                })}
-                {!filteredLanguages.length ? (
-                  <View style={styles.languageEmptyState}>
-                    <Feather name="search" size={18} color={Colors.textMuted} />
-                    <Text style={styles.languageEmptyTitle}>
-                      {t("No encontramos idiomas", "No languages found")}
-                    </Text>
-                    <Text style={styles.languageEmptyText}>
-                      {t(
-                        "Prueba otra búsqueda o elimina uno de los idiomas seleccionados.",
-                        "Try another search or remove one of the selected languages."
-                      )}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            </KeyboardAwareScrollViewCompat>
-          </View>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -980,7 +727,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   animatedWrap: {
-    flex: 1,
+    flexGrow: 1,
   },
   progressBlock: {
     paddingTop: 8,
@@ -1058,6 +805,7 @@ const styles = StyleSheet.create({
   formWrap: {
     marginTop: 22,
     gap: 16,
+    paddingBottom: 12,
   },
   sectionCard: {
     padding: 18,
@@ -1307,11 +1055,15 @@ const styles = StyleSheet.create({
   },
   modalKeyboardAvoider: {
     flex: 1,
+  },
+  modalKeyboardContent: {
+    flexGrow: 1,
     justifyContent: "center",
   },
   modalContainer: {
-    flex: 1,
+    width: "100%",
     maxHeight: "88%",
+    flexShrink: 1,
     backgroundColor: Colors.backgroundCard,
     borderRadius: 28,
     borderWidth: 1,
@@ -1424,9 +1176,11 @@ const styles = StyleSheet.create({
   },
   modalScroll: {
     flex: 1,
+    minHeight: 0,
     marginTop: 16,
   },
   modalScrollContent: {
+    flexGrow: 0,
     paddingBottom: 24,
   },
   modalOptionsWrap: {

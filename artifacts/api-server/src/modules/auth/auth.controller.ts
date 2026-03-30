@@ -92,6 +92,17 @@ export class AuthController {
     return req.ip || "unknown";
   }
 
+  private getRequestId(req: Request) {
+    const header = req.headers["x-matcha-request-id"];
+    if (typeof header === "string" && header.trim()) {
+      return header.trim();
+    }
+    if (Array.isArray(header) && header[0]?.trim()) {
+      return header[0].trim();
+    }
+    return undefined;
+  }
+
   private sendZodError(
     res: Response,
     errorCode: string,
@@ -139,10 +150,12 @@ export class AuthController {
   }
 
   @Post("sign-in")
-  async signIn(@Body() body: unknown, @Res() res: Response) {
+  async signIn(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signInSchema.parse(body);
-      const result = await this.authService.signIn(input);
+      const result = await this.authService.signIn(input, {
+        requestId: this.getRequestId(req),
+      });
       if ("error" in result) {
         if (result.error === "EMAIL_VERIFICATION_REQUIRED") {
           return res.status(HttpStatus.FORBIDDEN).json({
@@ -165,10 +178,12 @@ export class AuthController {
   }
 
   @Post("refresh")
-  async refresh(@Body() body: unknown, @Res() res: Response) {
+  async refresh(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const { refreshToken } = refreshSchema.parse(body);
-      const result = await this.authService.refresh(refreshToken);
+      const result = await this.authService.refresh(refreshToken, {
+        requestId: this.getRequestId(req),
+      });
       if ("error" in result) {
         return res.status(HttpStatus.UNAUTHORIZED).json({ error: result.error });
       }
@@ -347,7 +362,9 @@ export class AuthController {
   async completeOnboarding(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(
-        await this.authService.completeOnboarding(this.getAuthorizationHeader(req))
+        await this.authService.completeOnboarding(this.getAuthorizationHeader(req), {
+          requestId: this.getRequestId(req),
+        })
       );
     } catch (error) {
       return this.sendAuthError(res, error);

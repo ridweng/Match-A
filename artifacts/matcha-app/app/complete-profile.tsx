@@ -14,12 +14,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { useBottomObstruction } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
 import { useApp } from "@/context/AppContext";
 import { isAdultBirthDate } from "@/utils/dateOfBirth";
 
 export default function CompleteProfileScreen() {
   const insets = useSafeAreaInsets();
+  const { restingBottomInset } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: 24,
+  });
   const {
     authStatus,
     authBusy,
@@ -81,17 +86,24 @@ export default function CompleteProfileScreen() {
       <KeyboardAwareScrollViewCompat
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
           {
             paddingTop: insets.top + (Platform.OS === "web" ? 67 : 18),
-            paddingBottom: insets.bottom + 32,
+            paddingBottom: restingBottomInset,
           },
         ]}
-        bottomOffset={insets.bottom + 24}
+        bottomOffset={restingBottomInset}
         extraKeyboardSpace={24}
-        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardDismissMode="none"
       >
+        <View
+          style={[
+            styles.content,
+            Platform.OS !== "android" && styles.contentCentered,
+          ]}
+        >
         <View style={styles.header}>
           <View style={styles.badge}>
             <Feather name="user-check" size={18} color={Colors.primaryLight} />
@@ -149,6 +161,7 @@ export default function CompleteProfileScreen() {
             )}
           </Pressable>
         </View>
+        </View>
       </KeyboardAwareScrollViewCompat>
     </View>
   );
@@ -159,9 +172,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 22,
-    minHeight: "100%",
+  },
+  content: {
+    width: "100%",
+    maxWidth: 520,
+    alignSelf: "center",
+    paddingTop: 12,
+  },
+  contentCentered: {
+    flex: 1,
+    justifyContent: "center",
   },
   header: {
     paddingTop: 12,

@@ -54,7 +54,7 @@ export default function BiometricLockScreen() {
   const runBiometricUnlock = async () => {
     const result = await unlockWithBiometrics();
     if (result.ok) {
-      router.replace("/(tabs)/discover");
+      setMessage("");
       return;
     }
     setMessage(getBiometricMessage(result.code, t));

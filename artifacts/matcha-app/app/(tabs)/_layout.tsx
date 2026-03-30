@@ -14,6 +14,8 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+  const nativeBottomInset = Math.max(insets.bottom, 10);
+  const tabBarHeight = isWeb ? 84 : 64 + nativeBottomInset;
 
   return (
     <Tabs
@@ -27,7 +29,12 @@ export default function TabLayout() {
           borderTopWidth: 1,
           borderTopColor: Colors.tabBarBorder,
           elevation: 0,
-          ...(isWeb ? { height: 84 } : {}),
+          height: tabBarHeight,
+          paddingTop: isWeb ? 8 : 8,
+          paddingBottom: isWeb ? 12 : nativeBottomInset,
+        },
+        sceneStyle: {
+          backgroundColor: Colors.background,
         },
         tabBarBackground: () =>
           isIOS ? (
@@ -47,7 +54,7 @@ export default function TabLayout() {
         tabBarLabelStyle: {
           fontFamily: "Inter_500Medium",
           fontSize: 10,
-          marginBottom: 2,
+          marginBottom: isWeb ? 2 : 0,
         },
       }}
     >

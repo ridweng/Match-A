@@ -6,10 +6,9 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
@@ -19,6 +18,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DateOfBirthField } from "@/components/DateOfBirthField";
+import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
+import { useBottomObstruction } from "@/components/useBottomObstruction";
 import colors from "@/constants/colors";
 import {
   ENGLISH_PRONOUNS,
@@ -69,6 +70,7 @@ function Field({
         onChangeText={onChangeText}
         editable={Boolean(onChangeText)}
         multiline={multiline}
+        scrollEnabled={Boolean(multiline)}
         numberOfLines={multiline ? 5 : 1}
         placeholder={placeholder}
         placeholderTextColor={colors.textMuted}
@@ -414,6 +416,10 @@ function Section({
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const { restingBottomInset } = useBottomObstruction({
+    safeAreaBottomInset: insets.bottom,
+    restingBottomSpacing: 20,
+  });
   const {
     accountProfile,
     authBusy,
@@ -464,35 +470,15 @@ export default function SettingsScreen() {
   const [biometricPending, setBiometricPending] = useState(false);
   const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
   const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
-  const [pendingNavigationAfterSave, setPendingNavigationAfterSave] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<"idle" | "saved" | "error">("idle");
 
   useEffect(() => {
     setLocal(settingsSeed);
     setLocalHeightUnit(heightUnit);
     setLocalLanguage(language);
+    setSaveFeedback("idle");
   }, [heightUnit, language, settingsSeed]);
-
-  useEffect(() => {
-    if (!pendingNavigationAfterSave) {
-      return;
-    }
-
-    if (settingsSaveState === "error") {
-      setPendingNavigationAfterSave(false);
-      return;
-    }
-
-    if (settingsSaveState !== "idle") {
-      return;
-    }
-
-    setPendingNavigationAfterSave(false);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace("/(tabs)/profile");
-  }, [pendingNavigationAfterSave, settingsSaveState]);
-
   const topPadding = insets.top + (Platform.OS === "web" ? 67 : 0);
-  const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 0);
 
   const hasChanges = useMemo(() => {
     return (
@@ -503,15 +489,33 @@ export default function SettingsScreen() {
   }, [heightUnit, language, local, localHeightUnit, localLanguage, settingsSeed]);
 
   const update = (key: keyof SettingsDraft, value: string) => {
+    if (saveFeedback !== "idle") {
+      setSaveFeedback("idle");
+    }
     setLocal((prev) => ({
       ...prev,
       [key]: value,
     }));
   };
 
+  const updateLocalLanguage = (value: "es" | "en") => {
+    if (saveFeedback !== "idle") {
+      setSaveFeedback("idle");
+    }
+    setLocalLanguage(value);
+  };
+
+  const updateLocalHeightUnit = (value: HeightUnit) => {
+    if (saveFeedback !== "idle") {
+      setSaveFeedback("idle");
+    }
+    setLocalHeightUnit(value);
+  };
+
   const handleSave = async () => {
     if (!hasChanges) return;
     Keyboard.dismiss();
+    setSaveFeedback("idle");
     const saved = await saveSettings({
       name: local.name.trim(),
       dateOfBirth: local.dateOfBirth,
@@ -525,8 +529,13 @@ export default function SettingsScreen() {
       language: localLanguage,
       heightUnit: localHeightUnit,
     });
-    if (!saved) return;
-    setPendingNavigationAfterSave(true);
+    if (!saved) {
+      setSaveFeedback("error");
+      return;
+    }
+    setSaveFeedback("saved");
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.replace("/(tabs)/profile");
   };
 
   const isSavePending =
@@ -622,8 +631,16 @@ export default function SettingsScreen() {
   };
 
   return (
-    <View style={[s.container, { paddingTop: topPadding }]}>
-      <View style={s.header}>
+    <View style={s.container}>
+      <StatusBar barStyle="light-content" />
+      <View
+        style={[
+          s.header,
+          {
+            paddingTop: topPadding + 10,
+          },
+        ]}
+      >
         <Pressable
           onPress={() => router.back()}
           style={({ pressed }) => [s.backBtn, pressed && { opacity: 0.7 }]}
@@ -664,27 +681,41 @@ export default function SettingsScreen() {
           <Text
             style={[
               s.saveIconBtnText,
+              saveFeedback === "saved" && s.saveIconBtnTextSaved,
               (!hasChanges || authBusy || isSavePending) && s.saveIconBtnTextDisabled,
             ]}
           >
-            {t("Guardar", "Save")}
+            {saveFeedback === "saved"
+              ? t("Guardado", "Saved")
+              : isSavePending
+                ? t("Guardando", "Saving")
+                : t("Guardar", "Save")}
           </Text>
         </Pressable>
       </View>
 
       {authError ? <Text style={s.inlineError}>{authError}</Text> : null}
+      {!authError && saveFeedback === "saved" ? (
+        <Text style={s.inlineSuccess}>
+          {t("Cambios guardados", "Changes saved")}
+        </Text>
+      ) : null}
 
-      <KeyboardAvoidingView
-        style={s.keyboardShell}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? topPadding : 0}
+      <KeyboardAwareScrollViewCompat
+        style={s.scrollView}
+        bottomOffset={restingBottomInset}
+        extraKeyboardSpace={32}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          s.scrollContent,
+          {
+            paddingTop: 8,
+            paddingBottom: restingBottomInset + 80,
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
       >
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[s.scroll, { paddingBottom: bottomPadding + 100 }]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-        >
           <Section title={t("Información básica", "Basic info")}>
           <Field
             label={t("Nombre completo", "Full name")}
@@ -758,12 +789,12 @@ export default function SettingsScreen() {
           <LanguageField
             label={t("Idioma de la app", "App language")}
             value={localLanguage}
-            onChange={setLocalLanguage}
+            onChange={updateLocalLanguage}
           />
           <HeightUnitField
             label={t("Unidades de altura", "Height units")}
             value={localHeightUnit}
-            onChange={setLocalHeightUnit}
+            onChange={updateLocalHeightUnit}
             t={t}
           />
         </Section>
@@ -788,8 +819,7 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollViewCompat>
     </View>
   );
 }
@@ -852,6 +882,9 @@ const s = StyleSheet.create({
     fontSize: 13,
     color: colors.textInverted,
   },
+  saveIconBtnTextSaved: {
+    color: colors.textInverted,
+  },
   saveIconBtnTextDisabled: {
     color: colors.textMuted,
   },
@@ -871,9 +904,12 @@ const s = StyleSheet.create({
     textAlign: "center",
     pointerEvents: "none",
   },
-  scroll: {
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 20,
-    paddingTop: 8,
   },
   keyboardShell: {
     flex: 1,
@@ -883,6 +919,13 @@ const s = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     fontSize: 13,
     color: colors.dislikeRed,
+    lineHeight: 18,
+  },
+  inlineSuccess: {
+    paddingHorizontal: 20,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    color: colors.primaryLight,
     lineHeight: 18,
   },
   section: {
@@ -1064,6 +1107,7 @@ const s = StyleSheet.create({
     marginTop: 24,
     marginBottom: 12,
     gap: 10,
+    paddingBottom: 12,
   },
   dangerTitle: {
     fontFamily: "Inter_600SemiBold",

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { AuthService } from "../auth/auth.service";
 import { DiscoveryService } from "../discovery/discovery.service";
@@ -38,6 +38,8 @@ type FreshnessRow = {
 
 @Injectable()
 export class ViewerService {
+  private readonly logger = new Logger(ViewerService.name);
+
   constructor(
     @Inject(AuthService) private readonly authService: AuthService,
     @Inject(GoalsService) private readonly goalsService: GoalsService,
@@ -312,6 +314,12 @@ export class ViewerService {
       hairColor?: string;
       ethnicity?: string;
       interests?: string[];
+      latitude?: number;
+      longitude?: number;
+    },
+    options?: {
+      requestId?: string;
+      locationSource?: string;
     }
   ) {
     if (typeof updates.dateOfBirth === "string" && updates.dateOfBirth) {
@@ -327,6 +335,21 @@ export class ViewerService {
 
     try {
       await client.query("BEGIN");
+
+      const currentProfileResult = await client.query<{
+        location: string;
+        country: string;
+      }>(
+        `SELECT location, ${hasProfileCountryColumn ? "country" : "'' AS country"}
+         FROM core.profiles
+         WHERE id = $1
+         LIMIT 1`,
+        [profileId]
+      );
+      const currentProfileRow = currentProfileResult.rows[0] || {
+        location: "",
+        country: "",
+      };
 
       const assignments: string[] = [];
       const values: unknown[] = [];
@@ -422,6 +445,52 @@ export class ViewerService {
         }
       }
 
+      const nextLocation =
+        typeof updates.location === "string" ? updates.location : currentProfileRow.location || "";
+      const nextCountry =
+        typeof updates.country === "string" ? updates.country : currentProfileRow.country || "";
+      const locationChanged =
+        nextLocation !== (currentProfileRow.location || "") ||
+        nextCountry !== (currentProfileRow.country || "");
+
+      if (locationChanged && (nextLocation || nextCountry)) {
+        await client.query(
+          `INSERT INTO core.profile_location_history
+            (
+              user_id,
+              profile_id,
+              location,
+              country,
+              latitude,
+              longitude,
+              source,
+              created_at
+            )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+          [
+            userId,
+            profileId,
+            nextLocation,
+            nextCountry,
+            typeof updates.latitude === "number" ? Math.round(updates.latitude * 1_000_000) : null,
+            typeof updates.longitude === "number" ? Math.round(updates.longitude * 1_000_000) : null,
+            options?.locationSource || "profile_update",
+          ]
+        );
+        this.logger.log(
+          `[profile-location-history] ${JSON.stringify({
+            requestId: options?.requestId || null,
+            userId,
+            profileId,
+            previousLocation: currentProfileRow.location || "",
+            nextLocation,
+            previousCountry: currentProfileRow.country || "",
+            nextCountry,
+            source: options?.locationSource || "profile_update",
+          })}`
+        );
+      }
+
       await client.query(
         `UPDATE core.user_sync_state
          SET last_profile_sync_at = NOW(),
@@ -435,6 +504,14 @@ export class ViewerService {
       });
 
       await client.query("COMMIT");
+      this.logger.log(
+        `[viewer-profile-update-committed] ${JSON.stringify({
+          requestId: options?.requestId || null,
+          userId,
+          profileId,
+          fields: Object.keys(updates || {}),
+        })}`
+      );
       return this.getProfile(userId);
     } catch (error) {
       await client.query("ROLLBACK");
