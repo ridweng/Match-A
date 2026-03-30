@@ -3,6 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import React from "react";
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Platform,
@@ -795,11 +796,13 @@ export default function ProfileScreen() {
               pressed && hasUnsavedChanges && saveStatus !== "saving" && styles.saveButtonPressed,
             ]}
           >
-            <Text style={styles.saveButtonText}>
-              {saveStatus === "saving"
-                ? t("Guardando...", "Saving...")
-                : t("Guardar cambios", "Save changes")}
-            </Text>
+            {saveStatus === "saving" ? (
+              <ActivityIndicator color={Colors.textInverted} size="small" />
+            ) : (
+              <Text style={styles.saveButtonText}>
+                {t("Guardar cambios", "Save changes")}
+              </Text>
+            )}
           </Pressable>
           <SaveFeedbackText status={saveStatus} t={t} />
         </View>
@@ -978,6 +981,7 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     minHeight: 54,
+    minWidth: 188,
     borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
