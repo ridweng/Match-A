@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { runtimeConfig } from "../../config/runtime";
 import {
   diffPopularAttributeSnapshots,
   normalizePopularAttributeInput,
@@ -52,6 +53,7 @@ type DiscoveryFeedProfileRow = {
 type DiscoveryFeedImageRow = {
   profile_id: number;
   sort_order: number;
+  media_asset_id: number;
   public_url: string | null;
 };
 
@@ -158,6 +160,10 @@ const DISCOVERY_DECISION_WRITE_FAILED = "DISCOVERY_DECISION_WRITE_FAILED";
 
 @Injectable()
 export class DiscoveryService {
+  private buildPublicMediaUrl(mediaAssetId: number) {
+    return `${runtimeConfig.baseUrl}/api/media/public/${mediaAssetId}`;
+  }
+
   private readonly logger = new Logger(DiscoveryService.name);
 
   constructor(@Inject(GoalsService) private readonly goalsService: GoalsService) {}
@@ -586,7 +592,7 @@ export class DiscoveryService {
         [visibleProfileIds]
       );
       imagesResult = await client.query<DiscoveryFeedImageRow>(
-        `SELECT pi.profile_id, pi.sort_order, ma.public_url
+        `SELECT pi.profile_id, pi.sort_order, ma.id AS media_asset_id, ma.public_url
          FROM media.profile_images pi
          JOIN media.media_assets ma ON ma.id = pi.media_asset_id
          WHERE pi.profile_id = ANY($1::bigint[])
@@ -626,11 +632,12 @@ export class DiscoveryService {
 
     const imagesByProfile = new Map<number, string[]>();
     for (const row of imagesResult.rows) {
-      if (!row.public_url) {
+      const resolvedUrl = row.public_url || this.buildPublicMediaUrl(Number(row.media_asset_id));
+      if (!resolvedUrl) {
         continue;
       }
       const current = imagesByProfile.get(row.profile_id) || [];
-      current.push(row.public_url);
+      current.push(resolvedUrl);
       imagesByProfile.set(row.profile_id, current);
     }
 

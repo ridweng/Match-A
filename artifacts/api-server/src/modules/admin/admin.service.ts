@@ -1183,21 +1183,53 @@ export class AdminService {
       normalizedTimeframe === "all" ? "1m" : normalizedTimeframe;
     const selectedCountry = this.normalizeOverviewCountry(filters?.country);
     const hasProfileCountryColumn = await this.hasColumn("core", "profiles", "country");
+    const hasProfileLocationHistoryTable = await this.hasColumn(
+      "core",
+      "profile_location_history",
+      "country"
+    );
     const resolvedCountryExpression = this.buildResolvedCountryExpression(
       "p",
       hasProfileCountryColumn
     );
     const windowStart = this.getOverviewWindowStart(normalizedTimeframe);
     const overviewCte = `
-      WITH real_profiles AS (
+      WITH
+      ${
+        hasProfileLocationHistoryTable
+          ? `latest_location_history AS (
+               SELECT DISTINCT ON (profile_id)
+                 profile_id,
+                 country,
+                 location,
+                 created_at
+               FROM core.profile_location_history
+               ORDER BY profile_id, created_at DESC
+             ),`
+          : ""
+      }
+      real_profiles AS (
         SELECT
           p.id,
           p.user_id,
           p.public_id,
           p.display_name,
           p.gender_identity,
-          ${resolvedCountryExpression} AS resolved_country
+          COALESCE(
+            ${
+              hasProfileLocationHistoryTable
+                ? `NULLIF(TRIM(llh.country), ''),
+                   NULLIF(TRIM(SPLIT_PART(llh.location, ',', array_length(regexp_split_to_array(llh.location, ','), 1))), ''),`
+                : ""
+            }
+            ${resolvedCountryExpression}
+          ) AS resolved_country
         FROM core.profiles p
+        ${
+          hasProfileLocationHistoryTable
+            ? "LEFT JOIN latest_location_history llh ON llh.profile_id = p.id"
+            : ""
+        }
         WHERE p.kind = 'user'
       ),
       filtered_real_profiles AS (
@@ -1354,11 +1386,31 @@ export class AdminService {
          ORDER BY COUNT(*) DESC, 1 ASC`
       , [selectedCountry]),
       pool.query<OverviewRealCountryRow>(
-        `WITH real_profiles AS (
+        `${hasProfileLocationHistoryTable
+          ? `WITH latest_location_history AS (
+               SELECT DISTINCT ON (profile_id)
+                 profile_id,
+                 country,
+                 location,
+                 created_at
+               FROM core.profile_location_history
+               ORDER BY profile_id, created_at DESC
+             ),
+             real_profiles AS (
+           SELECT COALESCE(
+                    NULLIF(TRIM(llh.country), ''),
+                    NULLIF(TRIM(SPLIT_PART(llh.location, ',', array_length(regexp_split_to_array(llh.location, ','), 1))), ''),
+                    ${resolvedCountryExpression}
+                  ) AS country
+           FROM core.profiles p
+           LEFT JOIN latest_location_history llh ON llh.profile_id = p.id
+           WHERE p.kind = 'user'
+         )`
+          : `WITH real_profiles AS (
            SELECT ${resolvedCountryExpression} AS country
            FROM core.profiles p
            WHERE p.kind = 'user'
-         )
+         )`}
          SELECT
            country,
            COUNT(*)::text AS profile_count
