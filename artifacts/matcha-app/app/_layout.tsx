@@ -4,8 +4,8 @@ import {
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
-  useFonts,
 } from "@expo-google-fonts/inter";
+import { useFonts } from "expo-font";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, Stack, usePathname } from "expo-router";
