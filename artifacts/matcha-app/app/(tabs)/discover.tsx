@@ -21,7 +21,6 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { useNetInfo } from "@react-native-community/netinfo";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Colors from "@/constants/colors";
@@ -80,7 +79,7 @@ const SWIPE_FEEDBACK_COMMIT_HOLD_DURATION = 110;
 const SWIPE_FEEDBACK_RESET_DURATION = 180;
 const INFO_SWIPE_THRESHOLD = 82;
 const IS_WEB = Platform.OS === "web";
-const DISCOVERY_PAGE_SIZE = 12;
+const DISCOVERY_PAGE_SIZE = 3;
 const DISCOVERY_TRACE_PREFIX = "[discover]";
 const DISCOVERY_ISOLATION_MODE: null | "A" | "B" | "C" | "D" = null;
 const DISCOVERY_TRACE_EVENTS = new Set([
@@ -128,11 +127,6 @@ type SwipeCommitOrigin = "gesture" | "button";
 type TraceLayout = {
   width: number;
   height: number;
-};
-type PendingNoopReconcile = {
-  requestId: string;
-  direction: SwipeDirection;
-  targetProfileId: number;
 };
 type DiscoverProfile = DiscoveryFeedProfileResponse;
 
@@ -687,7 +681,6 @@ function AgeRangeFields({
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
-  const netInfo = useNetInfo();
   const pathname = usePathname();
   const { width, height } = useWindowDimensions();
   const CARD_WIDTH = width - 32;
@@ -702,6 +695,7 @@ export default function DiscoverScreen() {
   const {
     t,
     user,
+    isOnline,
     likeProfile,
     passProfile,
     likedProfiles,
@@ -714,7 +708,6 @@ export default function DiscoverScreen() {
     recordDiscoverySwipe,
     refreshProfileLocation,
     refreshDiscoveryCandidates,
-    fetchNextDiscoveryWindow,
     saveDiscoveryFilters,
   } = useApp();
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
@@ -738,8 +731,6 @@ export default function DiscoverScreen() {
   const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(activeFilters);
   const [isDeckAnimating, setIsDeckAnimating] = useState(false);
   const [pendingDecisionProfileId, setPendingDecisionProfileId] = useState<number | null>(null);
-  const [pendingNoopReconcile, setPendingNoopReconcile] =
-    useState<PendingNoopReconcile | null>(null);
   const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
   const [, setPreloadRevision] = useState(0);
   const [deck, setDeck] = useState<DeckState>(() => buildDeckState([], 0));
@@ -751,6 +742,7 @@ export default function DiscoverScreen() {
     "permission_denied" | "services_disabled" | "sync_failed" | null
   >(null);
   const [isLocationPromptBusy, setIsLocationPromptBusy] = useState(false);
+  const [isQueueLoading, setIsQueueLoading] = useState(false);
   const pendingLocationSettingsReturnRef = useRef(false);
   const deckRef = useRef<DeckState>(deck);
   const screenSessionIdRef = useRef(createTraceId("discover"));
@@ -1029,8 +1021,7 @@ export default function DiscoverScreen() {
     extrapolate: "clamp",
   });
 
-  const isOffline =
-    netInfo.isConnected === false || netInfo.isInternetReachable === false;
+  const isOffline = !isOnline;
 
   const feedProfiles = discoveryFeed.profiles ?? [];
   const sourceProfiles = useMemo(
@@ -1101,6 +1092,7 @@ export default function DiscoverScreen() {
   const hasActiveFilters = !filtersEqual(activeFilters, defaultFilters);
   const canApplyFilters = !filtersEqual(draftFilters, activeFilters);
   const hasDeckProfiles = Boolean(frontProfile);
+  const showQueueLoading = isQueueLoading && !hasDeckProfiles;
   const isOfflineDeckExhausted =
     !hasDeckProfiles && hasMoreServerProfiles && isOffline;
   const isOnlineDeckExhausted =
@@ -1317,10 +1309,10 @@ export default function DiscoverScreen() {
   useEffect(() => {
     trace("network_state_changed", {
       isOffline,
-      isConnected: netInfo.isConnected,
-      isInternetReachable: netInfo.isInternetReachable,
+      isConnected: isOnline,
+      isInternetReachable: isOnline,
     });
-  }, [isOffline, netInfo.isConnected, netInfo.isInternetReachable, trace]);
+  }, [isOffline, isOnline, trace]);
 
   useEffect(() => {
     trace("render_identity_changed", {
@@ -1592,27 +1584,6 @@ export default function DiscoverScreen() {
   }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceProfiles.length]);
 
   React.useEffect(() => {
-    if (
-      isOffline ||
-      !hasMoreServerProfiles ||
-      loadedCount < sourceProfiles.length ||
-      sourceProfiles.length - (deck.frontIndex + 1) > refillThreshold
-    ) {
-      return;
-    }
-
-    void fetchNextDiscoveryWindow();
-  }, [
-    deck.frontIndex,
-    fetchNextDiscoveryWindow,
-    hasMoreServerProfiles,
-    isOffline,
-    loadedCount,
-    refillThreshold,
-    sourceProfiles.length,
-  ]);
-
-  React.useEffect(() => {
     trace("loaded_count_recovery_check", {
       loadedCount,
       sourceProfilesLength: sourceProfiles.length,
@@ -1795,23 +1766,6 @@ export default function DiscoverScreen() {
     thresholdLoggedRef.current = false;
   }, [deckProgress, flipAnim, getTraceSnapshot, position, swipeFeedbackX, trace]);
 
-  useEffect(() => {
-    if (!pendingNoopReconcile) {
-      return;
-    }
-
-    resetCardState();
-    setPendingDecisionProfileId(null);
-    debugDiscoveryLog("swipe_noop_reconciled", {
-      requestId: pendingNoopReconcile.requestId,
-      direction: pendingNoopReconcile.direction,
-      targetProfileId: pendingNoopReconcile.targetProfileId,
-      fetchedAt: discoveryFeed.supply?.fetchedAt ?? null,
-      nextFrontProfileId: getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null,
-    });
-    setPendingNoopReconcile(null);
-  }, [discoveryFeed.supply?.fetchedAt, pendingNoopReconcile, resetCardState]);
-
   const settleCardVisualState = useCallback(() => {
     setSwipeState("idle");
     setIsDeckAnimating(false);
@@ -1991,6 +1945,9 @@ export default function DiscoverScreen() {
   };
 
   const openFilters = () => {
+    if (isOffline) {
+      return;
+    }
     setDraftFilters({
       ...activeFilters,
       selectedGenders: [...activeFilters.selectedGenders],
@@ -2005,27 +1962,47 @@ export default function DiscoverScreen() {
   };
 
   const applyFilters = () => {
+    if (isOffline) {
+      return;
+    }
     Keyboard.dismiss();
-    void saveDiscoveryFilters({
-      ...draftFilters,
-      selectedGenders: [...draftFilters.selectedGenders],
-    });
-    resetCardState();
-    setIsFilterVisible(false);
+    setIsQueueLoading(true);
+    void (async () => {
+      try {
+        await saveDiscoveryFilters({
+          ...draftFilters,
+          selectedGenders: [...draftFilters.selectedGenders],
+        });
+        resetCardState();
+        setIsFilterVisible(false);
+      } finally {
+        setIsQueueLoading(false);
+      }
+    })();
   };
 
   const clearFilters = () => {
+    if (isOffline) {
+      return;
+    }
     Keyboard.dismiss();
     setDraftFilters({
       ...defaultFilters,
       selectedGenders: [...defaultFilters.selectedGenders],
     });
-    void saveDiscoveryFilters({
-      ...defaultFilters,
-      selectedGenders: [...defaultFilters.selectedGenders],
-    });
-    resetCardState();
-    setIsFilterVisible(false);
+    setIsQueueLoading(true);
+    void (async () => {
+      try {
+        await saveDiscoveryFilters({
+          ...defaultFilters,
+          selectedGenders: [...defaultFilters.selectedGenders],
+        });
+        resetCardState();
+        setIsFilterVisible(false);
+      } finally {
+        setIsQueueLoading(false);
+      }
+    })();
   };
 
   const handleRetryDiscovery = useCallback(() => {
@@ -2087,7 +2064,7 @@ export default function DiscoverScreen() {
 
   const commitDiscoverySwipe = useCallback(
     (direction: SwipeDirection, origin: SwipeCommitOrigin = "button") => {
-      if (!frontProfile || isDeckAnimating || hasPendingDecision) {
+      if (!frontProfile || isDeckAnimating || hasPendingDecision || isOffline) {
         return false;
       }
       if (!secondReady) {
@@ -2122,7 +2099,6 @@ export default function DiscoverScreen() {
 
       const commitSwipe = () => {
         setPendingDecisionProfileId(profile.id);
-        setPendingNoopReconcile(null);
         debugDiscoveryLog("swipe_commit", {
           requestId,
           direction,
@@ -2148,17 +2124,14 @@ export default function DiscoverScreen() {
             return;
           }
           if (!result.decisionApplied) {
-            debugDiscoveryLog("swipe_reconcile_after_noop", {
+            setPendingDecisionProfileId(null);
+            debugDiscoveryLog("swipe_restore_after_noop", {
               requestId,
               direction,
               targetProfileId: profile.id,
               decisionRejectedReason: result.decisionRejectedReason ?? null,
             });
-            setPendingNoopReconcile({
-              requestId,
-              direction,
-              targetProfileId: profile.id,
-            });
+            restoreDeckAfterDecisionFailure(previousDeck);
             return;
           }
 
@@ -2207,6 +2180,7 @@ export default function DiscoverScreen() {
       hasPendingDecision,
       holdGestureSwipeFeedback,
       isDeckAnimating,
+      isOffline,
       likeProfile,
       passProfile,
       recordDiscoverySwipe,
@@ -2372,9 +2346,11 @@ export default function DiscoverScreen() {
         <View style={styles.headerRight}>
           <Pressable
             onPress={openFilters}
+            disabled={isOffline}
             style={({ pressed }) => [
               styles.filterBtn,
               hasActiveFilters && styles.filterBtnActive,
+              isOffline && styles.emptyCardButtonDisabled,
               pressed && { opacity: 0.78, transform: [{ scale: 0.96 }] },
             ]}
           >
@@ -2892,9 +2868,11 @@ export default function DiscoverScreen() {
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
             <Pressable
               onPress={() => swipeLeft("button")}
+              disabled={isOffline}
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
+                isOffline && styles.emptyCardButtonDisabled,
                 {
                   opacity: pressed ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
@@ -2921,9 +2899,11 @@ export default function DiscoverScreen() {
 
             <Pressable
               onPress={() => swipeRight("button")}
+              disabled={isOffline}
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
+                isOffline && styles.emptyCardButtonDisabled,
                 {
                   opacity: pressed ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
@@ -2934,6 +2914,23 @@ export default function DiscoverScreen() {
             </Pressable>
           </View>
         </>
+      ) : showQueueLoading ? (
+        <View style={styles.cardStack}>
+          <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
+            <View style={styles.emptyCardIconWrap}>
+              <ActivityIndicator color={Colors.primaryLight} />
+            </View>
+            <Text style={styles.emptyCardTitle}>
+              {t("Cargando discovery", "Loading discovery")}
+            </Text>
+            <Text style={styles.emptyCardCopy}>
+              {t(
+                "Estamos preparando una nueva cola con tus filtros actuales.",
+                "We are preparing a new queue with your current filters."
+              )}
+            </Text>
+          </View>
+        </View>
       ) : isOfflineDeckExhausted ? (
         <View style={styles.cardStack}>
           <View style={[styles.cardBase, cardFrameStyle, styles.emptyCard]}>
@@ -3302,9 +3299,11 @@ export default function DiscoverScreen() {
               <View style={styles.filterFooter}>
                 <Pressable
                   onPress={clearFilters}
+                  disabled={isOffline}
                   style={({ pressed }) => [
                     styles.filterFooterBtn,
                     styles.filterFooterBtnSecondary,
+                    isOffline && styles.emptyCardButtonDisabled,
                     pressed && { opacity: 0.8 },
                   ]}
                 >
@@ -3314,19 +3313,20 @@ export default function DiscoverScreen() {
                 </Pressable>
                 <Pressable
                   onPress={applyFilters}
-                  disabled={!canApplyFilters}
+                  disabled={!canApplyFilters || isOffline}
                   style={({ pressed }) => [
                     styles.filterFooterBtn,
-                    canApplyFilters
+                    canApplyFilters && !isOffline
                       ? styles.filterFooterBtnPrimary
                       : styles.filterFooterBtnPrimaryDisabled,
-                    pressed && canApplyFilters && { opacity: 0.84 },
+                    pressed && canApplyFilters && !isOffline && { opacity: 0.84 },
                   ]}
                 >
                   <Text
                     style={[
                       styles.filterFooterBtnPrimaryText,
-                      !canApplyFilters && styles.filterFooterBtnPrimaryTextDisabled,
+                      (!canApplyFilters || isOffline) &&
+                        styles.filterFooterBtnPrimaryTextDisabled,
                     ]}
                   >
                     {t("Aplicar", "Apply")}

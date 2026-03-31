@@ -274,6 +274,8 @@ export type DiscoveryFeedResponse = {
   generatedAt?: string;
   windowSize?: number;
   reserveCount?: number;
+  queueInvalidated?: boolean;
+  queueInvalidationReason?: string | null;
   profiles: DiscoveryFeedProfileResponse[];
   nextCursor: string | null;
   hasMore: boolean;
@@ -299,6 +301,8 @@ export type DiscoveryDecisionRequestPayload = {
   action: "like" | "pass";
   categoryValues?: PopularAttributeInputByCategory | null;
   requestId?: string;
+  cursor?: string | null;
+  visibleProfileIds?: number[];
   queueVersion?: number | null;
   presentedPosition?: number | null;
 };
@@ -315,6 +319,12 @@ export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
   targetProfileId: number;
   changedCategories: PopularAttributeChange[];
   shouldShowDiscoveryUpdate: boolean;
+  queueVersion?: number | null;
+  policyVersion?: string;
+  replacementProfile: DiscoveryFeedProfileResponse | null;
+  nextCursor: string | null;
+  hasMore: boolean;
+  supply: DiscoveryFeedResponse["supply"];
 } & (
     | {
         decisionApplied: true;
@@ -1021,9 +1031,21 @@ function buildDemoDiscoveryFeed(cursor?: string | null, limit = DEMO_DISCOVERY_D
       returnedDummyCount: 0,
       dominantExclusionReason: null,
       exhaustedReason: unseenProfiles.length === 0 ? "pool_exhausted_real_and_dummy" : null,
-      refillThreshold: 2,
+      refillThreshold: 1,
     },
   } satisfies DiscoveryFeedResponse;
+}
+
+function buildDemoDecisionMetadata() {
+  const feed = buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT);
+  return {
+    queueVersion: feed.queueVersion ?? null,
+    policyVersion: feed.policyVersion,
+    replacementProfile: null,
+    nextCursor: feed.nextCursor,
+    hasMore: feed.hasMore,
+    supply: feed.supply,
+  };
 }
 
 export async function getDiscoveryFeedWindow(
@@ -1102,6 +1124,8 @@ export async function likeDiscoveryProfile(
     targetProfileId: number;
     categoryValues?: PopularAttributeInputByCategory | null;
     requestId?: string;
+    cursor?: string | null;
+    visibleProfileIds?: number[];
     queueVersion?: number | null;
     presentedPosition?: number | null;
   }
@@ -1109,6 +1133,7 @@ export async function likeDiscoveryProfile(
   if (isDemoToken(accessToken)) {
     const existing = new Set(DEMO_DISCOVERY_PREFERENCES.likedProfileIds);
     if (existing.has(payload.targetProfileId)) {
+      const decisionMeta = buildDemoDecisionMetadata();
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
         decisionApplied: false,
@@ -1117,7 +1142,7 @@ export async function likeDiscoveryProfile(
         decisionRejectedReason: "same_state_existing_decision",
         changedCategories: [],
         shouldShowDiscoveryUpdate: false,
-        feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+        ...decisionMeta,
       } satisfies DiscoveryLikeResponse;
     }
 
@@ -1195,6 +1220,7 @@ export async function likeDiscoveryProfile(
         : DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount;
     DEMO_DISCOVERY_QUEUE_VERSION += 1;
 
+    const decisionMeta = buildDemoDecisionMetadata();
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
       decisionApplied: true,
@@ -1203,7 +1229,7 @@ export async function likeDiscoveryProfile(
       decisionRejectedReason: null,
       changedCategories,
       shouldShowDiscoveryUpdate,
-      feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+      ...decisionMeta,
     } satisfies DiscoveryLikeResponse;
   }
 
@@ -1219,6 +1245,8 @@ export async function passDiscoveryProfile(
     targetProfileId: number;
     categoryValues?: PopularAttributeInputByCategory | null;
     requestId?: string;
+    cursor?: string | null;
+    visibleProfileIds?: number[];
     queueVersion?: number | null;
     presentedPosition?: number | null;
   }
@@ -1226,6 +1254,7 @@ export async function passDiscoveryProfile(
   if (isDemoToken(accessToken)) {
     const existing = new Set(DEMO_DISCOVERY_PREFERENCES.passedProfileIds);
     if (existing.has(payload.targetProfileId)) {
+      const decisionMeta = buildDemoDecisionMetadata();
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
         decisionApplied: false,
@@ -1234,7 +1263,7 @@ export async function passDiscoveryProfile(
         decisionRejectedReason: "same_state_existing_decision",
         changedCategories: [],
         shouldShowDiscoveryUpdate: false,
-        feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+        ...decisionMeta,
       } satisfies DiscoveryLikeResponse;
     }
 
@@ -1274,6 +1303,7 @@ export async function passDiscoveryProfile(
     };
     DEMO_DISCOVERY_QUEUE_VERSION += 1;
 
+    const decisionMeta = buildDemoDecisionMetadata();
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
       decisionApplied: true,
@@ -1282,7 +1312,7 @@ export async function passDiscoveryProfile(
       decisionRejectedReason: null,
       changedCategories: [],
       shouldShowDiscoveryUpdate: false,
-      feed: buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT),
+      ...decisionMeta,
     } satisfies DiscoveryLikeResponse;
   }
 

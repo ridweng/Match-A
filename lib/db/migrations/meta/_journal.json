@@ -50,6 +50,27 @@
       "when": 1774746000000,
       "tag": "0006_discovery_actor_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774752000000,
+      "tag": "0007_profile_country",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1774758000000,
+      "tag": "0008_profile_location_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774974000000,
+      "tag": "0009_user_onboarding_completion_origin",
+      "breakpoints": true
     }
   ]
 }

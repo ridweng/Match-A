@@ -533,6 +533,7 @@ type AppContextType = {
   user: AuthUser | null;
   authBusy: boolean;
   authError: string | null;
+  isOnline: boolean;
   authFormPrefill: AuthFormPrefill | null;
   pendingVerificationEmail: string | null;
   verificationStatus: VerificationStatus;
@@ -797,9 +798,12 @@ function createEmptyGoalsUnlockState(): GoalsUnlockState {
 function createEmptyDiscoveryFeed(): DiscoveryFeedState {
   return {
     queueVersion: 0,
+    policyVersion: "",
     generatedAt: "",
     windowSize: 0,
     reserveCount: 0,
+    queueInvalidated: false,
+    queueInvalidationReason: null,
     profiles: [],
     nextCursor: null,
     hasMore: false,
@@ -930,26 +934,42 @@ function getDiscoveryDecisionSnapshot(
 
 function pruneDiscoveryFeedWindow(
   feed: DiscoveryFeedResponse,
-  targetProfileId: number
+  input: {
+    targetProfileId: number;
+    replacementProfile: DiscoveryLikeResponse["replacementProfile"];
+    nextCursor: string | null;
+    hasMore: boolean;
+    queueVersion?: number | null;
+    policyVersion?: string;
+    supply: DiscoveryLikeResponse["supply"];
+  }
 ): DiscoveryFeedResponse {
-  const nextProfiles = feed.profiles.filter((profile) => profile.id !== targetProfileId);
-  const removedCount = feed.profiles.length - nextProfiles.length;
-
-  if (removedCount <= 0) {
-    return feed;
+  const nextProfiles = feed.profiles
+    .filter((profile) => profile.id !== input.targetProfileId)
+    .filter((profile, index, all) => all.findIndex((candidate) => candidate.id === profile.id) === index);
+  if (
+    input.replacementProfile &&
+    !nextProfiles.some((profile) => profile.id === input.replacementProfile?.id)
+  ) {
+    nextProfiles.push(input.replacementProfile);
   }
 
-  const currentSupply = feed.supply || createEmptyDiscoveryFeed().supply;
   return {
     ...feed,
-    profiles: nextProfiles,
-    supply: {
-      ...currentSupply,
-      unseenCount: Math.max(0, currentSupply.unseenCount - removedCount),
-      decidedCount: currentSupply.decidedCount + removedCount,
-      exhausted: Math.max(0, currentSupply.unseenCount - removedCount) === 0,
-      fetchedAt: new Date().toISOString(),
-    },
+    queueVersion:
+      Number.isFinite(input.queueVersion) && Number(input.queueVersion) > 0
+        ? Number(input.queueVersion)
+        : feed.queueVersion,
+    policyVersion: input.policyVersion || feed.policyVersion,
+    generatedAt: new Date().toISOString(),
+    windowSize: nextProfiles.length,
+    reserveCount: Math.min(3, nextProfiles.length),
+    queueInvalidated: false,
+    queueInvalidationReason: null,
+    profiles: nextProfiles.slice(0, 3),
+    nextCursor: input.nextCursor,
+    hasMore: input.hasMore,
+    supply: input.supply,
   };
 }
 
@@ -1082,6 +1102,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const isOnlineRef = useRef(true);
   const [settingsSaveState, setSettingsSaveState] =
     useState<ProfileFieldSaveState>("idle");
   const [authFormPrefill, setAuthFormPrefill] = useState<AuthFormPrefill | null>(null);
@@ -2516,7 +2538,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [requestQueueReplay]);
 
   useEffect(() => {
+    void NetInfo.fetch().then((state) => {
+      const nextOnline = state.isConnected !== false && state.isInternetReachable !== false;
+      isOnlineRef.current = nextOnline;
+      setIsOnline(nextOnline);
+    });
+  }, []);
+
+  useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
+      const nextOnline = state.isConnected !== false && state.isInternetReachable !== false;
+      isOnlineRef.current = nextOnline;
+      setIsOnline(nextOnline);
       if (state.isConnected && state.isInternetReachable !== false) {
         requestQueueReplay();
       }
@@ -2538,6 +2571,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       language: "es" | "en";
       heightUnit: HeightUnit;
     }) => {
+      if (!isOnlineRef.current) {
+        setAuthError("NETWORK_UNAVAILABLE");
+        setSettingsSaveState("error");
+        return false;
+      }
       Keyboard.dismiss();
       setAuthBusy(true);
       setAuthError(null);
@@ -3582,7 +3620,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const saveProfileChanges = useCallback(
     async (patch: Partial<Omit<UserProfile, "age" | "photos">>) => {
       const token = accessTokenRef.current;
-      if (!token) {
+      if (!token || !isOnlineRef.current) {
+        if (!isOnlineRef.current) {
+          setAuthError("NETWORK_UNAVAILABLE");
+        }
         return false;
       }
 
@@ -3710,6 +3751,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const completeGoalTask = useCallback((id: string) => {
+    if (!isOnlineRef.current) {
+      return;
+    }
     const previousGoals = goalsRef.current;
     const targetGoal = previousGoals.find((goal) => goal.id === id);
     if (!targetGoal || targetGoal.completed) {
@@ -3765,6 +3809,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const reorderGoalTasks = useCallback(
     (category: GoalCategory, fromIndex: number, toIndex: number) => {
+      if (!isOnlineRef.current) {
+        return;
+      }
       const previousGoals = goalsRef.current;
       const categoryGoals = previousGoals
         .filter((goal) => goal.category === category)
@@ -3832,6 +3879,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     ) => {
       if (!token) {
+        return discoveryFeedRef.current;
+      }
+      if (!isOnlineRef.current) {
         return discoveryFeedRef.current;
       }
 
@@ -3994,7 +4044,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => {
-      if (!accessToken) {
+      if (!accessToken || !isOnlineRef.current) {
         return null;
       }
 
@@ -4005,6 +4055,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         Number(discoveryFeedRef.current.queueVersion) > 0
           ? Number(discoveryFeedRef.current.queueVersion)
           : null;
+      const currentCursor = discoveryFeedRef.current.nextCursor || null;
+      const visibleProfileIds = discoveryFeedRef.current.profiles
+        .slice(0, 3)
+        .map((item) => item.id);
       const before = getDiscoveryDecisionSnapshot({
         totalLikesCount: totalLikesCountRef.current,
         lifetimeCounts: lifetimeDiscoveryCountsRef.current,
@@ -4025,6 +4079,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           targetProfileId: profile.id,
           categoryValues: profile.categoryValues,
           requestId,
+          cursor: currentCursor,
+          visibleProfileIds,
           queueVersion,
         });
         const latencyMs = Date.now() - startedAt;
@@ -4035,41 +4091,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           latencyMs,
           before,
         });
-        const authoritativeFeed = result.feed;
-        const nextFeed = authoritativeFeed
-          ? authoritativeFeed
-          : result.decisionApplied
-            ? pruneDiscoveryFeedWindow(discoveryFeedRef.current, result.targetProfileId)
-            : await refreshDiscoveryFeedState(accessToken, {
-                reason: "decision_not_applied",
-                requestId,
-                targetProfileId: result.targetProfileId,
-              });
-        if (authoritativeFeed) {
-          debugDiscoveryLog("feed_window_authoritative", {
-            requestId,
-            action,
-            targetProfileId: result.targetProfileId,
-            queueVersion: authoritativeFeed.queueVersion ?? null,
-            returnedProfileIds: authoritativeFeed.profiles.map(
-              (item: DiscoveryFeedProfileResponse) => item.id
-            ),
-            reserveCount: authoritativeFeed.reserveCount ?? null,
-            generatedAt: authoritativeFeed.generatedAt ?? null,
-            latencyMs,
-          });
-        } else if (result.decisionApplied) {
-          debugDiscoveryLog("feed_window_pruned", {
-            requestId,
-            action,
-            targetProfileId: result.targetProfileId,
-            previousProfileCount: discoveryFeedRef.current.profiles.length,
-            nextProfileCount: nextFeed.profiles.length,
-            previousUnseenCount: discoveryFeedRef.current.supply?.unseenCount ?? null,
-            nextUnseenCount: nextFeed.supply?.unseenCount ?? null,
-            latencyMs,
-          });
-        }
+        const nextFeed = result.decisionApplied
+          ? pruneDiscoveryFeedWindow(discoveryFeedRef.current, {
+              targetProfileId: result.targetProfileId,
+              replacementProfile: result.replacementProfile,
+              nextCursor: result.nextCursor,
+              hasMore: result.hasMore,
+              queueVersion: result.queueVersion ?? discoveryFeedRef.current.queueVersion ?? null,
+              policyVersion: result.policyVersion || discoveryFeedRef.current.policyVersion,
+              supply: result.supply,
+            })
+          : discoveryFeedRef.current;
+        debugDiscoveryLog("feed_window_progressed", {
+          requestId,
+          action,
+          targetProfileId: result.targetProfileId,
+          previousProfileCount: discoveryFeedRef.current.profiles.length,
+          nextProfileCount: nextFeed.profiles.length,
+          replacementProfileId: result.replacementProfile?.id ?? null,
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          latencyMs,
+        });
         discoveryFeedRef.current = nextFeed;
         setDiscoveryFeed(nextFeed);
         setLastServerSyncAt(
@@ -4089,15 +4132,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           targetProfileId: result.targetProfileId,
           decisionApplied: result.decisionApplied,
           decisionRejectedReason: result.decisionRejectedReason ?? null,
-          queueAction: authoritativeFeed
-            ? "replace-authoritative-window"
-            : result.decisionApplied
-              ? "prune"
-              : "refresh-first-window",
+          queueAction: result.decisionApplied ? "append-replacement" : "noop",
           latencyMs,
         });
         return result;
       } catch (error: any) {
+        if (error?.code === "DISCOVERY_CURSOR_STALE") {
+          await refreshDiscoveryFeedState(accessToken, {
+            reason: "cursor_stale",
+            requestId,
+            targetProfileId: profile.id,
+          }).catch(() => {});
+        }
         debugDiscoveryWarn("decision_request_failed", {
           requestId,
           action,
@@ -4203,7 +4249,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [accessToken, refreshDiscoveryFeedState]);
 
   const fetchNextDiscoveryWindow = useCallback(async () => {
-    if (!accessToken) {
+    if (!accessToken || !isOnlineRef.current) {
       return false;
     }
 
@@ -4221,6 +4267,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const saveDiscoveryFilters = useCallback(
     async (filters: DiscoveryFilters) => {
+      if (!isOnlineRef.current) {
+        setAuthError("NETWORK_UNAVAILABLE");
+        return false;
+      }
       const nextFilters = {
         ...DEFAULT_DISCOVERY_FILTERS,
         ...filters,
@@ -4513,6 +4563,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         user,
         authBusy,
         authError,
+        isOnline,
         authFormPrefill,
         pendingVerificationEmail,
         verificationStatus,

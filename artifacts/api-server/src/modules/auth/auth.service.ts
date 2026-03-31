@@ -517,14 +517,22 @@ export class AuthService {
 
     await client.query(
       `INSERT INTO core.user_onboarding
-        (user_id, status, started_at, completed_at, exempted_at)
+        (user_id, status, started_at, completed_at, exempted_at, completion_origin)
        VALUES ($1, $2, NOW(),
          CASE WHEN $2::onboarding_status = 'completed'::onboarding_status THEN NOW() ELSE NULL END,
-         CASE WHEN $2::onboarding_status = 'exempt'::onboarding_status THEN NOW() ELSE NULL END)
+         CASE WHEN $2::onboarding_status = 'exempt'::onboarding_status THEN NOW() ELSE NULL END,
+         CASE
+           WHEN $2::onboarding_status = 'completed'::onboarding_status THEN 'user_flow'
+           ELSE NULL
+         END)
        ON CONFLICT (user_id) DO UPDATE SET
          status = EXCLUDED.status,
          completed_at = CASE WHEN EXCLUDED.status = 'completed'::onboarding_status THEN NOW() ELSE core.user_onboarding.completed_at END,
          exempted_at = CASE WHEN EXCLUDED.status = 'exempt'::onboarding_status THEN NOW() ELSE core.user_onboarding.exempted_at END,
+         completion_origin = CASE
+           WHEN EXCLUDED.status = 'completed'::onboarding_status THEN 'user_flow'
+           ELSE core.user_onboarding.completion_origin
+         END,
          updated_at = NOW()`,
       [input.userId, input.onboardingStatus]
     );
@@ -677,9 +685,14 @@ export class AuthService {
 
   async completeUserOnboarding(userId: number) {
     await pool.query(
-      `UPDATE core.user_onboarding
-       SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-       WHERE user_id = $1`,
+      `INSERT INTO core.user_onboarding
+        (user_id, status, required_version, started_at, completed_at, exempted_at, completion_origin, created_at, updated_at)
+       VALUES ($1, 'completed'::onboarding_status, 1, NOW(), NOW(), NULL, 'user_flow', NOW(), NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         status = 'completed'::onboarding_status,
+         completed_at = COALESCE(core.user_onboarding.completed_at, NOW()),
+         completion_origin = 'user_flow',
+         updated_at = NOW()`,
       [userId]
     );
     return this.findUserById(userId);

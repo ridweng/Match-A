@@ -30,16 +30,28 @@ export type DiscoveryExhaustedReason =
   | "filters_too_narrow"
   | "all_candidates_already_decided";
 
+export type DiscoveryQueueInvalidationReason =
+  | "filters_changed"
+  | "clear_filters"
+  | "actor_changed"
+  | "policy_version_changed"
+  | "cursor_stale"
+  | "backend_queue_invalidated";
+
 export type DiscoveryWindowCursorPayload = {
   policyVersion: DiscoveryPolicyVersion;
+  actorProfileId: number;
   filtersHash: string;
-  offset: number;
+  afterRank: number | null;
+  afterProfileId: number | null;
 };
 
 export const DISCOVERY_POLICY_V1 = {
   policyVersion: "discovery_policy_v1" as const,
   queueTargetSize: 12,
-  refillThreshold: 2,
+  visibleDeckSize: 3,
+  replacementBatchSize: 1,
+  refillThreshold: 1,
   windowMaxSize: 3,
   bucketPriority: ["real", "dummy"] as const,
   dominantReasonOrder: [
@@ -92,18 +104,30 @@ export function decodeDiscoveryWindowCursor(
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
     if (
       parsed?.policyVersion !== DISCOVERY_POLICY_V1.policyVersion ||
+      !Number.isFinite(parsed?.actorProfileId) ||
+      Number(parsed.actorProfileId) <= 0 ||
       typeof parsed?.filtersHash !== "string" ||
       !parsed.filtersHash.trim() ||
-      !Number.isFinite(parsed?.offset) ||
-      Number(parsed.offset) < 0
+      !(
+        parsed?.afterRank === null ||
+        (Number.isFinite(parsed?.afterRank) && Number(parsed.afterRank) >= 0)
+      ) ||
+      !(
+        parsed?.afterProfileId === null ||
+        (Number.isFinite(parsed?.afterProfileId) && Number(parsed.afterProfileId) > 0)
+      )
     ) {
       return null;
     }
 
     return {
       policyVersion: parsed.policyVersion,
+      actorProfileId: Math.floor(Number(parsed.actorProfileId)),
       filtersHash: parsed.filtersHash,
-      offset: Math.floor(Number(parsed.offset)),
+      afterRank:
+        parsed.afterRank === null ? null : Math.floor(Number(parsed.afterRank)),
+      afterProfileId:
+        parsed.afterProfileId === null ? null : Math.floor(Number(parsed.afterProfileId)),
     };
   } catch {
     return null;

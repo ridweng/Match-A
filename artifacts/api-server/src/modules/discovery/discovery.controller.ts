@@ -26,6 +26,8 @@ const discoveryDecisionSchema = z.object({
     studies: z.string().trim().max(120).nullable().optional(),
   }),
   requestId: z.string().trim().max(128).optional(),
+  cursor: z.string().trim().max(512).optional(),
+  visibleProfileIds: z.array(z.coerce.number().int().positive()).max(3).optional(),
   queueVersion: z.coerce.number().int().positive().optional(),
   presentedPosition: z.coerce.number().int().positive().optional(),
 });
@@ -124,6 +126,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -161,6 +171,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -191,6 +209,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -212,6 +238,14 @@ export class DiscoveryController {
       return res.json(await this.discoveryService.resetDecisions(auth.user.id));
     } catch (error) {
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -240,6 +274,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -268,6 +310,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
@@ -296,6 +346,14 @@ export class DiscoveryController {
         });
       }
       if (error instanceof Error && error.message) {
+        if (error.message === "DISCOVERY_CURSOR_STALE") {
+          return res.status(HttpStatus.CONFLICT).json({
+            error: error.message,
+            queueInvalidationReason:
+              (error as Error & { queueInvalidationReason?: string }).queueInvalidationReason ||
+              "cursor_stale",
+          });
+        }
         if (
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||

@@ -426,6 +426,7 @@ export default function SettingsScreen() {
     authError,
     biometricsEnabled,
     heightUnit,
+    isOnline,
     language,
     user,
     logout,
@@ -471,6 +472,7 @@ export default function SettingsScreen() {
   const [localHeightUnit, setLocalHeightUnit] = useState<HeightUnit>(heightUnit);
   const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
   const [saveFeedback, setSaveFeedback] = useState<"idle" | "saved" | "error">("idle");
+  const isOffline = !isOnline;
 
   useEffect(() => {
     setLocal(settingsSeed);
@@ -513,7 +515,7 @@ export default function SettingsScreen() {
   };
 
   const handleSave = async () => {
-    if (!hasChanges) return;
+    if (!hasChanges || isOffline) return;
     Keyboard.dismiss();
     setSaveFeedback("idle");
     const saved = await saveSettings({
@@ -650,15 +652,17 @@ export default function SettingsScreen() {
         <Text style={s.headerTitle}>{t("Ajustes", "Settings")}</Text>
         <Pressable
           onPress={handleSave}
-          disabled={!hasChanges || authBusy || isSavePending}
+          disabled={!hasChanges || authBusy || isSavePending || isOffline}
           style={({ pressed }) => [
             s.saveIconBtn,
-            hasChanges && !authBusy && !isSavePending && s.saveIconBtnActive,
-            (!hasChanges || authBusy || isSavePending) && s.saveIconBtnDisabled,
+            hasChanges && !authBusy && !isSavePending && !isOffline && s.saveIconBtnActive,
+            (!hasChanges || authBusy || isSavePending || isOffline) &&
+              s.saveIconBtnDisabled,
             pressed &&
               hasChanges &&
               !authBusy &&
-              !isSavePending && { opacity: 0.82 },
+              !isSavePending &&
+              !isOffline && { opacity: 0.82 },
           ]}
         >
           {isSavePending ? (
@@ -672,7 +676,7 @@ export default function SettingsScreen() {
               name="check"
               size={22}
               color={
-                hasChanges && !authBusy && !isSavePending
+                hasChanges && !authBusy && !isSavePending && !isOffline
                   ? colors.textInverted
                   : colors.textMuted
               }
@@ -682,7 +686,8 @@ export default function SettingsScreen() {
             style={[
               s.saveIconBtnText,
               saveFeedback === "saved" && s.saveIconBtnTextSaved,
-              (!hasChanges || authBusy || isSavePending) && s.saveIconBtnTextDisabled,
+              (!hasChanges || authBusy || isSavePending || isOffline) &&
+                s.saveIconBtnTextDisabled,
             ]}
           >
             {saveFeedback === "saved"
@@ -693,6 +698,18 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
       </View>
+
+      {isOffline ? (
+        <View style={s.offlineBanner}>
+          <Feather name="wifi-off" size={14} color={colors.info} />
+          <Text style={s.offlineBannerText}>
+            {t(
+              "Sin conexión. Los cambios de ajustes se reactivarán cuando vuelvas a estar online.",
+              "You are offline. Settings changes will be available again once you are back online."
+            )}
+          </Text>
+        </View>
+      ) : null}
 
       {authError ? <Text style={s.inlineError}>{authError}</Text> : null}
       {!authError && saveFeedback === "saved" ? (
@@ -892,6 +909,26 @@ const s = StyleSheet.create({
     width: 22,
     alignItems: "center",
     justifyContent: "center",
+  },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textSecondary,
   },
   headerTitle: {
     position: "absolute",

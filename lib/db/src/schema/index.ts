@@ -310,6 +310,7 @@ export const userOnboardingTable = coreSchema.table("user_onboarding", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   exemptedAt: timestamp("exempted_at", { withTimezone: true }),
+  completionOrigin: varchar("completion_origin", { length: 32 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

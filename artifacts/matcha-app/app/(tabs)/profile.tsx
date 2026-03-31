@@ -190,6 +190,7 @@ export default function ProfileScreen() {
     t,
     accountProfile,
     heightUnit,
+    isOnline,
     language,
     removeProfilePhoto,
     saveProfileChanges,
@@ -228,6 +229,7 @@ export default function ProfileScreen() {
   const [loadingImageKeys, setLoadingImageKeys] = React.useState<Record<string, boolean>>(
     {}
   );
+  const isOffline = !isOnline;
   const heightOutOfRange = isHeightOutOfRange(draftProfile.height, heightUnit);
   const heightPlaceholder =
     heightUnit === "imperial"
@@ -430,6 +432,10 @@ export default function ProfileScreen() {
   }, []);
 
   const handleSave = async () => {
+    if (isOffline) {
+      setSaveStatus("error");
+      return;
+    }
     if (!hasUnsavedChanges) {
       setSaveStatus("saved");
       return;
@@ -501,6 +507,18 @@ export default function ProfileScreen() {
             <Feather name="settings" size={18} color={Colors.textSecondary} />
           </Pressable>
         </View>
+
+        {isOffline ? (
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={14} color={Colors.info} />
+            <Text style={styles.offlineBannerText}>
+              {t(
+                "Sin conexión. Puedes revisar tu perfil, pero guardar cambios está desactivado.",
+                "You are offline. You can review your profile, but saving changes is disabled."
+              )}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.heroCard}>
           <Pressable
@@ -837,11 +855,16 @@ export default function ProfileScreen() {
             onPress={() => {
               void handleSave();
             }}
-            disabled={saveStatus === "saving"}
+            disabled={!hasUnsavedChanges || saveStatus === "saving" || isOffline}
             style={({ pressed }) => [
               styles.saveButton,
-              (!hasUnsavedChanges || saveStatus === "saving") && styles.saveButtonDisabled,
-              pressed && hasUnsavedChanges && saveStatus !== "saving" && styles.saveButtonPressed,
+              (!hasUnsavedChanges || saveStatus === "saving" || isOffline) &&
+                styles.saveButtonDisabled,
+              pressed &&
+                hasUnsavedChanges &&
+                saveStatus !== "saving" &&
+                !isOffline &&
+                styles.saveButtonPressed,
             ]}
           >
             {saveStatus === "saving" ? (
@@ -889,6 +912,26 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontFamily: "Inter_400Regular",
     fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    lineHeight: 18,
     color: Colors.textSecondary,
   },
   settingsBtn: {

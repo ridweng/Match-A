@@ -23,6 +23,8 @@ import {
   type DiscoveryExhaustedReason,
   type DiscoveryExclusionReason,
   type DiscoveryFilters,
+  type DiscoveryQueueInvalidationReason,
+  type DiscoveryWindowCursorPayload,
 } from "./discovery.policy";
 
 type BaseGender = "male" | "female" | "non_binary" | "fluid";
@@ -95,11 +97,6 @@ type DiscoveryFeedGoalFeedbackRow = {
   reason_en: string;
 };
 
-type DiscoveryFeedCursor = {
-  rank: number;
-  id: number;
-};
-
 type DiscoveryFeedOptions = {
   cursor?: string | null;
   limit?: number;
@@ -147,6 +144,36 @@ type DiscoveryPolicyDiagnostics = {
   exclusionCounts: Partial<Record<DiscoveryExclusionReason, number>>;
 };
 
+type DiscoveryWindowResult = {
+  queueVersion: number;
+  policyVersion: string;
+  generatedAt: string;
+  windowSize: number;
+  reserveCount: number;
+  profiles: ReturnType<DiscoveryService["hydrateDiscoveryProfiles"]> extends Promise<infer T>
+    ? T
+    : never;
+  nextCursor: string | null;
+  hasMore: boolean;
+  queueInvalidated?: boolean;
+  queueInvalidationReason?: DiscoveryQueueInvalidationReason | null;
+  supply: {
+    eligibleCount: number;
+    unseenCount: number;
+    decidedCount: number;
+    exhausted: boolean;
+    fetchedAt: string;
+    policyVersion: string;
+    eligibleRealCount: number;
+    eligibleDummyCount: number;
+    returnedRealCount: number;
+    returnedDummyCount: number;
+    dominantExclusionReason: DiscoveryExclusionReason | null;
+    exhaustedReason: DiscoveryExhaustedReason | null;
+    refillThreshold: number;
+  };
+};
+
 const FEMALE_DISCOVERY_IMAGES = [
   "https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=600&q=80",
   "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=600&q=80",
@@ -170,6 +197,16 @@ const NON_BINARY_DISCOVERY_IMAGES = [
 
 const DEFAULT_DISCOVERY_WINDOW_SIZE = 3;
 const DISCOVERY_DECISION_WRITE_FAILED = "DISCOVERY_DECISION_WRITE_FAILED";
+const DISCOVERY_CURSOR_STALE = "DISCOVERY_CURSOR_STALE";
+
+class DiscoveryCursorError extends Error {
+  queueInvalidationReason: DiscoveryQueueInvalidationReason;
+
+  constructor(reason: DiscoveryQueueInvalidationReason) {
+    super(DISCOVERY_CURSOR_STALE);
+    this.queueInvalidationReason = reason;
+  }
+}
 
 @Injectable()
 export class DiscoveryService {
@@ -357,6 +394,77 @@ export class DiscoveryService {
     });
   }
 
+  private normalizeVisibleProfileIds(profileIds: number[] | null | undefined) {
+    return Array.from(
+      new Set(
+        (Array.isArray(profileIds) ? profileIds : [])
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .slice(0, DISCOVERY_POLICY_V1.visibleDeckSize)
+      )
+    );
+  }
+
+  private getCursorInvalidationReason(input: {
+    cursor: string | null | undefined;
+    decodedCursor: DiscoveryWindowCursorPayload | null;
+    actorProfileId: number;
+    filtersHash: string;
+  }): DiscoveryQueueInvalidationReason | null {
+    const rawCursor = String(input.cursor || "").trim();
+    if (!rawCursor) {
+      return null;
+    }
+    if (!input.decodedCursor) {
+      return "cursor_stale";
+    }
+    if (input.decodedCursor.actorProfileId !== input.actorProfileId) {
+      return "actor_changed";
+    }
+    if (input.decodedCursor.policyVersion !== DISCOVERY_POLICY_V1.policyVersion) {
+      return "policy_version_changed";
+    }
+    if (input.decodedCursor.filtersHash !== input.filtersHash) {
+      return "filters_changed";
+    }
+    return null;
+  }
+
+  private getOrderedCandidateStartIndex(
+    orderedCandidates: OrderedCandidate[],
+    cursor: DiscoveryWindowCursorPayload | null
+  ) {
+    if (!cursor || cursor.afterRank === null || cursor.afterProfileId === null) {
+      return 0;
+    }
+
+    const nextIndex = orderedCandidates.findIndex(
+      (entry) =>
+        entry.rank > cursor.afterRank! ||
+        (entry.rank === cursor.afterRank! && entry.profile.id > cursor.afterProfileId!)
+    );
+
+    return nextIndex >= 0 ? nextIndex : orderedCandidates.length;
+  }
+
+  private buildNextWindowCursor(
+    actorProfileId: number,
+    filtersHash: string,
+    lastCandidate: OrderedCandidate | null
+  ) {
+    if (!lastCandidate) {
+      return null;
+    }
+
+    return encodeDiscoveryWindowCursor({
+      policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+      actorProfileId,
+      filtersHash,
+      afterRank: lastCandidate.rank,
+      afterProfileId: lastCandidate.profile.id,
+    });
+  }
+
   private async getActorState(
     client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
     actorProfileId: number
@@ -499,11 +607,85 @@ export class DiscoveryService {
     return null;
   }
 
+  private async repairLegacyActivatedUsers(
+    client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> }
+  ) {
+    const repaired = await client.query<{ user_id: number }>(
+      `WITH eligible_repairs AS (
+         SELECT DISTINCT p.user_id
+         FROM core.profiles p
+         WHERE p.kind = 'user'
+           AND p.user_id IS NOT NULL
+           AND COALESCE(TRIM(p.gender_identity), '') <> ''
+           AND COALESCE(TRIM(p.pronouns), '') <> ''
+           AND COALESCE(TRIM(p.personality), '') <> ''
+           AND COALESCE(TRIM(p.relationship_goals), '') <> ''
+           AND COALESCE(TRIM(p.children_preference), '') <> ''
+           AND COALESCE(TRIM(p.education), '') <> ''
+           AND COALESCE(TRIM(p.physical_activity), '') <> ''
+           AND COALESCE(TRIM(p.body_type), '') <> ''
+           AND EXISTS (
+             SELECT 1
+             FROM core.profile_languages pl
+             WHERE pl.profile_id = p.id
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM media.profile_images pi
+             JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+             WHERE pi.profile_id = p.id
+               AND ma.status = 'ready'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM core.user_onboarding o
+             WHERE o.user_id = p.user_id
+               AND o.status = 'completed'::onboarding_status
+           )
+       )
+       INSERT INTO core.user_onboarding
+         (user_id, status, required_version, started_at, completed_at, exempted_at, completion_origin, created_at, updated_at)
+       SELECT
+         er.user_id,
+         'completed'::onboarding_status,
+         1,
+         NOW(),
+         NOW(),
+         NULL,
+         'legacy_backfill',
+         NOW(),
+         NOW()
+       FROM eligible_repairs er
+       ON CONFLICT (user_id) DO UPDATE SET
+         status = 'completed'::onboarding_status,
+         completed_at = COALESCE(core.user_onboarding.completed_at, EXCLUDED.completed_at),
+         completion_origin = CASE
+           WHEN core.user_onboarding.status = 'completed'::onboarding_status
+             THEN core.user_onboarding.completion_origin
+           ELSE 'legacy_backfill'
+         END,
+         updated_at = NOW()
+       WHERE core.user_onboarding.status <> 'completed'::onboarding_status
+       RETURNING user_id`,
+      []
+    );
+
+    if (repaired.rows.length) {
+      this.logger.log(
+        `[discovery-activation-backfill] ${JSON.stringify({
+          repairedUserIds: repaired.rows.map((row) => row.user_id),
+          repairedCount: repaired.rows.length,
+        })}`
+      );
+    }
+  }
+
   private async buildOrderedCandidateRows(
     client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
     actorProfileId: number,
     filters: DiscoveryFilters
   ) {
+    await this.repairLegacyActivatedUsers(client);
     const profilesResult = await client.query<DiscoveryFeedProfileRow>(
       `SELECT
          p.id,
@@ -856,32 +1038,111 @@ export class DiscoveryService {
     return hydrated;
   }
 
-  private getNextCursorStartIndex(
+  private buildWindowSupply(
     orderedCandidates: OrderedCandidate[],
-    state: Pick<ActorStateRow, "last_served_sort_key" | "last_served_profile_id">
+    policyResult: { diagnostics: DiscoveryPolicyDiagnostics },
+    returnedCandidates: OrderedCandidate[]
   ) {
-    if (
-      !Number.isFinite(state.last_served_sort_key) ||
-      !Number.isFinite(state.last_served_profile_id)
-    ) {
-      return 0;
+    const returnedRealCount = returnedCandidates.filter((entry) => entry.bucket === "real").length;
+    const returnedDummyCount = returnedCandidates.filter((entry) => entry.bucket === "dummy").length;
+    const decidedCount = Number(policyResult.diagnostics.exclusionCounts.already_decided || 0);
+
+    return {
+      eligibleCount: orderedCandidates.length,
+      unseenCount: Math.max(0, orderedCandidates.length - returnedCandidates.length),
+      decidedCount,
+      exhausted: returnedCandidates.length === 0,
+      fetchedAt: new Date().toISOString(),
+      policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+      eligibleRealCount: policyResult.diagnostics.eligibleRealCount,
+      eligibleDummyCount: policyResult.diagnostics.eligibleDummyCount,
+      returnedRealCount,
+      returnedDummyCount,
+      dominantExclusionReason: policyResult.diagnostics.dominantExclusionReason,
+      exhaustedReason: policyResult.diagnostics.exhaustedReason,
+      refillThreshold: DISCOVERY_POLICY_V1.refillThreshold,
+    };
+  }
+
+  private async buildDiscoveryReplacementForActor(
+    client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+    actorProfileId: number,
+    filters: DiscoveryFilters,
+    cursor: string | null | undefined,
+    visibleProfileIds: number[]
+  ) {
+    const filtersHash = this.buildFiltersHash(filters);
+    const decodedCursor = decodeDiscoveryWindowCursor(cursor);
+    const invalidationReason = this.getCursorInvalidationReason({
+      cursor,
+      decodedCursor,
+      actorProfileId,
+      filtersHash,
+    });
+
+    if (invalidationReason) {
+      throw new DiscoveryCursorError(invalidationReason);
     }
 
-    const nextIndex = orderedCandidates.findIndex(
-      (entry) =>
-        entry.rank > Number(state.last_served_sort_key) ||
-        (entry.rank === Number(state.last_served_sort_key) &&
-          entry.profile.id > Number(state.last_served_profile_id))
+    const policyResult = await this.buildOrderedCandidateRows(
+      client,
+      actorProfileId,
+      filters
     );
+    const orderedCandidates = policyResult.orderedCandidates;
+    const startIndex = this.getOrderedCandidateStartIndex(orderedCandidates, decodedCursor);
+    const excludedIds = new Set(this.normalizeVisibleProfileIds(visibleProfileIds));
+    let replacementCandidate: OrderedCandidate | null = null;
+    let replacementIndex = -1;
 
-    return nextIndex >= 0 ? nextIndex : 0;
+    for (let index = startIndex; index < orderedCandidates.length; index += 1) {
+      const candidate = orderedCandidates[index]!;
+      if (excludedIds.has(candidate.profile.id)) {
+        continue;
+      }
+      replacementCandidate = candidate;
+      replacementIndex = index;
+      break;
+    }
+
+    const replacementProfiles = replacementCandidate
+      ? await this.hydrateDiscoveryProfiles(client, [replacementCandidate.profile])
+      : [];
+    const nextCursor = replacementCandidate
+      ? this.buildNextWindowCursor(actorProfileId, filtersHash, replacementCandidate)
+      : null;
+    const hasMore =
+      replacementIndex >= 0
+        ? orderedCandidates.some(
+            (entry, index) =>
+              index > replacementIndex && !excludedIds.has(entry.profile.id)
+          )
+        : false;
+
+    return {
+      replacementProfile: replacementProfiles[0] || null,
+      nextCursor,
+      hasMore,
+      supply: {
+        ...this.buildWindowSupply(
+          orderedCandidates,
+          policyResult,
+          replacementCandidate ? [replacementCandidate] : []
+        ),
+        unseenCount:
+          replacementIndex >= 0
+            ? Math.max(0, orderedCandidates.length - (replacementIndex + 1))
+            : 0,
+        exhausted: replacementCandidate == null,
+      },
+    };
   }
 
   private async buildDiscoveryWindowForActor(
     client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
     actorProfileId: number,
     options?: DiscoveryWindowOptions
-  ) {
+  ): Promise<DiscoveryWindowResult> {
     const size = this.normalizeWindowSize(options?.size);
     const filters = await this.getStoredFiltersForActor(client, actorProfileId);
     const filtersHash = this.buildFiltersHash(filters);
@@ -893,28 +1154,30 @@ export class DiscoveryService {
     );
     const orderedCandidates = policyResult.orderedCandidates;
     const decodedCursor = decodeDiscoveryWindowCursor(options?.cursor);
-    const startIndex =
-      decodedCursor &&
-      decodedCursor.policyVersion === DISCOVERY_POLICY_V1.policyVersion &&
-      decodedCursor.filtersHash === filtersHash
-        ? decodedCursor.offset
-        : 0;
+    const queueInvalidationReason = this.getCursorInvalidationReason({
+      cursor: options?.cursor,
+      decodedCursor,
+      actorProfileId,
+      filtersHash,
+    });
+    const startIndex = queueInvalidationReason
+      ? 0
+      : this.getOrderedCandidateStartIndex(orderedCandidates, decodedCursor);
     const visibleCandidates = orderedCandidates.slice(startIndex, startIndex + size);
     const visibleProfiles = visibleCandidates.map((entry) => entry.profile);
     const hydratedProfiles = await this.hydrateDiscoveryProfiles(client, visibleProfiles);
     const generatedAt = new Date().toISOString();
-    const nextOffset = startIndex + visibleCandidates.length;
-    const hasMore = nextOffset < orderedCandidates.length;
+    const hasMore = startIndex + visibleCandidates.length < orderedCandidates.length;
+    const lastVisibleCandidate =
+      visibleCandidates.length > 0 ? visibleCandidates[visibleCandidates.length - 1]! : null;
     const nextCursor = hasMore
-      ? encodeDiscoveryWindowCursor({
-          policyVersion: DISCOVERY_POLICY_V1.policyVersion,
-          filtersHash,
-          offset: nextOffset,
-        })
+      ? this.buildNextWindowCursor(actorProfileId, filtersHash, lastVisibleCandidate)
       : null;
-    const returnedRealCount = visibleCandidates.filter((entry) => entry.bucket === "real").length;
-    const returnedDummyCount = visibleCandidates.filter((entry) => entry.bucket === "dummy").length;
-    const decidedCount = Number(policyResult.diagnostics.exclusionCounts.already_decided || 0);
+    const supply = {
+      ...this.buildWindowSupply(orderedCandidates, policyResult, visibleCandidates),
+      unseenCount: Math.max(0, orderedCandidates.length - (startIndex + visibleCandidates.length)),
+      exhausted: hydratedProfiles.length === 0,
+    };
 
     this.logger.log(
       `[discovery-policy-window] ${JSON.stringify({
@@ -923,11 +1186,12 @@ export class DiscoveryService {
         queueVersion,
         requestedSize: size,
         cursorStart: startIndex,
+        queueInvalidationReason,
         returnedIds: hydratedProfiles.map((profile) => profile.id),
         eligibleRealCount: policyResult.diagnostics.eligibleRealCount,
         eligibleDummyCount: policyResult.diagnostics.eligibleDummyCount,
-        returnedRealCount,
-        returnedDummyCount,
+        returnedRealCount: supply.returnedRealCount,
+        returnedDummyCount: supply.returnedDummyCount,
         dominantExclusionReason: policyResult.diagnostics.dominantExclusionReason,
         exhaustedReason: policyResult.diagnostics.exhaustedReason,
         exhausted: hydratedProfiles.length === 0,
@@ -946,21 +1210,13 @@ export class DiscoveryService {
       profiles: hydratedProfiles,
       nextCursor,
       hasMore,
-      supply: {
-        eligibleCount: orderedCandidates.length,
-        unseenCount: Math.max(0, orderedCandidates.length - nextOffset),
-        decidedCount,
-        exhausted: hydratedProfiles.length === 0,
-        fetchedAt: new Date().toISOString(),
-        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
-        eligibleRealCount: policyResult.diagnostics.eligibleRealCount,
-        eligibleDummyCount: policyResult.diagnostics.eligibleDummyCount,
-        returnedRealCount,
-        returnedDummyCount,
-        dominantExclusionReason: policyResult.diagnostics.dominantExclusionReason,
-        exhaustedReason: policyResult.diagnostics.exhaustedReason,
-        refillThreshold: DISCOVERY_POLICY_V1.refillThreshold,
-      },
+      ...(queueInvalidationReason
+        ? {
+            queueInvalidated: true,
+            queueInvalidationReason,
+          }
+        : {}),
+      supply,
     };
   }
 
@@ -1093,6 +1349,8 @@ export class DiscoveryService {
       targetProfileId: number;
       categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
       requestId?: string | null;
+      cursor?: string | null;
+      visibleProfileIds?: number[];
       queueVersion?: number | null;
       presentedPosition?: number | null;
     }
@@ -1106,6 +1364,8 @@ export class DiscoveryService {
       targetProfileId: number;
       categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
       requestId?: string | null;
+      cursor?: string | null;
+      visibleProfileIds?: number[];
       queueVersion?: number | null;
       presentedPosition?: number | null;
     }
@@ -1120,6 +1380,8 @@ export class DiscoveryService {
       targetProfileId: number;
       categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
       requestId?: string | null;
+      cursor?: string | null;
+      visibleProfileIds?: number[];
       queueVersion?: number | null;
       presentedPosition?: number | null;
     }
@@ -1134,6 +1396,8 @@ export class DiscoveryService {
       targetProfileId: number;
       categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
       requestId?: string | null;
+      cursor?: string | null;
+      visibleProfileIds?: number[];
       queueVersion?: number | null;
       presentedPosition?: number | null;
     }
@@ -1149,12 +1413,17 @@ export class DiscoveryService {
       const previousThresholdReached = Boolean(previous.threshold?.thresholdReached);
       const normalizedCategoryValues = normalizePopularAttributeInput(payload.categoryValues);
       const normalizedRequestId = String(payload.requestId || "").trim() || null;
+      const normalizedCursor = String(payload.cursor || "").trim() || null;
+      const normalizedVisibleProfileIds = this.normalizeVisibleProfileIds(
+        payload.visibleProfileIds
+      );
       const targetProfileId = Number(payload.targetProfileId);
       const requestedQueueVersion =
         Number.isFinite(Number(payload.queueVersion)) && Number(payload.queueVersion) > 0
           ? Number(payload.queueVersion)
           : null;
       const targetProfile = await this.findTargetProfileById(client, targetProfileId);
+      const currentFilters = await this.getStoredFiltersForActor(client, actorProfileId);
       const previousTotals = {
         totalLikes: previous.threshold?.totalLikes ?? previous.totalLikesCount ?? 0,
         totalPasses: previous.threshold?.totalPasses ?? previous.lifetimeCounts?.passes ?? 0,
@@ -1183,6 +1452,25 @@ export class DiscoveryService {
         throw new Error("DISCOVERY_TARGET_NOT_FOUND");
       }
 
+      const cursorInvalidationReason = this.getCursorInvalidationReason({
+        cursor: normalizedCursor,
+        decodedCursor: decodeDiscoveryWindowCursor(normalizedCursor),
+        actorProfileId,
+        filtersHash: this.buildFiltersHash(currentFilters),
+      });
+      if (cursorInvalidationReason) {
+        this.warnDecisionEvent("cursor_stale", {
+          requestId: normalizedRequestId,
+          userId,
+          actorProfileId,
+          targetProfileId: targetProfile.id,
+          interactionType,
+          queueInvalidationReason: cursorInvalidationReason,
+          durationMs: Date.now() - startedAt,
+        });
+        throw new DiscoveryCursorError(cursorInvalidationReason);
+      }
+
       if (normalizedRequestId) {
         const existingRequest = await client.query<{ id: number }>(
           `SELECT id
@@ -1195,7 +1483,17 @@ export class DiscoveryService {
 
         if (existingRequest.rows[0]?.id) {
           const rebuilt = await this.buildDiscoveryState(client, userId, actorProfileId);
-          const feed = await this.buildDiscoveryWindowForActor(client, actorProfileId);
+          const replacement = await this.buildDiscoveryReplacementForActor(
+            client,
+            actorProfileId,
+            currentFilters,
+            normalizedCursor,
+            normalizedVisibleProfileIds
+          );
+          const queueVersion = this.computePolicyQueueVersion(
+            actorProfileId,
+            this.buildFiltersHash(currentFilters)
+          );
           this.logDecisionEvent("duplicate_request_id", {
             decisionApplied: false,
             decisionRejectedReason: "duplicate_request_id",
@@ -1204,13 +1502,14 @@ export class DiscoveryService {
             actorProfileId,
             targetProfileId: targetProfile.id,
             interactionType,
-            queueVersion: feed.queueVersion,
+            queueVersion,
             durationMs: Date.now() - startedAt,
             nextTotals: {
               totalLikes: rebuilt.threshold.totalLikes,
               totalPasses: rebuilt.threshold.totalPasses,
               thresholdReached: rebuilt.threshold.thresholdReached,
             },
+            replacementProfileId: replacement.replacementProfile?.id ?? null,
           });
           await client.query("COMMIT");
           return {
@@ -1221,7 +1520,13 @@ export class DiscoveryService {
             changedCategories: [],
             shouldShowDiscoveryUpdate: false,
             ...rebuilt,
-            feed,
+            filters: currentFilters,
+            queueVersion,
+            policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+            replacementProfile: replacement.replacementProfile,
+            nextCursor: replacement.nextCursor,
+            hasMore: replacement.hasMore,
+            supply: replacement.supply,
           };
         }
       }
@@ -1237,8 +1542,17 @@ export class DiscoveryService {
 
       if (existingDecision.rows[0]?.current_state === interactionType) {
         const currentUnlockState = await this.goalsService.getGoalsUnlockState(userId, client);
-        const currentFilters = await this.getStoredFiltersForActor(client, actorProfileId);
-        const feed = await this.buildDiscoveryWindowForActor(client, actorProfileId);
+        const replacement = await this.buildDiscoveryReplacementForActor(
+          client,
+          actorProfileId,
+          currentFilters,
+          normalizedCursor,
+          normalizedVisibleProfileIds
+        );
+        const queueVersion = this.computePolicyQueueVersion(
+          actorProfileId,
+          this.buildFiltersHash(currentFilters)
+        );
         this.logDecisionEvent("same_state_existing_decision", {
           decisionApplied: false,
           decisionRejectedReason: "same_state_existing_decision",
@@ -1247,11 +1561,12 @@ export class DiscoveryService {
           actorProfileId,
           targetProfileId: targetProfile.id,
           interactionType,
-          queueVersion: feed.queueVersion,
+          queueVersion,
           durationMs: Date.now() - startedAt,
           nextTotals: previousTotals,
           unlockAvailable: currentUnlockState.available,
           unlockPending: currentUnlockState.unlockMessagePending,
+          replacementProfileId: replacement.replacementProfile?.id ?? null,
         });
         await client.query("COMMIT");
         return {
@@ -1264,7 +1579,12 @@ export class DiscoveryService {
           ...previous,
           goalsUnlock: currentUnlockState,
           filters: currentFilters,
-          feed,
+          queueVersion,
+          policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+          replacementProfile: replacement.replacementProfile,
+          nextCursor: replacement.nextCursor,
+          hasMore: replacement.hasMore,
+          supply: replacement.supply,
         };
       }
 
@@ -1340,8 +1660,17 @@ export class DiscoveryService {
       await this.goalsService.rebuildUserGoalTargets(userId, client, {
         refreshPreferences: false,
       });
-      const filters = await this.getStoredFiltersForActor(client, actorProfileId);
-      const feed = await this.buildDiscoveryWindowForActor(client, actorProfileId);
+      const replacement = await this.buildDiscoveryReplacementForActor(
+        client,
+        actorProfileId,
+        currentFilters,
+        normalizedCursor,
+        normalizedVisibleProfileIds
+      );
+      const queueVersion = this.computePolicyQueueVersion(
+        actorProfileId,
+        this.buildFiltersHash(currentFilters)
+      );
       const changedCategories =
         interactionType === "like"
           ? diffPopularAttributeSnapshots(
@@ -1362,7 +1691,7 @@ export class DiscoveryService {
         actorProfileId,
         targetProfileId: targetProfile.id,
         interactionType,
-        queueVersion: feed.queueVersion,
+        queueVersion,
         interactionId: insertResult.rows[0].id,
         projectionRebuildMs,
         durationMs: Date.now() - startedAt,
@@ -1380,7 +1709,8 @@ export class DiscoveryService {
           justUnlocked: goalsUnlock.justUnlocked,
           unlockMessagePending: goalsUnlock.unlockMessagePending,
         },
-        returnedNextIds: feed.profiles.map((profile) => profile.id),
+        replacementProfileId: replacement.replacementProfile?.id ?? null,
+        hasMore: replacement.hasMore,
         changedCategories: changedCategories.map((item) => item.category),
         shouldShowDiscoveryUpdate,
       });
@@ -1396,8 +1726,13 @@ export class DiscoveryService {
         shouldShowDiscoveryUpdate,
         ...rebuilt,
         goalsUnlock,
-        filters,
-        feed,
+        filters: currentFilters,
+        queueVersion,
+        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+        replacementProfile: replacement.replacementProfile,
+        nextCursor: replacement.nextCursor,
+        hasMore: replacement.hasMore,
+        supply: replacement.supply,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "UNKNOWN_ERROR";
@@ -1411,6 +1746,8 @@ export class DiscoveryService {
         interactionType,
         durationMs: Date.now() - startedAt,
         error: message,
+        queueInvalidationReason:
+          error instanceof DiscoveryCursorError ? error.queueInvalidationReason : null,
       });
       await client.query("ROLLBACK");
       throw error;

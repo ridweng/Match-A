@@ -86,7 +86,7 @@ type OverviewCounts = {
 };
 
 type OverviewView = {
-  selectedTimeframe: Exclude<OverviewTimeframe, "all">;
+  selectedTimeframe: OverviewTimeframe;
   selectedCountry: string;
   availableCountries: OverviewRealCountryRow[];
   counts: OverviewCounts;
@@ -102,6 +102,9 @@ type OverviewView = {
   realUserGenderDistribution: OverviewRealGenderRow[];
   realUserCountryDistribution: OverviewRealCountryRow[];
   interactedUsers: OverviewInteractedUserRow[];
+  diagnostics: {
+    repairedBackfillCount: number;
+  };
   architectureSections: {
     title: string;
     body: string;
@@ -658,6 +661,69 @@ export class AdminService {
     return `COALESCE(${locationCountry}, 'Unknown')`;
   }
 
+  private async repairLegacyActivatedUsers() {
+    const repaired = await pool.query<{ user_id: number }>(
+      `WITH eligible_repairs AS (
+         SELECT DISTINCT p.user_id
+         FROM core.profiles p
+         WHERE p.kind = 'user'
+           AND p.user_id IS NOT NULL
+           AND COALESCE(TRIM(p.gender_identity), '') <> ''
+           AND COALESCE(TRIM(p.pronouns), '') <> ''
+           AND COALESCE(TRIM(p.personality), '') <> ''
+           AND COALESCE(TRIM(p.relationship_goals), '') <> ''
+           AND COALESCE(TRIM(p.children_preference), '') <> ''
+           AND COALESCE(TRIM(p.education), '') <> ''
+           AND COALESCE(TRIM(p.physical_activity), '') <> ''
+           AND COALESCE(TRIM(p.body_type), '') <> ''
+           AND EXISTS (
+             SELECT 1
+             FROM core.profile_languages pl
+             WHERE pl.profile_id = p.id
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM media.profile_images pi
+             JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+             WHERE pi.profile_id = p.id
+               AND ma.status = 'ready'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM core.user_onboarding o
+             WHERE o.user_id = p.user_id
+               AND o.status = 'completed'::onboarding_status
+           )
+       )
+       INSERT INTO core.user_onboarding
+         (user_id, status, required_version, started_at, completed_at, exempted_at, completion_origin, created_at, updated_at)
+       SELECT
+         er.user_id,
+         'completed'::onboarding_status,
+         1,
+         NOW(),
+         NOW(),
+         NULL,
+         'legacy_backfill',
+         NOW(),
+         NOW()
+       FROM eligible_repairs er
+       ON CONFLICT (user_id) DO UPDATE SET
+         status = 'completed'::onboarding_status,
+         completed_at = COALESCE(core.user_onboarding.completed_at, EXCLUDED.completed_at),
+         completion_origin = CASE
+           WHEN core.user_onboarding.status = 'completed'::onboarding_status
+             THEN core.user_onboarding.completion_origin
+           ELSE 'legacy_backfill'
+         END,
+         updated_at = NOW()
+       WHERE core.user_onboarding.status <> 'completed'::onboarding_status
+       RETURNING user_id`
+    );
+
+    return repaired.rows.length;
+  }
+
   private async hasColumn(schema: string, table: string, column: string) {
     const result = await pool.query<{ exists: boolean }>(
       `SELECT EXISTS (
@@ -1178,9 +1244,9 @@ export class AdminService {
   }
 
   async getOverview(filters?: OverviewFilters): Promise<OverviewView> {
+    const repairedBackfillCount = await this.repairLegacyActivatedUsers();
     const normalizedTimeframe = this.normalizeOverviewTimeframe(filters?.timeframe);
-    const selectedTimeframe =
-      normalizedTimeframe === "all" ? "1m" : normalizedTimeframe;
+    const selectedTimeframe = normalizedTimeframe;
     const selectedCountry = this.normalizeOverviewCountry(filters?.country);
     const hasProfileCountryColumn = await this.hasColumn("core", "profiles", "country");
     const hasProfileLocationHistoryTable = await this.hasColumn(
@@ -1217,11 +1283,26 @@ export class AdminService {
           p.gender_identity,
           p.created_at,
           p.is_discoverable,
+          EXISTS (
+            SELECT 1
+            FROM media.profile_images pi
+            JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+            WHERE pi.profile_id = p.id
+              AND ma.status = 'ready'
+          ) AS has_ready_media,
           o.status AS onboarding_status,
           o.completed_at AS activated_at,
+          o.completion_origin,
           CASE
             WHEN o.status = 'completed'::onboarding_status
              AND p.is_discoverable = true
+             AND EXISTS (
+               SELECT 1
+               FROM media.profile_images pi
+               JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+               WHERE pi.profile_id = p.id
+                 AND ma.status = 'ready'
+             )
             THEN true
             ELSE false
           END AS is_activated,
@@ -1467,6 +1548,9 @@ export class AdminService {
       realUserGenderDistribution: realUserGenderDistribution.rows,
       realUserCountryDistribution: realUserCountryDistribution.rows,
       interactedUsers: interactedUsers.rows,
+      diagnostics: {
+        repairedBackfillCount,
+      },
       architectureSections: [
         {
           title: "auth",

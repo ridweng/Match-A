@@ -600,6 +600,7 @@ export default function GoalsScreen() {
   const {
     t,
     goals,
+    isOnline,
     language,
     accountProfile,
     heightUnit,
@@ -737,6 +738,7 @@ export default function GoalsScreen() {
     activeFilter === "all"
       ? categoryModules
       : categoryModules.filter((module) => module.key === activeFilter);
+  const isOffline = !isOnline;
 
   const filters = (Object.keys(CATEGORY_CONFIG) as GoalsFilter[]).map((key) => ({
     key,
@@ -778,6 +780,18 @@ export default function GoalsScreen() {
         contentContainerStyle={{ paddingBottom: bottomPad }}
         showsVerticalScrollIndicator={false}
       >
+        {isOffline ? (
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={14} color={Colors.info} />
+            <Text style={styles.offlineBannerText}>
+              {t(
+                "Sin conexión. Puedes revisar tus metas, pero completar o reordenar tareas está desactivado.",
+                "You are offline. You can review your goals, but completing or reordering tasks is disabled."
+              )}
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.header}>
           <Text style={styles.headerTitle}>{t("Mis Metas", "My Goals")}</Text>
           <Text style={styles.headerSub}>
@@ -1043,6 +1057,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontFamily: "Inter_400Regular",
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.textSecondary,
   },
   header: {
     paddingHorizontal: 20,
