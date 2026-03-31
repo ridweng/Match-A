@@ -5,8 +5,10 @@ import * as Haptics from "expo-haptics";
 import { usePathname } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   Keyboard,
+  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -52,6 +54,10 @@ import {
   warmDiscoveryFrontExtras,
   warmDiscoveryProfileImages,
 } from "@/utils/discoveryPreload";
+import {
+  cacheDiscoveryFrontCardImages,
+  clearDiscoveryFrontCardCache,
+} from "@/utils/discoveryFrontCardCache";
 import {
   debugDiscoveryLog,
   debugDiscoveryWarn,
@@ -694,6 +700,7 @@ export default function DiscoverScreen() {
   );
   const {
     t,
+    user,
     likeProfile,
     passProfile,
     likedProfiles,
@@ -735,6 +742,13 @@ export default function DiscoverScreen() {
   const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
   const [, setPreloadRevision] = useState(0);
   const [deck, setDeck] = useState<DeckState>(() => buildDeckState([], 0));
+  const [frontCachedImages, setFrontCachedImages] = useState<string[]>([]);
+  const [frontCachedProfileId, setFrontCachedProfileId] = useState<number | null>(null);
+  const [frontImageLoading, setFrontImageLoading] = useState(false);
+  const [locationPromptVisible, setLocationPromptVisible] = useState(false);
+  const [locationPromptReason, setLocationPromptReason] = useState<
+    "permission_denied" | "services_disabled" | null
+  >(null);
   const deckRef = useRef<DeckState>(deck);
   const screenSessionIdRef = useRef(createTraceId("discover"));
   const swipeSessionIdRef = useRef<string | null>(null);
@@ -771,9 +785,19 @@ export default function DiscoverScreen() {
       return;
     }
 
-    void refreshProfileLocation({
-      reason: "discover_entry",
-    });
+    void (async () => {
+      const result = await refreshProfileLocation({
+        reason: "discover_entry",
+      });
+
+      if (
+        result.status === "permission_denied" ||
+        result.status === "services_disabled"
+      ) {
+        setLocationPromptReason(result.status);
+        setLocationPromptVisible(true);
+      }
+    })();
   }, [pathname, refreshProfileLocation]);
 
   const rotate = position.x.interpolate({
@@ -894,7 +918,10 @@ export default function DiscoverScreen() {
   const thirdProfile = thirdSlot.profile;
   const secondReady = secondProfile ? secondSlot.primaryReady : true;
   const hasPendingDecision = pendingDecisionProfileId !== null;
-  const currentImages = frontProfile?.images ?? [];
+  const currentImages =
+    frontProfile && frontCachedProfileId === frontProfile.id && frontCachedImages.length
+      ? frontCachedImages
+      : frontProfile?.images ?? [];
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
@@ -982,6 +1009,58 @@ export default function DiscoverScreen() {
   const shouldSuppressVisualChurn =
     traceFocused && DISCOVERY_ISOLATION_MODE === "C" && isDeckAnimating;
   const shouldUseStableSlotImageKeys = DISCOVERY_ISOLATION_MODE === "D";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!user?.id || !frontProfile) {
+      setFrontCachedImages([]);
+      setFrontCachedProfileId(null);
+      setFrontImageLoading(false);
+      if (user?.id) {
+        void clearDiscoveryFrontCardCache(user.id);
+      }
+      return;
+    }
+
+    if (frontCachedProfileId === frontProfile.id && frontCachedImages.length > 0) {
+      return;
+    }
+
+    setFrontImageLoading(true);
+
+    void (async () => {
+      await clearDiscoveryFrontCardCache(user.id).catch(() => {});
+      const cached = await cacheDiscoveryFrontCardImages(
+        user.id,
+        frontProfile.id,
+        frontProfile.images
+      );
+      if (cancelled) {
+        return;
+      }
+      setFrontCachedProfileId(frontProfile.id);
+      setFrontCachedImages(cached);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    frontCachedImages.length,
+    frontCachedProfileId,
+    frontProfile,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (!frontProfile || !currentImage) {
+      setFrontImageLoading(false);
+      return;
+    }
+
+    setFrontImageLoading(true);
+  }, [currentImage, frontProfile?.id]);
 
   const getTraceSnapshot = useCallback(
     () => ({
@@ -2359,6 +2438,7 @@ export default function DiscoverScreen() {
                   cachePolicy="memory-disk"
                   transition={0}
                   onLoadStart={() => {
+                    setFrontImageLoading(true);
                     trace("image_load_start", {
                       slot: "front",
                       profileId: frontProfile.id,
@@ -2367,6 +2447,7 @@ export default function DiscoverScreen() {
                     });
                   }}
                   onLoadEnd={() => {
+                    setFrontImageLoading(false);
                     trace("image_load_end", {
                       slot: "front",
                       profileId: frontProfile.id,
@@ -2376,6 +2457,7 @@ export default function DiscoverScreen() {
                     markSlotReady("front", frontProfile.id);
                   }}
                   onError={() => {
+                    setFrontImageLoading(false);
                     trace("image_load_error", {
                       slot: "front",
                       profileId: frontProfile.id,
@@ -2385,6 +2467,11 @@ export default function DiscoverScreen() {
                     markSlotReady("front", frontProfile.id);
                   }}
                 />
+                {frontImageLoading ? (
+                  <View style={styles.frontCardLoadingOverlay}>
+                    <ActivityIndicator color={Colors.primaryLight} />
+                  </View>
+                ) : null}
 
                 <View style={styles.photoTapLayer} pointerEvents="box-none">
                   <Pressable
@@ -2894,6 +2981,83 @@ export default function DiscoverScreen() {
           </View>
         </View>
       )}
+
+      <Modal
+        visible={locationPromptVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLocationPromptVisible(false)}
+      >
+        <View style={styles.locationPromptOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setLocationPromptVisible(false)}
+          />
+          <View style={styles.locationPromptCard}>
+            <View style={styles.locationPromptIcon}>
+              <Feather name="map-pin" size={18} color={Colors.primaryLight} />
+            </View>
+            <Text style={styles.locationPromptTitle}>
+              {t("Activa tu ubicación", "Enable your location")}
+            </Text>
+            <Text style={styles.locationPromptCopy}>
+              {locationPromptReason === "services_disabled"
+                ? t(
+                    "MatchA funciona mejor con el GPS activado. Enciéndelo para actualizar tu ciudad y mejorar discovery.",
+                    "MatchA works better with GPS enabled. Turn it on to update your city and improve discovery."
+                  )
+                : t(
+                    "MatchA funciona mejor con la ubicación activada. Permítela para actualizar tu ciudad y mejorar discovery.",
+                    "MatchA works better with location enabled. Allow it to update your city and improve discovery."
+                  )}
+            </Text>
+            <View style={styles.locationPromptActions}>
+              <Pressable
+                onPress={() => setLocationPromptVisible(false)}
+                style={({ pressed }) => [
+                  styles.locationPromptButton,
+                  styles.locationPromptButtonSecondary,
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <Text style={styles.locationPromptButtonSecondaryText}>
+                  {t("Cerrar", "Close")}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  void (async () => {
+                    const result = await refreshProfileLocation({
+                      reason: "discover_entry",
+                      force: true,
+                    });
+                    if (result.status === "updated" || result.status === "skipped_recent_sync") {
+                      setLocationPromptVisible(false);
+                      return;
+                    }
+                    if (
+                      result.status === "permission_denied" ||
+                      result.status === "services_disabled"
+                    ) {
+                      setLocationPromptReason(result.status);
+                      await Linking.openSettings().catch(() => {});
+                    }
+                  })();
+                }}
+                style={({ pressed }) => [
+                  styles.locationPromptButton,
+                  styles.locationPromptButtonPrimary,
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <Text style={styles.locationPromptButtonPrimaryText}>
+                  {t("Activar", "Enable")}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={isFilterVisible}
@@ -3593,6 +3757,13 @@ const styles = StyleSheet.create({
     height: "100%",
     position: "absolute",
   },
+  frontCardLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,26,20,0.24)",
+    zIndex: 2,
+  },
   cardThirdBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: Colors.backgroundCard,
@@ -3949,6 +4120,75 @@ const styles = StyleSheet.create({
   infoBtnActive: {
     borderColor: Colors.info,
     backgroundColor: "rgba(90,169,255,0.24)",
+  },
+  locationPromptOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(5,10,8,0.56)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  locationPromptCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 24,
+    padding: 22,
+    backgroundColor: Colors.backgroundCard,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  locationPromptIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(82,183,136,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.28)",
+  },
+  locationPromptTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 20,
+    color: Colors.text,
+    letterSpacing: -0.4,
+  },
+  locationPromptCopy: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.textSecondary,
+  },
+  locationPromptActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  locationPromptButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  locationPromptButtonPrimary: {
+    backgroundColor: Colors.like,
+  },
+  locationPromptButtonSecondary: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  locationPromptButtonPrimaryText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 14,
+    color: "#fff",
+  },
+  locationPromptButtonSecondaryText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.text,
   },
   modalOverlay: {
     flex: 1,

@@ -2,8 +2,8 @@ import { Image } from "expo-image";
 
 import type { DiscoveryFeedProfileResponse as DiscoverProfile } from "@/services/auth";
 
-export const DISCOVERY_PRELOAD_QUEUE_LENGTH = 3;
-export const DISCOVERY_PRELOAD_IMAGE_LIMITS_BY_SLOT = [1, 1, 0] as const;
+export const DISCOVERY_PRELOAD_QUEUE_LENGTH = 1;
+export const DISCOVERY_PRELOAD_IMAGE_LIMITS_BY_SLOT = [1] as const;
 
 const warmedImageUris = new Set<string>();
 

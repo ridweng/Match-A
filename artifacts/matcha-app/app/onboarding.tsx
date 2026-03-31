@@ -114,6 +114,7 @@ export default function OnboardingScreen() {
     saveOnboardingDraft,
     setOnboardingResumeStep,
     t,
+    user,
   } = useApp();
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -146,6 +147,24 @@ export default function OnboardingScreen() {
       setPhotos(accountProfile.photos || []);
     }
   }, [accountProfile.photos]);
+
+  React.useEffect(() => {
+    if (hasCompletedOnboarding || onboardingResumeStep !== 1) {
+      return;
+    }
+
+    hasLocalPhotoDraftChangesRef.current = false;
+    setGenderIdentity("");
+    setPronouns("");
+    setPhotos([]);
+    setRelationshipGoals("");
+    setChildrenPreference("");
+    setLanguagesSpoken([getDefaultSpokenLanguageValue(language)]);
+    setEducation("");
+    setPhysicalActivity("");
+    setBodyType("");
+    setPersonality("");
+  }, [hasCompletedOnboarding, language, onboardingResumeStep]);
 
   React.useEffect(() => {
     setStep(onboardingResumeStep);
@@ -207,7 +226,11 @@ export default function OnboardingScreen() {
   };
 
   const savePickedPhoto = async (index: number, sourceUri: string) => {
-    const targetUri = await saveProfilePhotoLocally(index, sourceUri);
+    const targetUri = await saveProfilePhotoLocally(
+      index,
+      sourceUri,
+      user?.id ?? "anonymous"
+    );
     const previous = getPhotoForSlot(index);
     const nextPhoto: UserProfilePhoto = {
       localUri: targetUri,

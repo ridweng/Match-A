@@ -194,6 +194,7 @@ export default function ProfileScreen() {
     removeProfilePhoto,
     saveProfileChanges,
     setProfilePhoto,
+    user,
   } = useApp();
 
   const placeholder = t("Ninguno", "None");
@@ -224,6 +225,9 @@ export default function ProfileScreen() {
   const [draftProfile, setDraftProfile] = React.useState(accountProfile);
   const [hasUnsavedChanges, setHasUnsavedChanges] = React.useState(false);
   const [saveStatus, setSaveStatus] = React.useState<ProfileSaveStatus>("idle");
+  const [loadingImageKeys, setLoadingImageKeys] = React.useState<Record<string, boolean>>(
+    {}
+  );
   const heightOutOfRange = isHeightOutOfRange(draftProfile.height, heightUnit);
   const heightPlaceholder =
     heightUnit === "imperial"
@@ -247,7 +251,11 @@ export default function ProfileScreen() {
       return;
     }
 
-    const targetUri = await saveProfilePhotoLocally(index, sourceUri);
+    const targetUri = await saveProfilePhotoLocally(
+      index,
+      sourceUri,
+      user?.id ?? "anonymous"
+    );
     const previousPhoto = getProfilePhotoBySortOrder(accountProfile.photos, index);
     const nextPhoto = await setProfilePhoto(index, targetUri);
     if (nextPhoto?.status === "error") {
@@ -407,6 +415,19 @@ export default function ProfileScreen() {
   const mainPhoto = getProfilePhotoDisplayUri(
     getProfilePhotoBySortOrder(accountProfile.photos, 0)
   );
+  const mainPhotoKey = mainPhoto ? `main:${mainPhoto}` : "main:empty";
+
+  const setImageLoading = React.useCallback((key: string, isLoading: boolean) => {
+    setLoadingImageKeys((current) => {
+      if (!isLoading && !current[key]) {
+        return current;
+      }
+      return {
+        ...current,
+        [key]: isLoading,
+      };
+    });
+  }, []);
 
   const handleSave = async () => {
     if (!hasUnsavedChanges) {
@@ -487,7 +508,20 @@ export default function ProfileScreen() {
             style={styles.mainPhotoWrap}
           >
             {mainPhoto ? (
-              <Image source={{ uri: mainPhoto }} style={styles.mainPhoto} />
+              <>
+                <Image
+                  source={{ uri: mainPhoto }}
+                  style={styles.mainPhoto}
+                  onLoadStart={() => setImageLoading(mainPhotoKey, true)}
+                  onLoadEnd={() => setImageLoading(mainPhotoKey, false)}
+                  onError={() => setImageLoading(mainPhotoKey, false)}
+                />
+                {loadingImageKeys[mainPhotoKey] ? (
+                  <View style={styles.photoLoadingOverlay}>
+                    <ActivityIndicator color={Colors.primaryLight} />
+                  </View>
+                ) : null}
+              </>
             ) : (
               <View style={styles.mainPhotoPlaceholder}>
                 <Feather name="user" size={68} color={Colors.textMuted} />
@@ -538,6 +572,7 @@ export default function ProfileScreen() {
             {Array.from({ length: MAX_PROFILE_PHOTOS }).map((_, index) => {
               const photo = getProfilePhotoBySortOrder(accountProfile.photos, index);
               const photoUri = getProfilePhotoDisplayUri(photo);
+              const photoKey = photoUri ? `slot:${index}:${photoUri}` : `slot:${index}:empty`;
               const isMain = index === 0;
               return (
                 <Pressable
@@ -546,7 +581,20 @@ export default function ProfileScreen() {
                   style={[styles.photoSlot, isMain && styles.photoSlotMain]}
                 >
                   {photoUri ? (
-                    <Image source={{ uri: photoUri }} style={styles.photoSlotImage} />
+                    <>
+                      <Image
+                        source={{ uri: photoUri }}
+                        style={styles.photoSlotImage}
+                        onLoadStart={() => setImageLoading(photoKey, true)}
+                        onLoadEnd={() => setImageLoading(photoKey, false)}
+                        onError={() => setImageLoading(photoKey, false)}
+                      />
+                      {loadingImageKeys[photoKey] ? (
+                        <View style={styles.photoLoadingOverlay}>
+                          <ActivityIndicator color={Colors.primaryLight} size="small" />
+                        </View>
+                      ) : null}
+                    </>
                   ) : (
                     <View
                       style={[
@@ -1017,6 +1065,12 @@ const styles = StyleSheet.create({
   photoSlotImage: {
     width: "100%",
     height: "100%",
+  },
+  photoLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,26,20,0.28)",
   },
   photoSlotPlaceholder: {
     flex: 1,

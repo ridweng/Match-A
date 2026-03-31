@@ -284,19 +284,40 @@ export class AuthService {
     return false;
   }
 
-  authPayload(
+  private resolveHasCompletedOnboardingFromSnapshot(
+    user: ReturnType<AuthService["mapUser"]> | null | undefined,
+    snapshot?: AuthUserSessionSnapshot | null
+  ) {
+    if (snapshot?.onboardingStatus === "completed" || snapshot?.onboardingStatus === "exempt") {
+      return true;
+    }
+    if (snapshot?.onboardingStatus === "pending") {
+      return false;
+    }
+    if (this.resolveHasCompletedOnboarding(user)) {
+      return true;
+    }
+    return Boolean(snapshot?.profileImageCount && snapshot.profileImageCount > 0);
+  }
+
+  async authPayload(
     user: ReturnType<AuthService["mapUser"]>,
     accessToken: string,
-    refreshToken: string
+    refreshToken: string,
+    options?: { snapshot?: AuthUserSessionSnapshot | null }
   ) {
     const needsProfileCompletion = !user?.name || !user?.dateOfBirth;
+    const hasCompletedOnboarding = this.resolveHasCompletedOnboardingFromSnapshot(
+      user,
+      options?.snapshot
+    );
     return {
       status: "authenticated",
       accessToken,
       refreshToken,
       user: this.sanitizeUser(user),
       needsProfileCompletion,
-      hasCompletedOnboarding: this.resolveHasCompletedOnboarding(user),
+      hasCompletedOnboarding,
     };
   }
 
@@ -1238,7 +1259,8 @@ export class AuthService {
         refreshExpiresAt,
       });
     }
-    return this.authPayload(user, accessToken, refreshToken);
+    const snapshot = await this.getAuthUserSessionSnapshot(user!.id, session?.id ?? null);
+    return this.authPayload(user, accessToken, refreshToken, { snapshot });
   }
 
   async authenticate(
@@ -1824,7 +1846,13 @@ export class AuthService {
       accessExpiresAt: rotated.accessExpiresAt,
       refreshExpiresAt: rotated.refreshExpiresAt,
     });
-    return this.authPayload(rotated.user, rotated.accessToken, rotated.refreshToken);
+    const snapshot = await this.getAuthUserSessionSnapshot(
+      rotated.user.id,
+      rotated.sessionId
+    );
+    return this.authPayload(rotated.user, rotated.accessToken, rotated.refreshToken, {
+      snapshot,
+    });
   }
 
   async verifyEmailToken(token: string) {
@@ -1908,10 +1936,14 @@ export class AuthService {
     const auth = await this.authenticate(authorizationHeader, {
       source: "get_me",
     });
+    const snapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     return {
       user: this.sanitizeUser(auth.user),
       needsProfileCompletion: !auth.user?.name || !auth.user?.dateOfBirth,
-      hasCompletedOnboarding: this.resolveHasCompletedOnboarding(auth.user),
+      hasCompletedOnboarding: this.resolveHasCompletedOnboardingFromSnapshot(
+        auth.user,
+        snapshot
+      ),
     };
   }
 
@@ -1929,10 +1961,14 @@ export class AuthService {
       }
     }
     const user = await this.updateUserProfile(auth.user.id, updates);
+    const snapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     return {
       user: this.sanitizeUser(user),
       needsProfileCompletion: !user?.name || !user?.dateOfBirth,
-      hasCompletedOnboarding: this.resolveHasCompletedOnboarding(user),
+      hasCompletedOnboarding: this.resolveHasCompletedOnboardingFromSnapshot(
+        user,
+        snapshot
+      ),
     };
   }
 

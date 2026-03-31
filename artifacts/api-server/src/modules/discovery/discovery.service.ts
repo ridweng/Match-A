@@ -546,6 +546,16 @@ export class DiscoveryService {
        LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
        WHERE p.is_discoverable = true
          AND p.id <> $1
+         AND (
+           pdm.profile_id IS NOT NULL
+           OR EXISTS (
+             SELECT 1
+             FROM media.profile_images pi
+             JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+             WHERE pi.profile_id = p.id
+               AND ma.status = 'ready'
+           )
+         )
        ORDER BY p.id ASC`,
       [actorProfileId]
     );
@@ -674,11 +684,12 @@ export class DiscoveryService {
       goalFeedbackByProfile.set(row.profile_id, current);
     }
 
-    return visibleProfiles.map((profile) => {
+    const hydrated = visibleProfiles.map((profile) => {
       const age = this.computeAge(profile.date_of_birth) || 0;
       const languages = languagesByProfile.get(profile.id) || [];
       const interests = interestsByProfile.get(profile.id) || [];
       const images = imagesByProfile.get(profile.id);
+      const isDummyProfile = Boolean(profile.synthetic_group);
       const insightTags =
         insightsByProfile.get(profile.id) ||
         [
@@ -730,7 +741,12 @@ export class DiscoveryService {
           hairColor: profile.hair_color,
           ethnicity: profile.ethnicity,
         },
-        images: images && images.length > 0 ? images : this.getFallbackImages(profile),
+        images:
+          images && images.length > 0
+            ? images
+            : isDummyProfile
+              ? this.getFallbackImages(profile)
+              : [],
         insightTags,
         goalFeedback: goalFeedbackByProfile.get(profile.id) || [],
         categoryValues: normalizePopularAttributeInput({
@@ -743,6 +759,23 @@ export class DiscoveryService {
         }),
       };
     });
+
+    this.logger.log(
+      `[discovery-image-hydration] ${JSON.stringify(
+        hydrated.map((profile) => ({
+          profileId: profile.id,
+          mediaSource:
+            imagesByProfile.get(profile.id)?.length && imagesByProfile.get(profile.id)!.length > 0
+              ? "real_media"
+              : visibleProfiles.find((item) => item.id === profile.id)?.synthetic_group
+                ? "dummy_fallback"
+                : "missing_real_media",
+          imageCount: profile.images.length,
+        }))
+      )}`
+    );
+
+    return hydrated;
   }
 
   private getNextCursorStartIndex(
@@ -967,6 +1000,9 @@ export class DiscoveryService {
         returnedIds: hydratedProfiles.map((profile) => profile.id),
         reserveCount: reservedRows.length,
         invalidatedCount: invalidatedPositions.size,
+        eligibleCount: orderedCandidates.length,
+        excludedDecidedCount: decidedMatchingCount,
+        exhausted: hydratedProfiles.length === 0,
       })}`
     );
 

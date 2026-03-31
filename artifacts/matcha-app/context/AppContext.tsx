@@ -66,6 +66,7 @@ import {
   normalizeStoredProfilePhotos,
   type UserProfilePhoto,
 } from "@/utils/profilePhotos";
+import { clearDiscoveryFrontCardCache } from "@/utils/discoveryFrontCardCache";
 import { normalizeIsoDateString } from "@/utils/dateOfBirth";
 import {
   ATOMIC_PROFILE_FIELD_GROUPS,
@@ -150,6 +151,25 @@ type PostAuthRedirectRoute =
   | "/complete-profile"
   | "/onboarding"
   | "/(tabs)/discover";
+type LocationSyncResultStatus =
+  | "web"
+  | "no_session"
+  | "skipped_recent_sync"
+  | "services_disabled"
+  | "permission_denied"
+  | "reverse_geocode_empty"
+  | "normalized_location_empty"
+  | "updated"
+  | "failed";
+type LocationSyncResult = {
+  status: LocationSyncResultStatus;
+  reason: string;
+  userId: number | null;
+  nextLocation?: string | null;
+  canAskAgain?: boolean;
+  code?: string | null;
+  message?: string | null;
+};
 
 type BiometricResult = { ok: boolean; code?: string };
 type DiscoveryViewPreferences = {
@@ -617,7 +637,7 @@ type AppContextType = {
   refreshProfileLocation: (options?: {
     reason?: string;
     force?: boolean;
-  }) => Promise<boolean>;
+  }) => Promise<LocationSyncResult>;
 };
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -827,6 +847,32 @@ function buildOnboardingRequestHeaders(requestId?: string) {
   return {
     "X-Matcha-Request-Id": requestId,
   };
+}
+
+function inferCompletedOnboardingFromBootstrap(
+  bootstrap: ViewerBootstrapCache | null | undefined
+) {
+  if (!bootstrap) {
+    return false;
+  }
+
+  if (bootstrap.hasCompletedOnboarding) {
+    return true;
+  }
+
+  const hasRemotePhoto = Array.isArray(bootstrap.photos) && bootstrap.photos.length > 0;
+  const profile = bootstrap.profile;
+  const hasOnboardingSignals = Boolean(
+    profile?.relationshipGoals ||
+      profile?.childrenPreference ||
+      profile?.education ||
+      profile?.physicalActivity ||
+      profile?.bodyType ||
+      profile?.personality ||
+      profile?.languagesSpoken?.length
+  );
+
+  return hasRemotePhoto && hasOnboardingSignals;
 }
 
 function mergeOnboardingResumeProfile(
@@ -1275,6 +1321,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     removals.push(AsyncStorage.removeItem(getViewerBootstrapStorageKey(userId)));
     removals.push(clearMutationQueueForUser(userId));
+    removals.push(clearDiscoveryFrontCardCache(userId));
 
     const [allKeys, filtersRaw] = await Promise.all([
       AsyncStorage.getAllKeys(),
@@ -1307,7 +1354,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const restoreProfilePhotos = useCallback(async (photos: UserProfilePhoto[]) => {
-    return Promise.all(photos.map((photo, index) => ensureLocalProfilePhoto(photo, index)));
+    const ownerKey = userRef.current?.id ?? "anonymous";
+    return Promise.all(
+      photos.map((photo, index) => ensureLocalProfilePhoto(photo, index, ownerKey))
+    );
   }, []);
 
   const persistViewerBootstrapCache = useCallback(
@@ -1657,13 +1707,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const refreshProfileLocation = useCallback(
     async (options?: { reason?: string; force?: boolean }) => {
       if (Platform.OS === "web") {
-        return false;
+        return {
+          status: "web",
+          reason: options?.reason || "manual",
+          userId: null,
+        } satisfies LocationSyncResult;
       }
 
       const userId = userRef.current?.id;
       const token = accessTokenRef.current;
       if (!userId || !token) {
-        return false;
+        return {
+          status: "no_session",
+          reason: options?.reason || "manual",
+          userId: userId || null,
+        } satisfies LocationSyncResult;
       }
 
       const reason = options?.reason || "manual";
@@ -1680,9 +1738,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 userId,
                 lastSyncedAt,
               });
-              return false;
+              return {
+                status: "skipped_recent_sync",
+                reason,
+                userId,
+              } satisfies LocationSyncResult;
             }
           }
+        }
+
+        const servicesEnabled = await Location.hasServicesEnabledAsync();
+        if (!servicesEnabled) {
+          debugWarn("[location-sync] services_disabled", {
+            reason,
+            userId,
+          });
+          return {
+            status: "services_disabled",
+            reason,
+            userId,
+          } satisfies LocationSyncResult;
         }
 
         let permission = await Location.getForegroundPermissionsAsync();
@@ -1694,8 +1769,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           debugWarn("[location-sync] permission_denied", {
             reason,
             userId,
+            canAskAgain: permission.canAskAgain,
           });
-          return false;
+          return {
+            status: "permission_denied",
+            reason,
+            userId,
+            canAskAgain: permission.canAskAgain,
+          } satisfies LocationSyncResult;
         }
 
         const position = await Location.getCurrentPositionAsync({
@@ -1711,7 +1792,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             reason,
             userId,
           });
-          return false;
+          return {
+            status: "reverse_geocode_empty",
+            reason,
+            userId,
+          } satisfies LocationSyncResult;
         }
 
         const city =
@@ -1728,7 +1813,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             reason,
             userId,
           });
-          return false;
+          return {
+            status: "normalized_location_empty",
+            reason,
+            userId,
+          } satisfies LocationSyncResult;
         }
 
         debugLog("[location-sync] update_started", {
@@ -1766,7 +1855,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           userId,
           nextLocation,
         });
-        return true;
+        return {
+          status: "updated",
+          reason,
+          userId,
+          nextLocation,
+        } satisfies LocationSyncResult;
       } catch (error: any) {
         debugWarn("[location-sync] update_failed", {
           reason,
@@ -1774,7 +1868,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           code: error?.code || null,
           message: error?.message || "UNKNOWN_ERROR",
         });
-        return false;
+        return {
+          status: "failed",
+          reason,
+          userId,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        } satisfies LocationSyncResult;
       }
     },
     [persistViewerBootstrapCache]
@@ -1929,7 +2029,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      await applyViewerBootstrap(bootstrap);
+      const resolvedHasCompletedOnboarding =
+        session.hasCompletedOnboarding || inferCompletedOnboardingFromBootstrap(bootstrap);
+      if (resolvedHasCompletedOnboarding !== session.hasCompletedOnboarding) {
+        debugLog("[auth] onboarding completion inferred_from_bootstrap", {
+          userId: normalizedSessionUser.id,
+          sessionHasCompletedOnboarding: session.hasCompletedOnboarding,
+          resolvedHasCompletedOnboarding,
+          photoCount: bootstrap.photos.length,
+        });
+      }
+
+      setHasCompletedOnboarding(resolvedHasCompletedOnboarding);
+      hasCompletedOnboardingRef.current = resolvedHasCompletedOnboarding;
+
+      await applyViewerBootstrap({
+        ...bootstrap,
+        hasCompletedOnboarding: resolvedHasCompletedOnboarding,
+      });
       const onboardingResumeDraft = onboardingResumeDraftRef.current;
       const resumeDraftMatchesSession =
         !onboardingResumeDraft?.email ||
@@ -1940,13 +2057,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         Boolean(onboardingResumeDraft) &&
         resumeDraftMatchesSession &&
         !session.needsProfileCompletion &&
-        !session.hasCompletedOnboarding;
+        !resolvedHasCompletedOnboarding;
 
       if (shouldRestoreOnboardingDraft) {
         await applyOnboardingResumeDraftToProfile();
       } else if (onboardingResumeDraft && !resumeDraftMatchesSession) {
         await clearOnboardingResumeState().catch(() => {});
-      } else if (session.hasCompletedOnboarding || session.needsProfileCompletion) {
+      } else if (resolvedHasCompletedOnboarding || session.needsProfileCompletion) {
         await clearOnboardingResumeState().catch(() => {});
       } else {
         const preservedStep = onboardingResumeDraft?.step ?? onboardingResumeStepRef.current;
@@ -1985,6 +2102,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [applySession]
   );
+
+  const clearOnboardingResumeForFreshIncompleteSession = useCallback(
+    async (session: {
+      needsProfileCompletion: boolean;
+      hasCompletedOnboarding: boolean;
+    }) => {
+      if (!session.needsProfileCompletion && !session.hasCompletedOnboarding) {
+        await clearOnboardingResumeState().catch(() => {});
+      }
+    },
+    [clearOnboardingResumeState]
+  );
+
+  const syncPostAuthRedirectFromResolvedState = useCallback(() => {
+    const nextRoute = resolvePostAuthRedirectRoute({
+      needsProfileCompletion: needsProfileCompletionRef.current,
+      hasCompletedOnboarding: hasCompletedOnboardingRef.current,
+    });
+    setPostAuthRedirectRoute(
+      nextRoute === "/(tabs)/discover" ? null : nextRoute
+    );
+  }, []);
 
   const requireOnboardingReLogin = useCallback(
     async (requestId?: string, reason?: string) => {
@@ -2132,13 +2271,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         email: pendingVerificationEmail,
         password: pendingVerificationPassword,
       });
-      setPostAuthRedirectRoute(
-        resolvePostAuthRedirectRoute({
-          needsProfileCompletion: session.needsProfileCompletion,
-          hasCompletedOnboarding: session.hasCompletedOnboarding,
-        })
-      );
+      await clearOnboardingResumeForFreshIncompleteSession(session);
       await applySession(session);
+      syncPostAuthRedirectFromResolvedState();
       debugLog("[auth] pending verification auto-login succeeded");
       return true;
     } catch (e: any) {
@@ -2152,10 +2287,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [
     applySession,
+    clearOnboardingResumeForFreshIncompleteSession,
     pendingVerificationEmail,
     pendingVerificationPassword,
     resetPendingVerificationState,
     setSignInPrefill,
+    syncPostAuthRedirectFromResolvedState,
   ]);
 
   useEffect(() => {
@@ -2287,6 +2424,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ...cachedDiscoveryFilters[String(session.user.id)],
               });
             }
+            await clearOnboardingResumeForFreshIncompleteSession(session);
             await applySession(session);
             if (bioEnabled && Platform.OS !== "web") {
               setBiometricLockRequired(true);
@@ -2327,6 +2465,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [
     applySession,
+    clearOnboardingResumeForFreshIncompleteSession,
     applyViewerBootstrap,
     clearUserScopedCachedState,
     clearStoredSessionTokens,
@@ -2534,13 +2673,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const session = await authSignIn(input);
         setSignInPrefill(input.email);
-        setPostAuthRedirectRoute(
-          resolvePostAuthRedirectRoute({
-            needsProfileCompletion: session.needsProfileCompletion,
-            hasCompletedOnboarding: session.hasCompletedOnboarding,
-          })
-        );
+        await clearOnboardingResumeForFreshIncompleteSession(session);
         await applySession(session);
+        syncPostAuthRedirectFromResolvedState();
         return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
@@ -2550,7 +2685,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    [applySession]
+    [applySession, clearOnboardingResumeForFreshIncompleteSession, syncPostAuthRedirectFromResolvedState]
   );
 
   const signUp = useCallback(
@@ -2584,13 +2719,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthError(null);
       try {
         const session = await authSignInWithProvider(provider, mode);
-        setPostAuthRedirectRoute(
-          resolvePostAuthRedirectRoute({
-            needsProfileCompletion: session.needsProfileCompletion,
-            hasCompletedOnboarding: session.hasCompletedOnboarding,
-          })
-        );
+        await clearOnboardingResumeForFreshIncompleteSession(session);
         await applySession(session);
+        syncPostAuthRedirectFromResolvedState();
         return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
@@ -2600,7 +2731,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthBusy(false);
       }
     },
-    [applySession]
+    [applySession, clearOnboardingResumeForFreshIncompleteSession, syncPostAuthRedirectFromResolvedState]
   );
 
   const handleAuthCallback = useCallback(
@@ -2626,7 +2757,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
           });
-          setPostAuthRedirectRoute(resolvePostAuthRedirectRoute(hydrated));
+          if (!hydrated.needsProfileCompletion && !hydrated.hasCompletedOnboarding) {
+            await clearOnboardingResumeState().catch(() => {});
+          }
+          syncPostAuthRedirectFromResolvedState();
           return true;
         }
 
@@ -2664,10 +2798,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     },
     [
+      clearOnboardingResumeState,
       completePendingVerificationSignIn,
       hydrateSessionFromTokens,
       resetPendingVerificationState,
       setSignInPrefill,
+      syncPostAuthRedirectFromResolvedState,
     ]
   );
 
