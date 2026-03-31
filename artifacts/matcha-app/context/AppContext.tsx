@@ -624,6 +624,7 @@ type AppContextType = {
   refreshDiscoveryCandidates: () => Promise<boolean>;
   fetchNextDiscoveryWindow: () => Promise<boolean>;
   resetDiscoveryHistory: () => Promise<boolean>;
+  armDiscoveryCursorStaleSimulation: () => void;
   profile: UserProfile;
   accountProfile: AccountProfile;
   profileSaveStates: Partial<Record<ProfileEditableField, ProfileFieldSaveState>>;
@@ -1067,6 +1068,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     createEmptyDiscoveryFeed()
   );
   const discoveryFeedRef = useRef<DiscoveryFeedResponse>(createEmptyDiscoveryFeed());
+  const simulateNextDiscoveryCursorStaleRef = useRef(false);
   const [discoveryFilters, setDiscoveryFilters] =
     useState<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
   const discoveryFiltersRef = useRef<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
@@ -4050,12 +4052,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const requestId =
         options?.requestId || createDiscoveryDecisionRequestId(action, profile.id);
+      const shouldSimulateCursorStale =
+        __DEV__ && simulateNextDiscoveryCursorStaleRef.current;
+      if (shouldSimulateCursorStale) {
+        simulateNextDiscoveryCursorStaleRef.current = false;
+      }
       const queueVersion =
         Number.isFinite(discoveryFeedRef.current.queueVersion) &&
         Number(discoveryFeedRef.current.queueVersion) > 0
           ? Number(discoveryFeedRef.current.queueVersion)
           : null;
-      const currentCursor = discoveryFeedRef.current.nextCursor || null;
       const visibleProfileIds = discoveryFeedRef.current.profiles
         .slice(0, 3)
         .map((item) => item.id);
@@ -4079,7 +4085,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           targetProfileId: profile.id,
           categoryValues: profile.categoryValues,
           requestId,
-          cursor: currentCursor,
+          cursor: shouldSimulateCursorStale ? "debug_cursor_stale" : null,
           visibleProfileIds,
           queueVersion,
         });
@@ -4138,11 +4144,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return result;
       } catch (error: any) {
         if (error?.code === "DISCOVERY_CURSOR_STALE") {
-          await refreshDiscoveryFeedState(accessToken, {
+          const latencyMs = Date.now() - startedAt;
+          const refreshedFeed = await refreshDiscoveryFeedState(accessToken, {
             reason: "cursor_stale",
             requestId,
             targetProfileId: profile.id,
           }).catch(() => {});
+          if (refreshedFeed) {
+            return {
+              likedProfileIds: likedProfilesRef.current,
+              passedProfileIds: passedProfilesRef.current,
+              currentDecisionCounts: {
+                likes: likedProfilesRef.current.length,
+                passes: passedProfilesRef.current.length,
+              },
+              popularAttributesByCategory: popularAttributesByCategoryRef.current,
+              totalLikesCount: totalLikesCountRef.current,
+              lifetimeCounts: lifetimeDiscoveryCountsRef.current,
+              threshold: discoveryThresholdRef.current,
+              goalsUnlock: goalsUnlockStateRef.current,
+              lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
+              filters: discoveryFiltersRef.current,
+              decisionApplied: false as const,
+              decisionState: action,
+              targetProfileId: profile.id,
+              decisionRejectedReason: "cursor_stale" as const,
+              changedCategories: [],
+              shouldShowDiscoveryUpdate: false,
+              queueVersion:
+                refreshedFeed.queueVersion ?? discoveryFeedRef.current.queueVersion ?? null,
+              policyVersion:
+                refreshedFeed.policyVersion || discoveryFeedRef.current.policyVersion,
+              replacementProfile: null,
+              nextCursor: refreshedFeed.nextCursor,
+              hasMore: refreshedFeed.hasMore,
+              supply: refreshedFeed.supply,
+            };
+          }
+          debugDiscoveryWarn("decision_request_stale_refresh_failed", {
+            requestId,
+            action,
+            targetProfileId: profile.id,
+            latencyMs,
+          });
         }
         debugDiscoveryWarn("decision_request_failed", {
           requestId,
@@ -4162,6 +4206,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshDiscoveryFeedState,
     ]
   );
+
+  const armDiscoveryCursorStaleSimulation = useCallback(() => {
+    if (__DEV__) {
+      simulateNextDiscoveryCursorStaleRef.current = true;
+    }
+  }, []);
 
   const likeProfile = useCallback(
     async (
@@ -4618,6 +4668,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshDiscoveryCandidates,
         fetchNextDiscoveryWindow,
         resetDiscoveryHistory,
+        armDiscoveryCursorStaleSimulation,
         profile,
         accountProfile,
         profileSaveStates,

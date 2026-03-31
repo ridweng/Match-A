@@ -4,6 +4,7 @@ import * as WebBrowser from "expo-web-browser";
 
 import { discoverProfiles, getDiscoverProfilePopularInput } from "@/data/profiles";
 import type { UserProfilePhoto } from "@/utils/profilePhotos";
+import { normalizeStoredProfilePhotos } from "@/utils/profilePhotos";
 import {
   calculatePopularAttributesFromLikes,
   createEmptyPopularAttributesByCategory,
@@ -266,6 +267,17 @@ export type DiscoveryFeedProfileResponse = {
     };
   }>;
   categoryValues: PopularAttributeInputByCategory;
+  debugMedia?: {
+    mediaSource: "real_media" | "dummy_fallback" | "missing_real_media";
+    imageCount: number;
+    photos: Array<{
+      profileImageId: number | null;
+      mediaAssetId: number | null;
+      sortOrder: number;
+      remoteUrl: string;
+      source: "db_confirmed" | "dummy_fallback";
+    }>;
+  };
 };
 
 export type DiscoveryFeedResponse = {
@@ -311,7 +323,8 @@ export type DiscoveryStateResponse = DiscoveryPreferencesResponse;
 
 export type DiscoveryDecisionNoopReason =
   | "duplicate_request_id"
-  | "same_state_existing_decision";
+  | "same_state_existing_decision"
+  | "cursor_stale";
 
 export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
   decisionApplied: boolean;
@@ -552,6 +565,45 @@ function normalizeRemoteMediaUrl(url: string) {
   }
 }
 
+function normalizeViewerProfileResponse(
+  profile: ViewerProfileResponse | null | undefined
+): ViewerProfileResponse {
+  const normalizedPhotos = normalizeStoredProfilePhotos(profile?.photos).map((photo) => ({
+    ...photo,
+    remoteUrl: normalizeRemoteMediaUrl(photo.remoteUrl),
+  }));
+
+  return {
+    name: String(profile?.name || ""),
+    age: String(profile?.age || ""),
+    dateOfBirth: String(profile?.dateOfBirth || ""),
+    updatedAt: profile?.updatedAt ?? null,
+    location: String(profile?.location || ""),
+    country: String(profile?.country || ""),
+    profession: String(profile?.profession || ""),
+    genderIdentity: String(profile?.genderIdentity || ""),
+    pronouns: String(profile?.pronouns || ""),
+    personality: String(profile?.personality || ""),
+    relationshipGoals: String(profile?.relationshipGoals || ""),
+    languagesSpoken: Array.isArray(profile?.languagesSpoken) ? profile!.languagesSpoken : [],
+    education: String(profile?.education || ""),
+    childrenPreference: String(profile?.childrenPreference || ""),
+    physicalActivity: String(profile?.physicalActivity || ""),
+    alcoholUse: String(profile?.alcoholUse || ""),
+    tobaccoUse: String(profile?.tobaccoUse || ""),
+    politicalInterest: String(profile?.politicalInterest || ""),
+    religionImportance: String(profile?.religionImportance || ""),
+    religion: String(profile?.religion || ""),
+    bio: String(profile?.bio || ""),
+    bodyType: String(profile?.bodyType || ""),
+    height: String(profile?.height || ""),
+    hairColor: String(profile?.hairColor || ""),
+    ethnicity: String(profile?.ethnicity || ""),
+    interests: Array.isArray(profile?.interests) ? profile!.interests : [],
+    photos: normalizedPhotos,
+  };
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
@@ -762,9 +814,17 @@ export async function getViewerBootstrap(accessToken: string) {
     } satisfies ViewerBootstrapResponse;
   }
 
-  return request<ViewerBootstrapResponse>("/api/viewer/bootstrap", {
+  const response = await request<ViewerBootstrapResponse>("/api/viewer/bootstrap", {
     accessToken,
   });
+  return {
+    ...response,
+    profile: normalizeViewerProfileResponse(response.profile),
+    photos: response.photos.map((photo) => ({
+      ...photo,
+      remoteUrl: normalizeRemoteMediaUrl(photo.remoteUrl),
+    })),
+  };
 }
 
 export async function getViewerProfile(accessToken: string) {
@@ -772,9 +832,12 @@ export async function getViewerProfile(accessToken: string) {
     return { profile: DEMO_VIEWER_PROFILE };
   }
 
-  return request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
+  const response = await request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
     accessToken,
   });
+  return {
+    profile: normalizeViewerProfileResponse(response.profile),
+  };
 }
 
 export async function updateViewerProfile(
@@ -799,12 +862,15 @@ export async function updateViewerProfile(
     return { profile: DEMO_VIEWER_PROFILE };
   }
 
-  return request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
+  const response = await request<{ profile: ViewerProfileResponse }>("/api/me/profile", {
     method: "PATCH",
     accessToken,
     body: payload,
     headers: options.headers,
   });
+  return {
+    profile: normalizeViewerProfileResponse(response.profile),
+  };
 }
 
 export async function updateMe(

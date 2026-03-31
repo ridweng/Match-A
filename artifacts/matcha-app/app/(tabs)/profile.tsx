@@ -72,6 +72,7 @@ import {
   deleteStoredProfilePhoto,
   getProfilePhotoBySortOrder,
   getProfilePhotoDisplayUri,
+  getProfilePhotoSource,
   isStoredProfilePhoto,
   saveProfilePhotoLocally,
 } from "@/utils/profilePhotos";
@@ -102,7 +103,7 @@ function SaveFeedbackText({
   status: ProfileSaveStatus;
   t: (es: string, en: string) => string;
 }) {
-  if (status === "idle") {
+  if (status === "idle" || status === "saving") {
     return null;
   }
 
@@ -114,11 +115,9 @@ function SaveFeedbackText({
         status === "error" && styles.saveStateTextError,
       ]}
     >
-      {status === "saving"
-        ? t("Guardando cambios...", "Saving changes...")
-        : status === "saved"
-          ? t("Cambios guardados", "Changes saved")
-          : t("No se pudo guardar. Intenta otra vez.", "Could not save. Try again.")}
+      {status === "saved"
+        ? t("Cambios guardados", "Changes saved")
+        : t("No se pudo guardar. Intenta otra vez.", "Could not save. Try again.")}
     </Text>
   );
 }
@@ -417,6 +416,15 @@ export default function ProfileScreen() {
   const mainPhoto = getProfilePhotoDisplayUri(
     getProfilePhotoBySortOrder(accountProfile.photos, 0)
   );
+  const primaryProfilePhoto = getProfilePhotoBySortOrder(accountProfile.photos, 0);
+  const normalizedPhotos = React.useMemo(
+    () =>
+      accountProfile.photos.map((photo) => ({
+        ...photo,
+        source: getProfilePhotoSource(photo),
+      })),
+    [accountProfile.photos]
+  );
   const mainPhotoKey = mainPhoto ? `main:${mainPhoto}` : "main:empty";
 
   const setImageLoading = React.useCallback((key: string, isLoading: boolean) => {
@@ -523,6 +531,7 @@ export default function ProfileScreen() {
         <View style={styles.heroCard}>
           <Pressable
             onPress={() => handlePhotoPress(0)}
+            testID="profile-main-photo"
             style={styles.mainPhotoWrap}
           >
             {mainPhoto ? (
@@ -574,6 +583,29 @@ export default function ProfileScreen() {
             ) : null}
           </View>
         </View>
+
+        {__DEV__ ? (
+          <View style={styles.debugCard} testID="profile-photo-debug">
+            <Text style={styles.debugTitle}>
+              {t("Inspector de fotos", "Photo inspector")}
+            </Text>
+            <Text style={styles.debugLine} testID="profile-primary-photo-debug">
+              {`primary profileImageId=${primaryProfilePhoto?.profileImageId ?? "null"} mediaAssetId=${primaryProfilePhoto?.mediaAssetId ?? "null"} sortOrder=${primaryProfilePhoto?.sortOrder ?? "null"} status=${primaryProfilePhoto?.status ?? "null"} source=${getProfilePhotoSource(primaryProfilePhoto)}`}
+            </Text>
+            {normalizedPhotos.length ? (
+              normalizedPhotos.map((photo) => (
+                <Text
+                  key={`profile-debug-${photo.sortOrder}-${photo.profileImageId ?? "none"}-${photo.mediaAssetId ?? "none"}`}
+                  style={styles.debugLine}
+                >
+                  {`slot=${photo.sortOrder} profileImageId=${photo.profileImageId ?? "null"} mediaAssetId=${photo.mediaAssetId ?? "null"} status=${photo.status} source=${photo.source} remoteUrl=${photo.remoteUrl || "null"} localUri=${photo.localUri || "null"}`}
+                </Text>
+              ))
+            ) : (
+              <Text style={styles.debugLine}>{t("Sin fotos", "No photos")}</Text>
+            )}
+          </View>
+        ) : null}
 
         <View style={styles.section}>
           <View style={styles.sectionHeading}>
@@ -827,12 +859,13 @@ export default function ProfileScreen() {
               {INTERESTS_LIST.map((interest) => {
                 const selected = draftProfile.interests.includes(interest);
                 return (
-                  <Pressable
-                    key={interest}
-                    onPress={() => toggleInterest(interest)}
-                    style={[
-                      styles.interestChip,
-                      selected && styles.interestChipSelected,
+                <Pressable
+                  key={interest}
+                  onPress={() => toggleInterest(interest)}
+                  testID={`profile-interest-${interest}`}
+                  style={[
+                    styles.interestChip,
+                    selected && styles.interestChipSelected,
                     ]}
                   >
                     <Text
@@ -1027,6 +1060,26 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     fontSize: 12,
     color: Colors.primaryLight,
+  },
+  debugCard: {
+    marginTop: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+    padding: 14,
+    gap: 6,
+  },
+  debugTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: Colors.info,
+  },
+  debugLine: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
   },
   section: {
     marginTop: 26,

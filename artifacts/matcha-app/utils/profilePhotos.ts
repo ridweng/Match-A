@@ -20,6 +20,14 @@ export type UserProfilePhoto = {
   status: "pending" | "ready" | "error";
 };
 
+export type ProfilePhotoSource =
+  | "db_confirmed"
+  | "local_pending"
+  | "local_error"
+  | "unknown";
+
+export type ProfilePhotoMatchKind = "profileImageId" | "mediaAssetId" | "sortOrder" | null;
+
 export function isStoredProfilePhoto(uri: string | null | undefined) {
   return Boolean(uri && uri.startsWith(PROFILE_PHOTOS_ROOT_DIR));
 }
@@ -96,6 +104,66 @@ export function normalizeStoredProfilePhotos(
     })
     .filter((photo): photo is UserProfilePhoto => Boolean(photo))
     .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+export function getProfilePhotoSource(
+  photo: UserProfilePhoto | string | null | undefined
+): ProfilePhotoSource {
+  if (!photo || typeof photo === "string") {
+    return "unknown";
+  }
+
+  if (photo.profileImageId != null || photo.mediaAssetId != null || Boolean(photo.remoteUrl)) {
+    return "db_confirmed";
+  }
+
+  if (photo.status === "error") {
+    return "local_error";
+  }
+
+  if (Boolean(photo.localUri)) {
+    return "local_pending";
+  }
+
+  return "unknown";
+}
+
+export function getProfilePhotoMatchKind(
+  left: UserProfilePhoto | string | null | undefined,
+  right: UserProfilePhoto | string | null | undefined
+): ProfilePhotoMatchKind {
+  if (!left || !right || typeof left === "string" || typeof right === "string") {
+    return null;
+  }
+
+  if (
+    left.profileImageId != null &&
+    right.profileImageId != null &&
+    left.profileImageId === right.profileImageId
+  ) {
+    return "profileImageId";
+  }
+
+  if (
+    left.mediaAssetId != null &&
+    right.mediaAssetId != null &&
+    left.mediaAssetId === right.mediaAssetId
+  ) {
+    return "mediaAssetId";
+  }
+
+  if (
+    left.profileImageId == null &&
+    right.profileImageId == null &&
+    left.mediaAssetId == null &&
+    right.mediaAssetId == null &&
+    left.sortOrder === 0 &&
+    right.sortOrder === 0
+  ) {
+    return "sortOrder";
+  }
+
+  return null;
 }
 
 export async function saveProfilePhotoLocally(

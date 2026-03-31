@@ -53,9 +53,11 @@ import {
 } from "@/constants/profile-options";
 import { useApp } from "@/context/AppContext";
 import {
+  getProfilePhotoMatchKind,
   deleteStoredProfilePhoto,
   getProfilePhotoBySortOrder,
   getProfilePhotoDisplayUri,
+  getProfilePhotoSource,
   isStoredProfilePhoto,
   normalizeStoredProfilePhotos,
   saveProfilePhotoLocally,
@@ -119,52 +121,82 @@ export default function OnboardingScreen() {
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const hasLocalPhotoDraftChangesRef = useRef(false);
+  const hasLocalDraftChangesRef = useRef(false);
+  const buildProfileSeed = React.useCallback(() => {
+    const normalizedPhotos = normalizeStoredProfilePhotos(accountProfile.photos || []);
+    return {
+      genderIdentity: accountProfile.genderIdentity || "",
+      pronouns: accountProfile.pronouns || "",
+      photos: normalizedPhotos,
+      relationshipGoals: accountProfile.relationshipGoals || "",
+      childrenPreference: accountProfile.childrenPreference || "",
+      languagesSpoken: accountProfile.languagesSpoken.length
+        ? normalizeSpokenLanguages(accountProfile.languagesSpoken)
+        : [getDefaultSpokenLanguageValue(language)],
+      education: accountProfile.education || "",
+      physicalActivity: accountProfile.physicalActivity || "",
+      bodyType: accountProfile.bodyType || "",
+      personality: accountProfile.personality || "",
+    };
+  }, [accountProfile, language]);
+  const initialProfileSeed = buildProfileSeed();
   const [step, setStep] = useState(onboardingResumeStep);
   const [formError, setFormError] = useState<string | null>(null);
-  const [genderIdentity, setGenderIdentity] = useState(accountProfile.genderIdentity || "");
-  const [pronouns, setPronouns] = useState(accountProfile.pronouns || "");
-  const [photos, setPhotos] = useState<UserProfilePhoto[]>(accountProfile.photos || []);
+  const [genderIdentity, setGenderIdentity] = useState(initialProfileSeed.genderIdentity);
+  const [pronouns, setPronouns] = useState(initialProfileSeed.pronouns);
+  const [photos, setPhotos] = useState<UserProfilePhoto[]>(initialProfileSeed.photos);
   const [relationshipGoals, setRelationshipGoals] = useState(
-    accountProfile.relationshipGoals || ""
+    initialProfileSeed.relationshipGoals
   );
   const [childrenPreference, setChildrenPreference] = useState(
-    accountProfile.childrenPreference || ""
+    initialProfileSeed.childrenPreference
   );
   const [languagesSpoken, setLanguagesSpoken] = useState<string[]>(
-    accountProfile.languagesSpoken.length
-      ? normalizeSpokenLanguages(accountProfile.languagesSpoken)
-      : [getDefaultSpokenLanguageValue(language)]
+    initialProfileSeed.languagesSpoken
   );
-  const [education, setEducation] = useState(accountProfile.education || "");
+  const [education, setEducation] = useState(initialProfileSeed.education);
   const [physicalActivity, setPhysicalActivity] = useState(
-    accountProfile.physicalActivity || ""
+    initialProfileSeed.physicalActivity
   );
-  const [bodyType, setBodyType] = useState(accountProfile.bodyType || "");
-  const [personality, setPersonality] = useState(accountProfile.personality || "");
+  const [bodyType, setBodyType] = useState(initialProfileSeed.bodyType);
+  const [personality, setPersonality] = useState(initialProfileSeed.personality);
+
+  const applySeedToForm = React.useCallback(
+    (seed: ReturnType<typeof buildProfileSeed>) => {
+      setGenderIdentity(seed.genderIdentity);
+      setPronouns(seed.pronouns);
+      setPhotos(seed.photos);
+      setRelationshipGoals(seed.relationshipGoals);
+      setChildrenPreference(seed.childrenPreference);
+      setLanguagesSpoken(seed.languagesSpoken);
+      setEducation(seed.education);
+      setPhysicalActivity(seed.physicalActivity);
+      setBodyType(seed.bodyType);
+      setPersonality(seed.personality);
+    },
+    []
+  );
+
+  const markDraftDirty = React.useCallback(() => {
+    hasLocalDraftChangesRef.current = true;
+  }, []);
 
   React.useEffect(() => {
-    if (!hasLocalPhotoDraftChangesRef.current) {
-      setPhotos(accountProfile.photos || []);
+    if (!hasLocalDraftChangesRef.current) {
+      applySeedToForm(buildProfileSeed());
     }
-  }, [accountProfile.photos]);
+  }, [applySeedToForm, buildProfileSeed]);
 
   React.useEffect(() => {
     if (hasCompletedOnboarding || onboardingResumeStep !== 1) {
       return;
     }
 
+    const seed = buildProfileSeed();
+    hasLocalDraftChangesRef.current = false;
     hasLocalPhotoDraftChangesRef.current = false;
-    setGenderIdentity("");
-    setPronouns("");
-    setPhotos([]);
-    setRelationshipGoals("");
-    setChildrenPreference("");
-    setLanguagesSpoken([getDefaultSpokenLanguageValue(language)]);
-    setEducation("");
-    setPhysicalActivity("");
-    setBodyType("");
-    setPersonality("");
-  }, [hasCompletedOnboarding, language, onboardingResumeStep]);
+    applySeedToForm(seed);
+  }, [applySeedToForm, buildProfileSeed, hasCompletedOnboarding, onboardingResumeStep]);
 
   React.useEffect(() => {
     setStep(onboardingResumeStep);
@@ -194,6 +226,12 @@ export default function OnboardingScreen() {
     [photos]
   );
   const mainPhoto = getProfilePhotoDisplayUri(getPhotoForSlot(0));
+  const canonicalMainPhoto = getProfilePhotoBySortOrder(accountProfile.photos, 0);
+  const onboardingMainPhoto = getPhotoForSlot(0);
+  const primaryPhotoMatchKind = getProfilePhotoMatchKind(
+    onboardingMainPhoto,
+    canonicalMainPhoto
+  );
   const pronounOptions = language === "es" ? SPANISH_PRONOUNS : ENGLISH_PRONOUNS;
 
   const isFormComplete =
@@ -241,6 +279,7 @@ export default function OnboardingScreen() {
       status: "ready",
     };
     hasLocalPhotoDraftChangesRef.current = true;
+    markDraftDirty();
     if (previous?.localUri && previous.localUri !== targetUri && isStoredProfilePhoto(previous.localUri)) {
       deleteStoredProfilePhoto(previous.localUri).catch(() => {});
     }
@@ -476,7 +515,10 @@ export default function OnboardingScreen() {
           label={t("Cómo te identificas", "How do you identify")}
           value={genderIdentity}
           options={GENDER_IDENTITIES}
-          onChange={(value) => setGenderIdentity(normalizeGenderIdentity(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setGenderIdentity(normalizeGenderIdentity(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getGenderIdentityLabel(value, t)}
         />
@@ -485,7 +527,10 @@ export default function OnboardingScreen() {
           label={t("Pronombres", "Pronouns")}
           value={pronouns}
           options={pronounOptions}
-          onChange={(value) => setPronouns(normalizePronouns(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setPronouns(normalizePronouns(value));
+          }}
           placeholder={t("Selecciona tus pronombres", "Select your pronouns")}
           getOptionLabel={(value) => getPronounLabel(value, language)}
         />
@@ -504,6 +549,7 @@ export default function OnboardingScreen() {
                 <Pressable
                   key={index}
                   onPress={() => openPhotoPicker(index)}
+                  testID={isMain ? "onboarding-main-photo" : `onboarding-photo-slot-${index}`}
                   style={({ pressed }) => [
                     styles.photoSlot,
                     isMain && styles.photoSlotMain,
@@ -565,7 +611,10 @@ export default function OnboardingScreen() {
           label={t("Qué estás buscando", "What are you looking for")}
           value={relationshipGoals}
           options={RELATIONSHIP_GOALS}
-          onChange={(value) => setRelationshipGoals(normalizeRelationshipGoal(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setRelationshipGoals(normalizeRelationshipGoal(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getRelationshipGoalLabel(value, t)}
         />
@@ -574,7 +623,10 @@ export default function OnboardingScreen() {
           label={t("Quieres tener hijxs", "Do you want kids")}
           value={childrenPreference}
           options={CHILDREN_PREFERENCES}
-          onChange={(value) => setChildrenPreference(normalizeChildrenPreference(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setChildrenPreference(normalizeChildrenPreference(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getChildrenPreferenceLabel(value, t)}
         />
@@ -595,7 +647,10 @@ export default function OnboardingScreen() {
           style={styles.field}
           label={t("Idiomas que hablo", "Languages I speak")}
           values={languagesSpoken}
-          onChange={setLanguagesSpoken}
+          onChange={(values) => {
+            markDraftDirty();
+            setLanguagesSpoken(values);
+          }}
           language={language}
           t={t}
         />
@@ -604,7 +659,10 @@ export default function OnboardingScreen() {
           label={t("Educación", "Education")}
           value={education}
           options={EDUCATION_LEVELS}
-          onChange={(value) => setEducation(normalizeEducation(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setEducation(normalizeEducation(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getEducationLabel(value, t)}
         />
@@ -613,7 +671,10 @@ export default function OnboardingScreen() {
           label={t("Con qué frecuencia entrenas", "How often do you train")}
           value={physicalActivity}
           options={PHYSICAL_ACTIVITY_OPTIONS}
-          onChange={(value) => setPhysicalActivity(normalizePhysicalActivity(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setPhysicalActivity(normalizePhysicalActivity(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getPhysicalActivityLabel(value, t)}
         />
@@ -622,7 +683,10 @@ export default function OnboardingScreen() {
           label={t("Tipo de cuerpo", "Body type")}
           value={bodyType}
           options={BODY_TYPES}
-          onChange={(value) => setBodyType(normalizeBodyType(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setBodyType(normalizeBodyType(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getBodyTypeLabel(value, t)}
         />
@@ -631,10 +695,30 @@ export default function OnboardingScreen() {
           label={t("Personalidad", "Personality")}
           value={personality}
           options={PERSONALITY_TRAITS}
-          onChange={(value) => setPersonality(normalizePersonality(value))}
+          onChange={(value) => {
+            markDraftDirty();
+            setPersonality(normalizePersonality(value));
+          }}
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getPersonalityLabel(value, t)}
         />
+
+        {__DEV__ ? (
+          <View style={styles.debugCard} testID="onboarding-photo-debug">
+            <Text style={styles.debugTitle}>
+              {t("Inspector de onboarding", "Onboarding inspector")}
+            </Text>
+            <Text style={styles.debugLine} testID="onboarding-primary-photo-match">
+              {`primaryMatchStatus=${primaryPhotoMatchKind ? "ok" : "mismatch"} primaryMatch=${primaryPhotoMatchKind || "none"}`}
+            </Text>
+            <Text style={styles.debugLine} testID="onboarding-primary-photo-debug">
+              {`onboardingPrimary profileImageId=${onboardingMainPhoto?.profileImageId ?? "null"} mediaAssetId=${onboardingMainPhoto?.mediaAssetId ?? "null"} sortOrder=${onboardingMainPhoto?.sortOrder ?? "null"} source=${getProfilePhotoSource(onboardingMainPhoto)}`}
+            </Text>
+            <Text style={styles.debugLine} testID="onboarding-canonical-photo-debug">
+              {`profilePrimary profileImageId=${canonicalMainPhoto?.profileImageId ?? "null"} mediaAssetId=${canonicalMainPhoto?.mediaAssetId ?? "null"} sortOrder=${canonicalMainPhoto?.sortOrder ?? "null"} source=${getProfilePhotoSource(canonicalMainPhoto)}`}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       {formError || authError ? (
@@ -856,6 +940,26 @@ const styles = StyleSheet.create({
   },
   fieldOpen: {
     zIndex: 30,
+  },
+  debugCard: {
+    marginTop: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+    padding: 14,
+    gap: 6,
+  },
+  debugTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: Colors.info,
+  },
+  debugLine: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
   },
   fieldLabel: {
     fontFamily: "Inter_500Medium",

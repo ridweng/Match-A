@@ -215,7 +215,20 @@ export class ViewerService {
     };
   }
 
-  private mapProfile(row: ProfileRow, input: { languagesSpoken: string[]; interests: string[] }) {
+  private mapProfile(
+    row: ProfileRow,
+    input: {
+      languagesSpoken: string[];
+      interests: string[];
+      photos: Array<{
+        profileImageId: number;
+        mediaAssetId: number;
+        sortOrder: number;
+        remoteUrl: string;
+        status: string;
+      }>;
+    }
+  ) {
     return {
       name: row.display_name || "",
       age: "",
@@ -243,14 +256,21 @@ export class ViewerService {
       hairColor: row.hair_color || "",
       ethnicity: row.ethnicity || "",
       interests: input.interests,
-      photos: [],
+      photos: input.photos.map((photo) => ({
+        localUri: "",
+        remoteUrl: photo.remoteUrl,
+        mediaAssetId: photo.mediaAssetId,
+        profileImageId: photo.profileImageId,
+        sortOrder: photo.sortOrder,
+        status: photo.status === "pending" ? "pending" : "ready",
+      })),
     };
   }
 
   async getProfile(userId: number) {
     const profileId = await this.findProfileId(userId);
     const hasProfileCountryColumn = await this.hasProfileCountryColumn();
-    const [profileResult, languagesSpoken, interests] = await Promise.all([
+    const [profileResult, languagesSpoken, interests, photos] = await Promise.all([
       pool.query<ProfileRow>(
         `SELECT
            id,
@@ -284,6 +304,7 @@ export class ViewerService {
       ),
       this.getProfileLanguages(profileId),
       this.getProfileInterests(profileId),
+      this.mediaService.listProfileImagesByProfileId(profileId),
     ]);
 
     const profile = profileResult.rows[0];
@@ -295,6 +316,7 @@ export class ViewerService {
       profile: this.mapProfile(profile, {
         languagesSpoken,
         interests,
+        photos: photos.photos,
       }),
     };
   }

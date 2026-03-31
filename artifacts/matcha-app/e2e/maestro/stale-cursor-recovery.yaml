@@ -1,0 +1,48 @@
+appId: com.xylo.matcha
+name: Discovery Stale Cursor Recovery
+---
+- launchApp:
+    clearState: true
+
+- tapOn: "tu@email.com"
+- inputText: ${ACTOR_EMAIL}
+- tapOn: "Mínimo 8 caracteres"
+- inputText: ${ACTOR_PASSWORD}
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible:
+      text: "Descubrir"
+    timeout: 15000
+
+- assertVisible:
+    id: "discover-debug-panel"
+- assertVisible:
+    id: "discover-front-debug-line"
+
+- tapOn:
+    id: "discover-debug-stale-cursor-button"
+
+- tapOn:
+    id: "discover-like-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "discover-debug-panel"
+    timeout: 10000
+
+- assertVisible:
+    id: "discover-front-debug-line"
+
+- tapOn:
+    id: "discover-pass-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "discover-debug-panel"
+    timeout: 10000
+
+# Manual QA follow-up from the inspector:
+# - Confirm the stale top card was replaced after refresh
+# - Confirm swipe buttons are only usable again after the refreshed deck is visible
+# - Confirm the next decision succeeds on the refreshed deck

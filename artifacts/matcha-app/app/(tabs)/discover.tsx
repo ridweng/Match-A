@@ -709,6 +709,7 @@ export default function DiscoverScreen() {
     refreshProfileLocation,
     refreshDiscoveryCandidates,
     saveDiscoveryFilters,
+    armDiscoveryCursorStaleSimulation,
   } = useApp();
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
   const defaultFilters = useMemo<DiscoveryFilters>(
@@ -1030,13 +1031,10 @@ export default function DiscoverScreen() {
         (profile) =>
           !likedProfiles.includes(profile.id) &&
           !passedProfiles.includes(profile.id)
-      ),
+      ).slice(0, DISCOVERY_PAGE_SIZE),
     [feedProfiles, likedProfiles, passedProfiles]
   );
-  const filteredProfiles = useMemo(
-    () => sourceProfiles.slice(0, loadedCount),
-    [loadedCount, sourceProfiles]
-  );
+  const filteredProfiles = useMemo(() => sourceProfiles, [sourceProfiles]);
   const supply = discoveryFeed.supply;
   const eligibleCount = Number(supply?.eligibleCount) || 0;
   const unseenCount = Number(supply?.unseenCount) || 0;
@@ -1129,6 +1127,18 @@ export default function DiscoverScreen() {
     });
     return map;
   }, [feedProfiles, lastLikedProfile]);
+  const debugQueueLines = useMemo(
+    () =>
+      __DEV__
+        ? [
+            `policyVersion=${discoveryFeed.policyVersion || "null"} queueVersion=${discoveryFeed.queueVersion ?? "null"}`,
+            `eligibleRealCount=${discoveryFeed.supply?.eligibleRealCount ?? "null"} eligibleDummyCount=${discoveryFeed.supply?.eligibleDummyCount ?? "null"}`,
+            `returnedRealCount=${discoveryFeed.supply?.returnedRealCount ?? "null"} returnedDummyCount=${discoveryFeed.supply?.returnedDummyCount ?? "null"}`,
+            `dominantExclusionReason=${discoveryFeed.supply?.dominantExclusionReason ?? "null"} exhaustedReason=${discoveryFeed.supply?.exhaustedReason ?? "null"}`,
+          ]
+        : [],
+    [discoveryFeed.policyVersion, discoveryFeed.queueVersion, discoveryFeed.supply]
+  );
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
@@ -1326,6 +1336,21 @@ export default function DiscoverScreen() {
   useEffect(() => {
     deckRef.current = deck;
   }, [deck]);
+
+  useEffect(() => {
+    if (!isQueueLoading || hasPendingDecision) {
+      return;
+    }
+
+    if (discoveryFeed.generatedAt || discoveryFeed.supply?.fetchedAt) {
+      setIsQueueLoading(false);
+    }
+  }, [
+    discoveryFeed.generatedAt,
+    discoveryFeed.supply?.fetchedAt,
+    hasPendingDecision,
+    isQueueLoading,
+  ]);
 
   useEffect(() => {
     if (!discoveryVerboseDebugEnabled) {
@@ -2125,6 +2150,17 @@ export default function DiscoverScreen() {
           }
           if (!result.decisionApplied) {
             setPendingDecisionProfileId(null);
+            if (result.decisionRejectedReason === "cursor_stale") {
+              setIsQueueLoading(true);
+              debugDiscoveryWarn("swipe_hard_refresh_after_stale", {
+                requestId,
+                direction,
+                targetProfileId: profile.id,
+                queueVersion: result.queueVersion ?? null,
+              });
+              resetCardState();
+              return;
+            }
             debugDiscoveryLog("swipe_restore_after_noop", {
               requestId,
               direction,
@@ -2868,11 +2904,13 @@ export default function DiscoverScreen() {
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
             <Pressable
               onPress={() => swipeLeft("button")}
-              disabled={isOffline}
+              disabled={isOffline || isQueueLoading || hasPendingDecision}
+              testID="discover-pass-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
-                isOffline && styles.emptyCardButtonDisabled,
+                (isOffline || isQueueLoading || hasPendingDecision) &&
+                  styles.emptyCardButtonDisabled,
                 {
                   opacity: pressed ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
@@ -2884,6 +2922,7 @@ export default function DiscoverScreen() {
 
             <Pressable
               onPress={toggleInfo}
+              testID="discover-info-button"
               style={({ pressed }) => [
                 styles.actionBtnSm,
                 styles.infoBtn,
@@ -2899,11 +2938,13 @@ export default function DiscoverScreen() {
 
             <Pressable
               onPress={() => swipeRight("button")}
-              disabled={isOffline}
+              disabled={isOffline || isQueueLoading || hasPendingDecision}
+              testID="discover-like-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
-                isOffline && styles.emptyCardButtonDisabled,
+                (isOffline || isQueueLoading || hasPendingDecision) &&
+                  styles.emptyCardButtonDisabled,
                 {
                   opacity: pressed ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
@@ -2913,6 +2954,42 @@ export default function DiscoverScreen() {
               <Feather name="heart" size={26} color={Colors.like} />
             </Pressable>
           </View>
+
+          {__DEV__ ? (
+            <View style={styles.debugPanel} testID="discover-debug-panel">
+              <Text style={styles.debugPanelTitle}>
+                {t("Inspector de discovery", "Discovery inspector")}
+              </Text>
+              <Text style={styles.debugPanelLine} testID="discover-front-debug-line">
+                {`frontProfileId=${frontProfile.id} mediaSource=${frontProfile.debugMedia?.mediaSource ?? "unknown"} imageCount=${frontProfile.debugMedia?.imageCount ?? currentImages.length}`}
+              </Text>
+              {frontProfile.debugMedia?.photos?.map((photo) => (
+                <Text
+                  key={`discover-debug-photo-${frontProfile.id}-${photo.sortOrder}-${photo.profileImageId ?? "none"}-${photo.mediaAssetId ?? "none"}`}
+                  style={styles.debugPanelLine}
+                >
+                  {`slot=${photo.sortOrder} profileImageId=${photo.profileImageId ?? "null"} mediaAssetId=${photo.mediaAssetId ?? "null"} source=${photo.source} remoteUrl=${photo.remoteUrl || "null"}`}
+                </Text>
+              ))}
+              {debugQueueLines.map((line) => (
+                <Text key={line} style={styles.debugPanelLine}>
+                  {line}
+                </Text>
+              ))}
+              <Pressable
+                onPress={armDiscoveryCursorStaleSimulation}
+                testID="discover-debug-stale-cursor-button"
+                style={({ pressed }) => [
+                  styles.debugActionButton,
+                  pressed && { opacity: 0.82 },
+                ]}
+              >
+                <Text style={styles.debugActionButtonText}>
+                  {t("Simular cursor obsoleto", "Simulate stale cursor")}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </>
       ) : showQueueLoading ? (
         <View style={styles.cardStack}>
@@ -4236,6 +4313,42 @@ const styles = StyleSheet.create({
     gap: 20,
     paddingTop: 16,
     paddingHorizontal: 20,
+  },
+  debugPanel: {
+    marginTop: 18,
+    marginHorizontal: 20,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(111,168,255,0.22)",
+    backgroundColor: "rgba(111,168,255,0.08)",
+    gap: 6,
+  },
+  debugPanelTitle: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 13,
+    color: Colors.info,
+  },
+  debugPanelLine: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
+  },
+  debugActionButton: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.34)",
+  },
+  debugActionButtonText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.info,
   },
   actionBtn: {
     width: 64,

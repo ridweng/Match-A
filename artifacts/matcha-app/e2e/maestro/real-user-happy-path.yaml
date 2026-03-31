@@ -1,0 +1,68 @@
+appId: com.xylo.matcha
+name: Real User Happy Path
+---
+- launchApp:
+    clearState: true
+
+- tapOn: "tu@email.com"
+- inputText: ${ACTOR_EMAIL}
+- tapOn: "Mínimo 8 caracteres"
+- inputText: ${ACTOR_PASSWORD}
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible:
+      text: "Comenzar"
+    timeout: 15000
+
+- tapOn: "Comenzar"
+- assertVisible:
+    id: "onboarding-photo-debug"
+- assertVisible: "primaryMatchStatus=ok"
+
+- tapOn: "Continuar"
+- extendedWaitUntil:
+    visible:
+      text: "Ir a Matcha"
+    timeout: 10000
+
+- tapOn: "Ir a Matcha"
+- extendedWaitUntil:
+    visible:
+      text: "Descubrir"
+    timeout: 15000
+
+- tapOn: "Perfil"
+- assertVisible:
+    id: "profile-main-photo"
+- assertVisible:
+    id: "profile-photo-debug"
+- assertVisible:
+    id: "profile-primary-photo-debug"
+
+- tapOn: "Descubrir"
+- assertVisible:
+    id: "discover-debug-panel"
+- assertVisible:
+    id: "discover-front-debug-line"
+
+- tapOn:
+    id: "discover-like-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "discover-debug-panel"
+    timeout: 10000
+
+- tapOn:
+    id: "discover-pass-button"
+
+- extendedWaitUntil:
+    visible:
+      id: "discover-debug-panel"
+    timeout: 10000
+
+# Manual QA follow-up from the inspector:
+# - Confirm the frontProfileId changes after each action
+# - Confirm the mediaSource line is visible
+# - Confirm the first decided profile id does not return to the front card

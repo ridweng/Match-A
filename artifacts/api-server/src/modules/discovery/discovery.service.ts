@@ -66,6 +66,7 @@ type DiscoveryFeedProfileRow = {
 
 type DiscoveryFeedImageRow = {
   profile_id: number;
+  profile_image_id: number;
   sort_order: number;
   media_asset_id: number;
   public_url: string | null;
@@ -142,6 +143,14 @@ type DiscoveryPolicyDiagnostics = {
   dominantExclusionReason: DiscoveryExclusionReason | null;
   exhaustedReason: DiscoveryExhaustedReason | null;
   exclusionCounts: Partial<Record<DiscoveryExclusionReason, number>>;
+};
+
+type DiscoveryDebugPhoto = {
+  profileImageId: number | null;
+  mediaAssetId: number | null;
+  sortOrder: number;
+  remoteUrl: string;
+  source: "db_confirmed" | "dummy_fallback";
 };
 
 type DiscoveryWindowResult = {
@@ -862,7 +871,12 @@ export class DiscoveryService {
         [visibleProfileIds]
       );
       imagesResult = await client.query<DiscoveryFeedImageRow>(
-        `SELECT pi.profile_id, pi.sort_order, ma.id AS media_asset_id, ma.public_url
+        `SELECT
+           pi.profile_id,
+           pi.id AS profile_image_id,
+           pi.sort_order,
+           ma.id AS media_asset_id,
+           ma.public_url
          FROM media.profile_images pi
          JOIN media.media_assets ma ON ma.id = pi.media_asset_id
          WHERE pi.profile_id = ANY($1::bigint[])
@@ -901,6 +915,7 @@ export class DiscoveryService {
     }
 
     const imagesByProfile = new Map<number, string[]>();
+    const debugPhotosByProfile = new Map<number, DiscoveryDebugPhoto[]>();
     for (const row of imagesResult.rows) {
       const resolvedUrl = row.public_url || this.buildPublicMediaUrl(Number(row.media_asset_id));
       if (!resolvedUrl) {
@@ -909,6 +924,15 @@ export class DiscoveryService {
       const current = imagesByProfile.get(row.profile_id) || [];
       current.push(resolvedUrl);
       imagesByProfile.set(row.profile_id, current);
+      const debugPhotos = debugPhotosByProfile.get(row.profile_id) || [];
+      debugPhotos.push({
+        profileImageId: Number(row.profile_image_id),
+        mediaAssetId: Number(row.media_asset_id),
+        sortOrder: Number(row.sort_order),
+        remoteUrl: resolvedUrl,
+        source: "db_confirmed",
+      });
+      debugPhotosByProfile.set(row.profile_id, debugPhotos);
     }
 
     const insightsByProfile = new Map<number, { es: string; en: string }[]>();
@@ -950,6 +974,30 @@ export class DiscoveryService {
       const interests = interestsByProfile.get(profile.id) || [];
       const images = imagesByProfile.get(profile.id);
       const isDummyProfile = Boolean(profile.synthetic_group);
+      const resolvedImages =
+        images && images.length > 0
+          ? images
+          : isDummyProfile
+            ? this.getFallbackImages(profile)
+            : [];
+      const mediaSource =
+        images && images.length > 0
+          ? "real_media"
+          : isDummyProfile
+            ? "dummy_fallback"
+            : "missing_real_media";
+      const debugPhotos =
+        images && images.length > 0
+          ? debugPhotosByProfile.get(profile.id) || []
+          : isDummyProfile
+            ? resolvedImages.map((url, index) => ({
+                profileImageId: null,
+                mediaAssetId: null,
+                sortOrder: index,
+                remoteUrl: url,
+                source: "dummy_fallback" as const,
+              }))
+            : [];
       const insightTags =
         insightsByProfile.get(profile.id) ||
         [
@@ -1001,12 +1049,7 @@ export class DiscoveryService {
           hairColor: profile.hair_color,
           ethnicity: profile.ethnicity,
         },
-        images:
-          images && images.length > 0
-            ? images
-            : isDummyProfile
-              ? this.getFallbackImages(profile)
-              : [],
+        images: resolvedImages,
         insightTags,
         goalFeedback: goalFeedbackByProfile.get(profile.id) || [],
         categoryValues: normalizePopularAttributeInput({
@@ -1017,6 +1060,11 @@ export class DiscoveryService {
           language: languages[0] || null,
           studies: profile.education || null,
         }),
+        debugMedia: {
+          mediaSource,
+          imageCount: resolvedImages.length,
+          photos: debugPhotos,
+        },
       };
     });
 
@@ -1024,13 +1072,8 @@ export class DiscoveryService {
       `[discovery-image-hydration] ${JSON.stringify(
         hydrated.map((profile) => ({
           profileId: profile.id,
-          mediaSource:
-            imagesByProfile.get(profile.id)?.length && imagesByProfile.get(profile.id)!.length > 0
-              ? "real_media"
-              : visibleProfiles.find((item) => item.id === profile.id)?.synthetic_group
-                ? "dummy_fallback"
-                : "missing_real_media",
-          imageCount: profile.images.length,
+          mediaSource: profile.debugMedia.mediaSource,
+          imageCount: profile.debugMedia.imageCount,
         }))
       )}`
     );
