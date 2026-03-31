@@ -748,8 +748,9 @@ export default function DiscoverScreen() {
   const [frontImageLoading, setFrontImageLoading] = useState(false);
   const [locationPromptVisible, setLocationPromptVisible] = useState(false);
   const [locationPromptReason, setLocationPromptReason] = useState<
-    "permission_denied" | "services_disabled" | null
+    "permission_denied" | "services_disabled" | "sync_failed" | null
   >(null);
+  const [isLocationPromptBusy, setIsLocationPromptBusy] = useState(false);
   const pendingLocationSettingsReturnRef = useRef(false);
   const deckRef = useRef<DeckState>(deck);
   const screenSessionIdRef = useRef(createTraceId("discover"));
@@ -782,8 +783,20 @@ export default function DiscoverScreen() {
     [traceFocused]
   );
 
+  const dismissLocationPrompt = useCallback(() => {
+    pendingLocationSettingsReturnRef.current = false;
+    setIsLocationPromptBusy(false);
+    setLocationPromptVisible(false);
+    debugDiscoveryLog("prompt_closed_manual", {
+      origin: "manual_dismiss",
+    });
+  }, []);
+
   useEffect(() => {
     if (!pathname.endsWith("/discover")) {
+      pendingLocationSettingsReturnRef.current = false;
+      setIsLocationPromptBusy(false);
+      setLocationPromptVisible(false);
       return;
     }
 
@@ -810,6 +823,7 @@ export default function DiscoverScreen() {
       debugDiscoveryLog("permission_recheck_started", {
         origin,
       });
+      setIsLocationPromptBusy(true);
 
       const result = await refreshProfileLocation({
         reason: "discover_entry",
@@ -823,13 +837,21 @@ export default function DiscoverScreen() {
         message: result.message ?? null,
       });
 
-      if (result.status === "updated" || result.status === "skipped_recent_sync") {
+      if (result.status === "updated") {
         debugDiscoveryLog("discover_location_sync_succeeded", {
           origin,
           status: result.status,
           nextLocation: result.nextLocation ?? null,
         });
+        if (user?.id) {
+          await clearDiscoveryFrontCardCache(user.id).catch(() => {});
+        }
+        setFrontCachedImages([]);
+        setFrontCachedProfileId(null);
+        setFrontImageLoading(false);
         setLocationPromptVisible(false);
+        setLocationPromptReason(null);
+        setIsLocationPromptBusy(false);
         pendingLocationSettingsReturnRef.current = false;
         debugDiscoveryLog("prompt_closed_after_sync", {
           origin,
@@ -842,30 +864,51 @@ export default function DiscoverScreen() {
         return { openedSettings: false, recovered: true };
       }
 
+      if (result.status === "skipped_recent_sync") {
+        debugDiscoveryWarn("discover_location_sync_failed", {
+          origin,
+          status: result.status,
+          message: "forced prompt flow requires a fresh sync",
+        });
+        setLocationPromptReason("sync_failed");
+        setLocationPromptVisible(true);
+        setIsLocationPromptBusy(false);
+        return { openedSettings: false, recovered: false, shouldOpenSettings: false };
+      }
+
       if (
         result.status === "permission_denied" ||
         result.status === "services_disabled"
       ) {
         setLocationPromptReason(result.status);
         setLocationPromptVisible(true);
+        setIsLocationPromptBusy(false);
         debugDiscoveryWarn("discover_location_sync_failed", {
           origin,
           status: result.status,
           canAskAgain: result.canAskAgain ?? null,
         });
-        return { openedSettings: false, recovered: false };
+        return {
+          openedSettings: false,
+          recovered: false,
+          shouldOpenSettings:
+            result.status === "services_disabled" ||
+            (result.status === "permission_denied" && result.canAskAgain === false),
+        };
       }
 
+      setLocationPromptReason("sync_failed");
       setLocationPromptVisible(true);
+      setIsLocationPromptBusy(false);
       debugDiscoveryWarn("discover_location_sync_failed", {
         origin,
         status: result.status,
         code: result.code ?? null,
         message: result.message ?? null,
       });
-      return { openedSettings: false, recovered: false };
+      return { openedSettings: false, recovered: false, shouldOpenSettings: false };
     },
-    [refreshDiscoveryCandidates, refreshProfileLocation]
+    [refreshDiscoveryCandidates, refreshProfileLocation, user?.id]
   );
 
   useEffect(() => {
@@ -3071,20 +3114,11 @@ export default function DiscoverScreen() {
       <Modal
         visible={locationPromptVisible}
         transparent
-        animationType="fade"
-        onRequestClose={() => {
-          pendingLocationSettingsReturnRef.current = false;
-          setLocationPromptVisible(false);
-        }}
+        animationType="none"
+        onRequestClose={dismissLocationPrompt}
       >
         <View style={styles.locationPromptOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFillObject}
-            onPress={() => {
-              pendingLocationSettingsReturnRef.current = false;
-              setLocationPromptVisible(false);
-            }}
-          />
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={dismissLocationPrompt} />
           <View style={styles.locationPromptCard}>
             <View style={styles.locationPromptIcon}>
               <Feather name="map-pin" size={18} color={Colors.primaryLight} />
@@ -3098,22 +3132,26 @@ export default function DiscoverScreen() {
                     "MatchA funciona mejor con el GPS activado. Enciéndelo para actualizar tu ciudad y mejorar discovery.",
                     "MatchA works better with GPS enabled. Turn it on to update your city and improve discovery."
                   )
-                : t(
-                    "MatchA funciona mejor con la ubicación activada. Permítela para actualizar tu ciudad y mejorar discovery.",
-                    "MatchA works better with location enabled. Allow it to update your city and improve discovery."
-                  )}
+                : locationPromptReason === "sync_failed"
+                  ? t(
+                      "La ubicación ya parece activa, pero no pudimos actualizar tu ciudad todavía. Inténtalo de nuevo para sincronizarla y recargar discovery.",
+                      "Location now seems enabled, but we still could not update your city. Try again to sync it and reload discovery."
+                    )
+                  : t(
+                      "MatchA funciona mejor con la ubicación activada. Permítela para actualizar tu ciudad y mejorar discovery.",
+                      "MatchA works better with location enabled. Allow it to update your city and improve discovery."
+                    )}
             </Text>
             <View style={styles.locationPromptActions}>
               <Pressable
-                onPress={() => {
-                  pendingLocationSettingsReturnRef.current = false;
-                  setLocationPromptVisible(false);
-                }}
+                onPress={dismissLocationPrompt}
                 style={({ pressed }) => [
                   styles.locationPromptButton,
                   styles.locationPromptButtonSecondary,
+                  isLocationPromptBusy && styles.emptyCardButtonDisabled,
                   pressed && { opacity: 0.82 },
                 ]}
+                disabled={isLocationPromptBusy}
               >
                 <Text style={styles.locationPromptButtonSecondaryText}>
                   {t("Cerrar", "Close")}
@@ -3122,22 +3160,30 @@ export default function DiscoverScreen() {
               <Pressable
                 onPress={() => {
                   void (async () => {
-                    pendingLocationSettingsReturnRef.current = true;
                     const outcome = await retryLocationPromptFlow("prompt_button");
-                    if (!outcome.recovered) {
+                    if (!outcome.recovered && outcome.shouldOpenSettings) {
+                      pendingLocationSettingsReturnRef.current = true;
                       await Linking.openSettings().catch(() => {});
+                    } else {
+                      pendingLocationSettingsReturnRef.current = false;
                     }
                   })();
                 }}
                 style={({ pressed }) => [
                   styles.locationPromptButton,
                   styles.locationPromptButtonPrimary,
+                  isLocationPromptBusy && styles.emptyCardButtonDisabled,
                   pressed && { opacity: 0.82 },
                 ]}
+                disabled={isLocationPromptBusy}
               >
-                <Text style={styles.locationPromptButtonPrimaryText}>
-                  {t("Activar", "Enable")}
-                </Text>
+                {isLocationPromptBusy ? (
+                  <ActivityIndicator size="small" color={Colors.ivory} />
+                ) : (
+                  <Text style={styles.locationPromptButtonPrimaryText}>
+                    {t("Activar", "Enable")}
+                  </Text>
+                )}
               </Pressable>
             </View>
           </View>
