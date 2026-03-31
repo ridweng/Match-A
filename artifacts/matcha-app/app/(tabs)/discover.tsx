@@ -787,6 +787,7 @@ export default function DiscoverScreen() {
     pendingLocationSettingsReturnRef.current = false;
     setIsLocationPromptBusy(false);
     setLocationPromptVisible(false);
+    setLocationPromptReason(null);
     debugDiscoveryLog("prompt_closed_manual", {
       origin: "manual_dismiss",
     });
@@ -817,21 +818,30 @@ export default function DiscoverScreen() {
 
   const retryLocationPromptFlow = useCallback(
     async (origin: "prompt_button" | "app_foreground") => {
+      const requestId = createTraceId("discover_location");
       debugDiscoveryLog("prompt_primary_pressed", {
         origin,
+        requestId,
       });
       debugDiscoveryLog("permission_recheck_started", {
         origin,
+        requestId,
+      });
+      debugDiscoveryLog("discover_location_sync_started", {
+        origin,
+        requestId,
       });
       setIsLocationPromptBusy(true);
 
       const result = await refreshProfileLocation({
         reason: "discover_entry",
         force: true,
+        requestId,
       });
 
       debugDiscoveryLog("permission_recheck_result", {
         origin,
+        requestId,
         status: result.status,
         code: result.code ?? null,
         message: result.message ?? null,
@@ -840,6 +850,7 @@ export default function DiscoverScreen() {
       if (result.status === "updated") {
         debugDiscoveryLog("discover_location_sync_succeeded", {
           origin,
+          requestId: result.requestId ?? requestId,
           status: result.status,
           nextLocation: result.nextLocation ?? null,
         });
@@ -855,10 +866,12 @@ export default function DiscoverScreen() {
         pendingLocationSettingsReturnRef.current = false;
         debugDiscoveryLog("prompt_closed_after_sync", {
           origin,
+          requestId: result.requestId ?? requestId,
         });
         const ok = await refreshDiscoveryCandidates();
         debugDiscoveryLog("discovery_reload_after_location_sync", {
           origin,
+          requestId: result.requestId ?? requestId,
           ok,
         });
         return { openedSettings: false, recovered: true };
@@ -867,6 +880,7 @@ export default function DiscoverScreen() {
       if (result.status === "skipped_recent_sync") {
         debugDiscoveryWarn("discover_location_sync_failed", {
           origin,
+          requestId: result.requestId ?? requestId,
           status: result.status,
           message: "forced prompt flow requires a fresh sync",
         });
@@ -885,6 +899,7 @@ export default function DiscoverScreen() {
         setIsLocationPromptBusy(false);
         debugDiscoveryWarn("discover_location_sync_failed", {
           origin,
+          requestId: result.requestId ?? requestId,
           status: result.status,
           canAskAgain: result.canAskAgain ?? null,
         });
@@ -902,6 +917,7 @@ export default function DiscoverScreen() {
       setIsLocationPromptBusy(false);
       debugDiscoveryWarn("discover_location_sync_failed", {
         origin,
+        requestId: result.requestId ?? requestId,
         status: result.status,
         code: result.code ?? null,
         message: result.message ?? null,

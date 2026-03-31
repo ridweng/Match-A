@@ -165,6 +165,7 @@ type LocationSyncResult = {
   status: LocationSyncResultStatus;
   reason: string;
   userId: number | null;
+  requestId?: string | null;
   nextLocation?: string | null;
   canAskAgain?: boolean;
   code?: string | null;
@@ -637,6 +638,7 @@ type AppContextType = {
   refreshProfileLocation: (options?: {
     reason?: string;
     force?: boolean;
+    requestId?: string;
   }) => Promise<LocationSyncResult>;
 };
 
@@ -651,6 +653,10 @@ const VIEWER_BOOTSTRAP_STORAGE_PREFIX = "viewerBootstrap:";
 const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
 const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
 const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
+
+function createLocationSyncRequestId(prefix = "location_sync") {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
 type DiscoveryFiltersCache = Record<string, DiscoveryFilters>;
 type ViewerBootstrapCache = ViewerBootstrapResponse;
@@ -1705,12 +1711,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshProfileLocation = useCallback(
-    async (options?: { reason?: string; force?: boolean }) => {
+    async (options?: { reason?: string; force?: boolean; requestId?: string }) => {
       if (Platform.OS === "web") {
         return {
           status: "web",
           reason: options?.reason || "manual",
           userId: null,
+          requestId: options?.requestId || null,
         } satisfies LocationSyncResult;
       }
 
@@ -1721,10 +1728,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           status: "no_session",
           reason: options?.reason || "manual",
           userId: userId || null,
+          requestId: options?.requestId || null,
         } satisfies LocationSyncResult;
       }
 
       const reason = options?.reason || "manual";
+      const requestId = options?.requestId || createLocationSyncRequestId(reason);
       const cadenceKey = `${DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX}${userId}`;
 
       try {
@@ -1742,6 +1751,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 status: "skipped_recent_sync",
                 reason,
                 userId,
+                requestId,
               } satisfies LocationSyncResult;
             }
           }
@@ -1752,11 +1762,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           debugWarn("[location-sync] services_disabled", {
             reason,
             userId,
+            requestId,
           });
           return {
             status: "services_disabled",
             reason,
             userId,
+            requestId,
           } satisfies LocationSyncResult;
         }
 
@@ -1770,11 +1782,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             reason,
             userId,
             canAskAgain: permission.canAskAgain,
+            requestId,
           });
           return {
             status: "permission_denied",
             reason,
             userId,
+            requestId,
             canAskAgain: permission.canAskAgain,
           } satisfies LocationSyncResult;
         }
@@ -1791,11 +1805,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           debugWarn("[location-sync] reverse_geocode_empty", {
             reason,
             userId,
+            requestId,
           });
           return {
             status: "reverse_geocode_empty",
             reason,
             userId,
+            requestId,
           } satisfies LocationSyncResult;
         }
 
@@ -1812,17 +1828,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           debugWarn("[location-sync] normalized_location_empty", {
             reason,
             userId,
+            requestId,
           });
           return {
             status: "normalized_location_empty",
             reason,
             userId,
+            requestId,
           } satisfies LocationSyncResult;
         }
 
         debugLog("[location-sync] update_started", {
           reason,
           userId,
+          requestId,
           nextLocation,
           country,
         });
@@ -1838,6 +1857,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           {
             headers: {
               "X-Matcha-Location-Source": reason,
+              "X-Matcha-Request-Id": requestId,
             },
           }
         );
@@ -1853,18 +1873,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         debugLog("[location-sync] update_succeeded", {
           reason,
           userId,
+          requestId,
           nextLocation,
         });
         return {
           status: "updated",
           reason,
           userId,
+          requestId,
           nextLocation,
         } satisfies LocationSyncResult;
       } catch (error: any) {
         debugWarn("[location-sync] update_failed", {
           reason,
           userId,
+          requestId,
           code: error?.code || null,
           message: error?.message || "UNKNOWN_ERROR",
         });
@@ -1872,6 +1895,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           status: "failed",
           reason,
           userId,
+          requestId,
           code: error?.code || null,
           message: error?.message || "UNKNOWN_ERROR",
         } satisfies LocationSyncResult;

@@ -332,6 +332,11 @@ export class ViewerService {
     const profileId = await this.findProfileId(userId);
     const hasProfileCountryColumn = await this.hasProfileCountryColumn();
     const client = await pool.connect();
+    const attemptedFields = Object.keys(updates || {});
+    const locationOnlyFields = new Set(["location", "country", "latitude", "longitude"]);
+    const isLocationSyncOnly =
+      attemptedFields.length > 0 &&
+      attemptedFields.every((field) => locationOnlyFields.has(field));
 
     try {
       await client.query("BEGIN");
@@ -452,8 +457,11 @@ export class ViewerService {
       const locationChanged =
         nextLocation !== (currentProfileRow.location || "") ||
         nextCountry !== (currentProfileRow.country || "");
+      const shouldInsertLocationHistory =
+        Boolean(nextLocation || nextCountry) &&
+        (options?.locationSource === "discover_entry" || locationChanged);
 
-      if (locationChanged && (nextLocation || nextCountry)) {
+      if (shouldInsertLocationHistory) {
         await client.query(
           `INSERT INTO core.profile_location_history
             (
@@ -461,8 +469,8 @@ export class ViewerService {
               profile_id,
               location,
               country,
-              latitude,
-              longitude,
+              latitude_e6,
+              longitude_e6,
               source,
               created_at
             )
@@ -486,6 +494,8 @@ export class ViewerService {
             nextLocation,
             previousCountry: currentProfileRow.country || "",
             nextCountry,
+            insertedForUnchangedLocation:
+              !locationChanged && options?.locationSource === "discover_entry",
             source: options?.locationSource || "profile_update",
           })}`
         );
@@ -499,22 +509,49 @@ export class ViewerService {
         [userId]
       );
 
-      await this.goalsService.rebuildUserGoalTargets(userId, client, {
-        refreshPreferences: false,
-      });
+      if (!isLocationSyncOnly) {
+        await this.goalsService.rebuildUserGoalTargets(userId, client, {
+          refreshPreferences: false,
+        });
+      }
 
       await client.query("COMMIT");
+      if (isLocationSyncOnly) {
+        this.logger.log(
+          `[viewer-location-sync-committed] ${JSON.stringify({
+            requestId: options?.requestId || null,
+            userId,
+            profileId,
+            locationSource: options?.locationSource || null,
+            nextLocation,
+            nextCountry,
+            insertedHistory: shouldInsertLocationHistory,
+          })}`
+        );
+      }
       this.logger.log(
         `[viewer-profile-update-committed] ${JSON.stringify({
           requestId: options?.requestId || null,
           userId,
           profileId,
-          fields: Object.keys(updates || {}),
+          fields: attemptedFields,
         })}`
       );
       return this.getProfile(userId);
-    } catch (error) {
+    } catch (error: any) {
       await client.query("ROLLBACK");
+      this.logger.error(
+        `[viewer-profile-update-rolled-back] ${JSON.stringify({
+          requestId: options?.requestId || null,
+          userId,
+          profileId,
+          fields: attemptedFields,
+          locationSource: options?.locationSource || null,
+          isLocationSyncOnly,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        })}`
+      );
       throw error;
     } finally {
       client.release();
