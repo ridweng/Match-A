@@ -1049,6 +1049,7 @@ export default function DiscoverScreen() {
   const supply = discoveryFeed.supply;
   const eligibleCount = Number(supply?.eligibleCount) || 0;
   const unseenCount = Number(supply?.unseenCount) || 0;
+  const refillThreshold = Math.max(1, Number(supply?.refillThreshold) || 2);
   const hasMoreServerProfiles = Boolean(discoveryFeed.hasMore);
   const hasFilterMatches = sourceProfiles.length > 0;
   const hasCatalogMatches = eligibleCount > 0;
@@ -1581,7 +1582,7 @@ export default function DiscoverScreen() {
     }
 
     const remainingLoadedProfiles = loadedCount - (deck.frontIndex + 1);
-    if (remainingLoadedProfiles > 2) {
+    if (remainingLoadedProfiles > refillThreshold) {
       return;
     }
 
@@ -1595,7 +1596,7 @@ export default function DiscoverScreen() {
       isOffline ||
       !hasMoreServerProfiles ||
       loadedCount < sourceProfiles.length ||
-      sourceProfiles.length - (deck.frontIndex + 1) > 2
+      sourceProfiles.length - (deck.frontIndex + 1) > refillThreshold
     ) {
       return;
     }
@@ -1607,6 +1608,7 @@ export default function DiscoverScreen() {
     hasMoreServerProfiles,
     isOffline,
     loadedCount,
+    refillThreshold,
     sourceProfiles.length,
   ]);
 

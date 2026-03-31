@@ -78,8 +78,8 @@ type OverviewCounts = {
   total_decisions: string;
   total_likes: string;
   total_passes: string;
-  users_below_threshold: string;
-  users_above_threshold: string;
+  users_not_activated: string;
+  users_activated: string;
   active_interacting_users: string;
   latest_decision_event_at: string | Date | null;
   latest_projection_rebuild_at: string | Date | null;
@@ -992,8 +992,8 @@ export class AdminService {
         { label: "Total decisions", value: overview.counts.total_decisions },
         { label: "Total likes", value: overview.counts.total_likes },
         { label: "Total passes", value: overview.counts.total_passes },
-        { label: "Threshold pending", value: overview.counts.users_below_threshold },
-        { label: "Threshold reached", value: overview.counts.users_above_threshold },
+        { label: "Users not activated", value: overview.counts.users_not_activated },
+        { label: "Users activated", value: overview.counts.users_activated },
         {
           label: "Latest decision event",
           value: overview.counts.latest_decision_event_at
@@ -1215,6 +1215,14 @@ export class AdminService {
           p.public_id,
           p.display_name,
           p.gender_identity,
+          p.created_at,
+          p.is_discoverable,
+          o.status AS onboarding_status,
+          o.completed_at AS activated_at,
+          (
+            COALESCE(o.status, '') = 'completed'
+            AND p.is_discoverable = true
+          ) AS is_activated,
           COALESCE(
             ${
               hasProfileLocationHistoryTable
@@ -1230,12 +1238,30 @@ export class AdminService {
             ? "LEFT JOIN latest_location_history llh ON llh.profile_id = p.id"
             : ""
         }
+        LEFT JOIN core.user_onboarding o ON o.user_id = p.user_id
         WHERE p.kind = 'user'
       ),
       filtered_real_profiles AS (
         SELECT *
         FROM real_profiles
         WHERE ($1::text = 'all' OR resolved_country = $1)
+          AND ($2::timestamptz IS NULL OR COALESCE(activated_at, created_at) >= $2)
+      ),
+      dummy_profiles AS (
+        SELECT
+          p.id,
+          p.gender_identity,
+          p.created_at,
+          pdm.dummy_batch_key,
+          pdm.generation_version
+        FROM core.profiles p
+        JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+        WHERE p.kind = 'dummy'
+      ),
+      filtered_dummy_profiles AS (
+        SELECT *
+        FROM dummy_profiles
+        WHERE ($2::timestamptz IS NULL OR created_at >= $2)
       )
     `;
 
@@ -1244,7 +1270,7 @@ export class AdminService {
         `${overviewCte}
          SELECT
            COALESCE((SELECT COUNT(*)::text FROM filtered_real_profiles), '0') AS real_users,
-           COUNT(*) FILTER (WHERE p.kind = 'dummy')::text AS dummy_profiles,
+           COALESCE((SELECT COUNT(*)::text FROM filtered_dummy_profiles), '0') AS dummy_profiles,
            COALESCE((
              SELECT COUNT(*)::text
              FROM discovery.profile_interactions pi
@@ -1269,15 +1295,13 @@ export class AdminService {
            COALESCE((
              SELECT COUNT(*)::text
              FROM filtered_real_profiles frp
-             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = frp.id
-             WHERE COALESCE(pth.threshold_reached, false) = false
-           ), '0') AS users_below_threshold,
+             WHERE COALESCE(frp.is_activated, false) = false
+           ), '0') AS users_not_activated,
            COALESCE((
              SELECT COUNT(*)::text
              FROM filtered_real_profiles frp
-             LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = frp.id
-             WHERE COALESCE(pth.threshold_reached, false) = true
-           ), '0') AS users_above_threshold,
+             WHERE COALESCE(frp.is_activated, false) = true
+           ), '0') AS users_activated,
            COALESCE((
              SELECT COUNT(DISTINCT pi.actor_profile_id)::text
              FROM discovery.profile_interactions pi
@@ -1297,7 +1321,7 @@ export class AdminService {
              FROM goals.user_goal_projection_meta ugpm
              JOIN filtered_real_profiles frp ON frp.user_id = ugpm.user_id
            ) AS latest_projection_rebuild_at
-         FROM core.profiles p`
+         `
       , [selectedCountry, windowStart]),
       pool.query<{ bucket: string; count: string }>(
         `${overviewCte}
@@ -1324,19 +1348,23 @@ export class AdminService {
            GROUP BY 1, 3
          ) buckets
          ORDER BY sort_order`
-      , [selectedCountry]),
+      , [selectedCountry, windowStart]),
       pool.query<{ dummy_batch_key: string; generation_version: number; profile_count: string }>(
-        `SELECT dummy_batch_key, generation_version, COUNT(*)::text AS profile_count
-         FROM core.profile_dummy_metadata
+        `${overviewCte}
+         SELECT dummy_batch_key, generation_version, COUNT(*)::text AS profile_count
+         FROM filtered_dummy_profiles
          GROUP BY dummy_batch_key, generation_version
          ORDER BY dummy_batch_key ASC, generation_version ASC`
+      , [selectedCountry, windowStart]
       ),
       pool.query<{ dummy_batch_key: string; generation_version: number }>(
-        `SELECT dummy_batch_key, generation_version
-         FROM core.profile_dummy_metadata
+        `${overviewCte}
+         SELECT dummy_batch_key, generation_version
+         FROM filtered_dummy_profiles
          GROUP BY dummy_batch_key, generation_version
          ORDER BY generation_version DESC, dummy_batch_key DESC
          LIMIT 1`
+      , [selectedCountry, windowStart]
       ),
       pool.query<{
         gender_identity: string;
@@ -1344,25 +1372,26 @@ export class AdminService {
         generation_version: number;
         profile_count: string;
       }>(
-        `WITH active_batch AS (
+        `${overviewCte},
+         active_batch AS (
            SELECT dummy_batch_key, generation_version
-           FROM core.profile_dummy_metadata
+           FROM filtered_dummy_profiles
            GROUP BY dummy_batch_key, generation_version
            ORDER BY generation_version DESC, dummy_batch_key DESC
            LIMIT 1
          )
          SELECT
-           p.gender_identity,
-           pdm.dummy_batch_key,
-           pdm.generation_version,
+           fdp.gender_identity,
+           fdp.dummy_batch_key,
+           fdp.generation_version,
            COUNT(*)::text AS profile_count
-         FROM core.profiles p
-         JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+         FROM filtered_dummy_profiles fdp
          JOIN active_batch ab
-           ON ab.dummy_batch_key = pdm.dummy_batch_key
-          AND ab.generation_version = pdm.generation_version
-         GROUP BY p.gender_identity, pdm.dummy_batch_key, pdm.generation_version
-         ORDER BY profile_count DESC, p.gender_identity ASC`
+           ON ab.dummy_batch_key = fdp.dummy_batch_key
+          AND ab.generation_version = fdp.generation_version
+         GROUP BY fdp.gender_identity, fdp.dummy_batch_key, fdp.generation_version
+         ORDER BY profile_count DESC, fdp.gender_identity ASC`
+      , [selectedCountry, windowStart]
       ),
       pool.query<OverviewRealGenderRow>(
         `${overviewCte}
@@ -1375,7 +1404,7 @@ export class AdminService {
          FROM filtered_real_profiles frp
          GROUP BY 1
          ORDER BY COUNT(*) DESC, 1 ASC`
-      , [selectedCountry]),
+      , [selectedCountry, windowStart]),
       pool.query<OverviewRealCountryRow>(
         `${overviewCte}
          SELECT
@@ -1384,40 +1413,16 @@ export class AdminService {
          FROM filtered_real_profiles frp
          GROUP BY 1
          ORDER BY COUNT(*) DESC, 1 ASC`
-      , [selectedCountry]),
+      , [selectedCountry, windowStart]),
       pool.query<OverviewRealCountryRow>(
-        `${hasProfileLocationHistoryTable
-          ? `WITH latest_location_history AS (
-               SELECT DISTINCT ON (profile_id)
-                 profile_id,
-                 country,
-                 location,
-                 created_at
-               FROM core.profile_location_history
-               ORDER BY profile_id, created_at DESC
-             ),
-             real_profiles AS (
-           SELECT COALESCE(
-                    NULLIF(TRIM(llh.country), ''),
-                    NULLIF(TRIM(SPLIT_PART(llh.location, ',', array_length(regexp_split_to_array(llh.location, ','), 1))), ''),
-                    ${resolvedCountryExpression}
-                  ) AS country
-           FROM core.profiles p
-           LEFT JOIN latest_location_history llh ON llh.profile_id = p.id
-           WHERE p.kind = 'user'
-         )`
-          : `WITH real_profiles AS (
-           SELECT ${resolvedCountryExpression} AS country
-           FROM core.profiles p
-           WHERE p.kind = 'user'
-         )`}
+        `${overviewCte}
          SELECT
            country,
            COUNT(*)::text AS profile_count
-         FROM real_profiles
+         FROM filtered_real_profiles
          GROUP BY 1
          ORDER BY COUNT(*) DESC, 1 ASC`
-      ),
+      , [selectedCountry, windowStart]),
       pool.query<OverviewInteractedUserRow>(
         `${overviewCte}
          SELECT
@@ -1447,8 +1452,8 @@ export class AdminService {
         total_decisions: "0",
         total_likes: "0",
         total_passes: "0",
-        users_below_threshold: "0",
-        users_above_threshold: "0",
+        users_not_activated: "0",
+        users_activated: "0",
         active_interacting_users: "0",
         latest_decision_event_at: null,
         latest_projection_rebuild_at: null,

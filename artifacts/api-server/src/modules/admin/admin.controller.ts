@@ -500,8 +500,8 @@ export class AdminController {
             <div class="card"><div class="label">Active interacting users</div><div class="value">${escapeHtml(overview.counts.active_interacting_users)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
             <div class="card"><div class="label">Total likes</div><div class="value">${escapeHtml(overview.counts.total_likes)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
             <div class="card"><div class="label">Total passes</div><div class="value">${escapeHtml(overview.counts.total_passes)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
-            <div class="card"><div class="label">Users below threshold</div><div class="value">${escapeHtml(overview.counts.users_below_threshold)}</div></div>
-            <div class="card"><div class="label">Users above threshold</div><div class="value">${escapeHtml(overview.counts.users_above_threshold)}</div></div>
+            <div class="card"><div class="label">Users not activated</div><div class="value">${escapeHtml(overview.counts.users_not_activated)}</div></div>
+            <div class="card"><div class="label">Users activated</div><div class="value">${escapeHtml(overview.counts.users_activated)}</div></div>
             <div class="card"><div class="label">Total decisions</div><div class="value">${escapeHtml(overview.counts.total_decisions)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
             <div class="card"><div class="label">Active dummy batch</div><div class="value">${escapeHtml(overview.activeBatch?.dummy_batch_key || "—")}</div><div class="muted">Generation ${escapeHtml(overview.activeBatch?.generation_version ?? "—")} · global</div></div>
           </div>

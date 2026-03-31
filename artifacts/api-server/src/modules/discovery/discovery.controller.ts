@@ -56,6 +56,7 @@ const discoveryFeedQuerySchema = z.object({
 
 const discoveryWindowQuerySchema = z.object({
   size: z.coerce.number().int().min(1).max(3).optional(),
+  cursor: z.string().trim().max(512).optional(),
 });
 
 @Controller("discovery")
@@ -149,6 +150,7 @@ export class DiscoveryController {
       return res.json(
         await this.discoveryService.getWindow(auth.user.id, {
           size: parsed.size,
+          cursor: parsed.cursor || null,
         })
       );
     } catch (error) {

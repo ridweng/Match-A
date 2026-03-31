@@ -3889,6 +3889,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const nextFeed = await getNextDiscoveryFeedWindow(token, currentFeed.nextCursor);
       const knownIds = new Set(currentFeed.profiles.map((profile) => profile.id));
       const mergedFeed: DiscoveryFeedResponse = {
+        queueVersion: nextFeed.queueVersion ?? currentFeed.queueVersion,
+        policyVersion: nextFeed.policyVersion ?? currentFeed.policyVersion,
+        generatedAt: nextFeed.generatedAt ?? currentFeed.generatedAt,
+        windowSize: nextFeed.windowSize ?? currentFeed.windowSize,
+        reserveCount: nextFeed.reserveCount ?? currentFeed.reserveCount,
         profiles: [
           ...currentFeed.profiles,
           ...nextFeed.profiles.filter((profile) => !knownIds.has(profile.id)),

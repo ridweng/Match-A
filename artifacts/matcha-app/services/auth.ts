@@ -270,6 +270,7 @@ export type DiscoveryFeedProfileResponse = {
 
 export type DiscoveryFeedResponse = {
   queueVersion?: number;
+  policyVersion?: string;
   generatedAt?: string;
   windowSize?: number;
   reserveCount?: number;
@@ -282,6 +283,14 @@ export type DiscoveryFeedResponse = {
     decidedCount: number;
     exhausted: boolean;
     fetchedAt: string;
+    policyVersion?: string;
+    eligibleRealCount?: number;
+    eligibleDummyCount?: number;
+    returnedRealCount?: number;
+    returnedDummyCount?: number;
+    dominantExclusionReason?: string | null;
+    exhaustedReason?: string | null;
+    refillThreshold?: number;
   };
 };
 
@@ -992,6 +1001,7 @@ function buildDemoDiscoveryFeed(cursor?: string | null, limit = DEMO_DISCOVERY_D
 
   return {
     queueVersion: DEMO_DISCOVERY_QUEUE_VERSION,
+    policyVersion: "demo_policy_v1",
     generatedAt: now,
     windowSize: windowProfiles.length,
     reserveCount: Math.min(unseenProfiles.length, 12),
@@ -1004,6 +1014,14 @@ function buildDemoDiscoveryFeed(cursor?: string | null, limit = DEMO_DISCOVERY_D
       decidedCount: excludedIds.size,
       exhausted: unseenProfiles.length === 0,
       fetchedAt: now,
+      policyVersion: "demo_policy_v1",
+      eligibleRealCount: unseenProfiles.length,
+      eligibleDummyCount: 0,
+      returnedRealCount: windowProfiles.length,
+      returnedDummyCount: 0,
+      dominantExclusionReason: null,
+      exhaustedReason: unseenProfiles.length === 0 ? "pool_exhausted_real_and_dummy" : null,
+      refillThreshold: 2,
     },
   } satisfies DiscoveryFeedResponse;
 }
@@ -1020,6 +1038,9 @@ export async function getDiscoveryFeedWindow(
   const requestedSize = options?.size ?? options?.limit;
   if (Number.isFinite(requestedSize)) {
     params.set("size", String(requestedSize));
+  }
+  if (options?.cursor) {
+    params.set("cursor", options.cursor);
   }
 
   return request<DiscoveryFeedResponse>(
