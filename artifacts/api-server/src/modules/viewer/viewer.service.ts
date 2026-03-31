@@ -60,6 +60,18 @@ export class ViewerService {
     return Boolean(result.rows[0]?.exists);
   }
 
+  private async hasProfileLocationHistoryTable() {
+    const result = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.tables
+         WHERE table_schema = 'core'
+           AND table_name = 'profile_location_history'
+       ) AS exists`
+    );
+    return Boolean(result.rows[0]?.exists);
+  }
+
   private async findProfileId(userId: number) {
     const result = await pool.query<{ id: number }>(
       `SELECT id
@@ -330,7 +342,10 @@ export class ViewerService {
     }
 
     const profileId = await this.findProfileId(userId);
-    const hasProfileCountryColumn = await this.hasProfileCountryColumn();
+    const [hasProfileCountryColumn, hasProfileLocationHistoryTable] = await Promise.all([
+      this.hasProfileCountryColumn(),
+      this.hasProfileLocationHistoryTable(),
+    ]);
     const client = await pool.connect();
     const attemptedFields = Object.keys(updates || {});
     const locationOnlyFields = new Set(["location", "country", "latitude", "longitude"]);
@@ -461,7 +476,7 @@ export class ViewerService {
         Boolean(nextLocation || nextCountry) &&
         (options?.locationSource === "discover_entry" || locationChanged);
 
-      if (shouldInsertLocationHistory) {
+      if (shouldInsertLocationHistory && hasProfileLocationHistoryTable) {
         await client.query(
           `INSERT INTO core.profile_location_history
             (
@@ -499,6 +514,18 @@ export class ViewerService {
             source: options?.locationSource || "profile_update",
           })}`
         );
+      } else if (shouldInsertLocationHistory) {
+        this.logger.warn(
+          `[profile-location-history-skipped] ${JSON.stringify({
+            requestId: options?.requestId || null,
+            userId,
+            profileId,
+            nextLocation,
+            nextCountry,
+            source: options?.locationSource || "profile_update",
+            reason: "missing_table",
+          })}`
+        );
       }
 
       await client.query(
@@ -522,12 +549,12 @@ export class ViewerService {
             requestId: options?.requestId || null,
             userId,
             profileId,
-            locationSource: options?.locationSource || null,
-            nextLocation,
-            nextCountry,
-            insertedHistory: shouldInsertLocationHistory,
-          })}`
-        );
+          locationSource: options?.locationSource || null,
+          nextLocation,
+          nextCountry,
+          insertedHistory: shouldInsertLocationHistory && hasProfileLocationHistoryTable,
+        })}`
+      );
       }
       this.logger.log(
         `[viewer-profile-update-committed] ${JSON.stringify({
