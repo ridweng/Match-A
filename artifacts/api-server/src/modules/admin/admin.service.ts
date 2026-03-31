@@ -1219,10 +1219,12 @@ export class AdminService {
           p.is_discoverable,
           o.status AS onboarding_status,
           o.completed_at AS activated_at,
-          (
-            COALESCE(o.status, '') = 'completed'
-            AND p.is_discoverable = true
-          ) AS is_activated,
+          CASE
+            WHEN o.status = 'completed'::onboarding_status
+             AND p.is_discoverable = true
+            THEN true
+            ELSE false
+          END AS is_activated,
           COALESCE(
             ${
               hasProfileLocationHistoryTable
