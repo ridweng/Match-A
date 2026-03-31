@@ -1419,9 +1419,9 @@ export class AdminService {
       pool.query<OverviewRealCountryRow>(
         `${overviewCte}
          SELECT
-           country,
+           frp.resolved_country AS country,
            COUNT(*)::text AS profile_count
-         FROM filtered_real_profiles
+         FROM filtered_real_profiles frp
          GROUP BY 1
          ORDER BY COUNT(*) DESC, 1 ASC`
       , [selectedCountry, windowStart]),
