@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   Keyboard,
   Linking,
   Modal,
@@ -749,6 +750,7 @@ export default function DiscoverScreen() {
   const [locationPromptReason, setLocationPromptReason] = useState<
     "permission_denied" | "services_disabled" | null
   >(null);
+  const pendingLocationSettingsReturnRef = useRef(false);
   const deckRef = useRef<DeckState>(deck);
   const screenSessionIdRef = useRef(createTraceId("discover"));
   const swipeSessionIdRef = useRef<string | null>(null);
@@ -799,6 +801,90 @@ export default function DiscoverScreen() {
       }
     })();
   }, [pathname, refreshProfileLocation]);
+
+  const retryLocationPromptFlow = useCallback(
+    async (origin: "prompt_button" | "app_foreground") => {
+      debugDiscoveryLog("prompt_primary_pressed", {
+        origin,
+      });
+      debugDiscoveryLog("permission_recheck_started", {
+        origin,
+      });
+
+      const result = await refreshProfileLocation({
+        reason: "discover_entry",
+        force: true,
+      });
+
+      debugDiscoveryLog("permission_recheck_result", {
+        origin,
+        status: result.status,
+        code: result.code ?? null,
+        message: result.message ?? null,
+      });
+
+      if (result.status === "updated" || result.status === "skipped_recent_sync") {
+        debugDiscoveryLog("discover_location_sync_succeeded", {
+          origin,
+          status: result.status,
+          nextLocation: result.nextLocation ?? null,
+        });
+        setLocationPromptVisible(false);
+        pendingLocationSettingsReturnRef.current = false;
+        debugDiscoveryLog("prompt_closed_after_sync", {
+          origin,
+        });
+        const ok = await refreshDiscoveryCandidates();
+        debugDiscoveryLog("discovery_reload_after_location_sync", {
+          origin,
+          ok,
+        });
+        return { openedSettings: false, recovered: true };
+      }
+
+      if (
+        result.status === "permission_denied" ||
+        result.status === "services_disabled"
+      ) {
+        setLocationPromptReason(result.status);
+        setLocationPromptVisible(true);
+        debugDiscoveryWarn("discover_location_sync_failed", {
+          origin,
+          status: result.status,
+          canAskAgain: result.canAskAgain ?? null,
+        });
+        return { openedSettings: false, recovered: false };
+      }
+
+      setLocationPromptVisible(true);
+      debugDiscoveryWarn("discover_location_sync_failed", {
+        origin,
+        status: result.status,
+        code: result.code ?? null,
+        message: result.message ?? null,
+      });
+      return { openedSettings: false, recovered: false };
+    },
+    [refreshDiscoveryCandidates, refreshProfileLocation]
+  );
+
+  useEffect(() => {
+    if (!pathname.endsWith("/discover")) {
+      return;
+    }
+
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active" || !pendingLocationSettingsReturnRef.current) {
+        return;
+      }
+
+      void retryLocationPromptFlow("app_foreground");
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [pathname, retryLocationPromptFlow]);
 
   const rotate = position.x.interpolate({
     inputRange: [-width / 2, 0, width / 2],
@@ -2986,12 +3072,18 @@ export default function DiscoverScreen() {
         visible={locationPromptVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setLocationPromptVisible(false)}
+        onRequestClose={() => {
+          pendingLocationSettingsReturnRef.current = false;
+          setLocationPromptVisible(false);
+        }}
       >
         <View style={styles.locationPromptOverlay}>
           <Pressable
             style={StyleSheet.absoluteFillObject}
-            onPress={() => setLocationPromptVisible(false)}
+            onPress={() => {
+              pendingLocationSettingsReturnRef.current = false;
+              setLocationPromptVisible(false);
+            }}
           />
           <View style={styles.locationPromptCard}>
             <View style={styles.locationPromptIcon}>
@@ -3013,7 +3105,10 @@ export default function DiscoverScreen() {
             </Text>
             <View style={styles.locationPromptActions}>
               <Pressable
-                onPress={() => setLocationPromptVisible(false)}
+                onPress={() => {
+                  pendingLocationSettingsReturnRef.current = false;
+                  setLocationPromptVisible(false);
+                }}
                 style={({ pressed }) => [
                   styles.locationPromptButton,
                   styles.locationPromptButtonSecondary,
@@ -3027,19 +3122,9 @@ export default function DiscoverScreen() {
               <Pressable
                 onPress={() => {
                   void (async () => {
-                    const result = await refreshProfileLocation({
-                      reason: "discover_entry",
-                      force: true,
-                    });
-                    if (result.status === "updated" || result.status === "skipped_recent_sync") {
-                      setLocationPromptVisible(false);
-                      return;
-                    }
-                    if (
-                      result.status === "permission_denied" ||
-                      result.status === "services_disabled"
-                    ) {
-                      setLocationPromptReason(result.status);
+                    pendingLocationSettingsReturnRef.current = true;
+                    const outcome = await retryLocationPromptFlow("prompt_button");
+                    if (!outcome.recovered) {
                       await Linking.openSettings().catch(() => {});
                     }
                   })();
