@@ -11,12 +11,15 @@ import {
   Req,
   Res,
 } from "@nestjs/common";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z, ZodError } from "zod";
 import type { Request, Response } from "express";
 import { AuthService } from "../auth/auth.service";
 import { DiscoveryService } from "../discovery/discovery.service";
 import { GoalsService } from "../goals/goals.service";
 import { ViewerService } from "./viewer.service";
+import { API_TAGS } from "../../docs/openapi/tags";
+import { MATCHA_BEARER_AUTH } from "../../docs/openapi/security";
 
 const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
@@ -71,6 +74,8 @@ const goalReorderSchema = z.object({
   orderedGoalKeys: z.array(z.string().trim().min(1).max(64)).min(1),
 });
 
+@ApiTags(API_TAGS.viewer)
+@ApiBearerAuth(MATCHA_BEARER_AUTH)
 @Controller()
 export class ViewerController {
   private readonly logger = new Logger(ViewerController.name);
@@ -117,6 +122,7 @@ export class ViewerController {
   }
 
   @Get("viewer/bootstrap")
+  @ApiOperation({ summary: "Get bootstrap data for the authenticated viewer shell" })
   async getViewerBootstrap(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
@@ -130,6 +136,7 @@ export class ViewerController {
   }
 
   @Get("me/profile")
+  @ApiOperation({ summary: "Get the full editable viewer profile" })
   async getProfile(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
@@ -143,6 +150,7 @@ export class ViewerController {
   }
 
   @Patch("me/profile")
+  @ApiOperation({ summary: "Update the full viewer profile" })
   async updateProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req), {
@@ -186,6 +194,7 @@ export class ViewerController {
   }
 
   @Get("me/settings")
+  @ApiOperation({ summary: "Get viewer settings" })
   async getSettings(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(
@@ -197,6 +206,7 @@ export class ViewerController {
   }
 
   @Patch("me/settings")
+  @ApiOperation({ summary: "Update viewer settings" })
   async updateSettings(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const payload = settingsUpdateSchema.parse(body);
@@ -221,6 +231,7 @@ export class ViewerController {
   }
 
   @Get("me/goals")
+  @ApiOperation({ summary: "List the current viewer goal tasks" })
   async getGoals(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -231,6 +242,7 @@ export class ViewerController {
   }
 
   @Patch("me/goals/:goalKey")
+  @ApiOperation({ summary: "Mark a viewer goal task as completed" })
   async completeGoal(
     @Req() req: Request,
     @Param("goalKey") goalKey: string,
@@ -262,6 +274,7 @@ export class ViewerController {
   }
 
   @Post("me/goals/reorder")
+  @ApiOperation({ summary: "Reorder the viewer goal tasks within one category" })
   async reorderGoals(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -294,6 +307,7 @@ export class ViewerController {
   }
 
   @Post("me/goals/unlock/seen")
+  @ApiOperation({ summary: "Mark the goals unlock notice as seen" })
   async markGoalsUnlockSeen(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -304,6 +318,7 @@ export class ViewerController {
   }
 
   @Get("me/discovery/preferences")
+  @ApiOperation({ summary: "Get discovery preferences from the viewer surface" })
   async getDiscoveryPreferences(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -314,6 +329,7 @@ export class ViewerController {
   }
 
   @Patch("me/discovery/preferences")
+  @ApiOperation({ summary: "Update discovery preferences from the viewer surface" })
   async updateDiscoveryPreferences(
     @Req() req: Request,
     @Body() body: unknown,

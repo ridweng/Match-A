@@ -12,9 +12,11 @@ import {
   Req,
   Res,
 } from "@nestjs/common";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z, ZodError } from "zod";
 import type { Request, Response } from "express";
 import { AuthService, type Provider } from "./auth.service";
+import { API_TAGS } from "../../docs/openapi/tags";
 
 const signUpSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -71,6 +73,7 @@ const providerSchema = z.enum(["google", "facebook", "apple"]);
 
 type SupportedProvider = z.infer<typeof providerSchema>;
 
+@ApiTags(API_TAGS.auth)
 @Controller("auth")
 export class AuthController {
   constructor(@Inject(AuthService) private readonly authService: AuthService) {}
@@ -121,11 +124,13 @@ export class AuthController {
   }
 
   @Get("providers")
+  @ApiOperation({ summary: "List enabled authentication providers" })
   getProviders() {
     return this.authService.providerAvailability();
   }
 
   @Post("sign-up")
+  @ApiOperation({ summary: "Create a new email and password account" })
   async signUp(@Body() body: unknown, @Res() res: Response) {
     try {
       const input = signUpSchema.parse(body);
@@ -150,6 +155,7 @@ export class AuthController {
   }
 
   @Post("sign-in")
+  @ApiOperation({ summary: "Sign in with email and password" })
   async signIn(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signInSchema.parse(body);
@@ -178,6 +184,7 @@ export class AuthController {
   }
 
   @Post("refresh")
+  @ApiOperation({ summary: "Exchange a refresh token for a new session" })
   async refresh(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const { refreshToken } = refreshSchema.parse(body);
@@ -200,6 +207,7 @@ export class AuthController {
   }
 
   @Post("sign-out")
+  @ApiOperation({ summary: "Invalidate the current access token" })
   async signOut(@Req() req: Request, @Res() res: Response) {
     try {
       await this.authService.signOut(this.getAuthorizationHeader(req));
@@ -210,6 +218,7 @@ export class AuthController {
   }
 
   @Post("verify-email")
+  @ApiOperation({ summary: "Confirm an email verification token" })
   async verifyEmail(@Body() body: unknown, @Res() res: Response) {
     try {
       const { token } = verifySchema.parse(body);
@@ -230,12 +239,14 @@ export class AuthController {
   }
 
   @Get("verify-email/confirm")
+  @ApiOperation({ summary: "Resolve the verification confirmation redirect" })
   async verifyEmailConfirm(@Query("token") token: string | undefined, @Res() res: Response) {
     const target = await this.authService.getVerificationConfirmRedirect(String(token || ""));
     return res.redirect(target);
   }
 
   @Post("verify-email/resend")
+  @ApiOperation({ summary: "Resend the verification email for an account" })
   async resendVerificationEmail(
     @Req() req: Request,
     @Body() body: unknown,
@@ -261,6 +272,7 @@ export class AuthController {
   }
 
   @Post("verification-status")
+  @ApiOperation({ summary: "Check whether an email address is verified" })
   async getVerificationStatus(@Body() body: unknown, @Res() res: Response) {
     try {
       const input = verificationStatusSchema.parse(body);
@@ -279,6 +291,7 @@ export class AuthController {
   }
 
   @Post("password-reset/request")
+  @ApiOperation({ summary: "Start the password reset flow" })
   async requestPasswordReset(
     @Req() req: Request,
     @Body() body: unknown,
@@ -304,6 +317,7 @@ export class AuthController {
   }
 
   @Post("password-reset/confirm")
+  @ApiOperation({ summary: "Finish the password reset flow with a new password" })
   async confirmPasswordReset(@Body() body: unknown, @Res() res: Response) {
     try {
       const input = passwordResetConfirmSchema.parse(body);
@@ -324,6 +338,7 @@ export class AuthController {
   }
 
   @Get("me")
+  @ApiOperation({ summary: "Get the current authenticated account" })
   async getMe(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(await this.authService.getMe(this.getAuthorizationHeader(req)));
@@ -333,6 +348,7 @@ export class AuthController {
   }
 
   @Patch("me")
+  @ApiOperation({ summary: "Update the current authenticated account profile basics" })
   async updateMe(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const updates = updateProfileSchema.parse(body);
@@ -359,6 +375,7 @@ export class AuthController {
   }
 
   @Post("onboarding/complete")
+  @ApiOperation({ summary: "Mark onboarding as completed for the current account" })
   async completeOnboarding(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(
@@ -372,6 +389,7 @@ export class AuthController {
   }
 
   @Get("settings")
+  @ApiOperation({ summary: "Get the current authenticated account settings" })
   async getSettings(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(
@@ -383,6 +401,7 @@ export class AuthController {
   }
 
   @Patch("settings")
+  @ApiOperation({ summary: "Update the current authenticated account settings" })
   async updateSettings(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const updates = updateSettingsSchema.parse(body);
@@ -404,6 +423,7 @@ export class AuthController {
   }
 
   @Delete("me")
+  @ApiOperation({ summary: "Delete the current authenticated account" })
   async deleteMe(@Req() req: Request, @Res() res: Response) {
     try {
       return res.json(
@@ -421,6 +441,7 @@ export class AuthController {
   }
 
   @Get("social/start/:provider")
+  @ApiOperation({ summary: "Start the social authentication redirect flow" })
   startSocialAuth(
     @Param("provider") providerParam: string,
     @Query("redirectUri") redirectUri: string | undefined,
@@ -480,6 +501,7 @@ export class AuthController {
   }
 
   @Get("social/callback/:provider")
+  @ApiOperation({ summary: "Handle a social authentication callback via GET" })
   async socialCallbackGet(
     @Param("provider") provider: string,
     @Query() query: Record<string, unknown>,
@@ -489,6 +511,7 @@ export class AuthController {
   }
 
   @Post("social/callback/:provider")
+  @ApiOperation({ summary: "Handle a social authentication callback via POST" })
   async socialCallbackPost(
     @Param("provider") provider: string,
     @Query() query: Record<string, unknown>,

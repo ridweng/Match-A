@@ -1,4 +1,5 @@
 import { Controller, Get, Inject, Param, Query, Req, Res } from "@nestjs/common";
+import { ApiExcludeController } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import { runtimeConfig } from "../../config/runtime";
 import { AdminService } from "./admin.service";
@@ -18,6 +19,7 @@ type DatabaseGraphSize = "current" | "wide";
 type OverviewTimeframe = AdminOverview["selectedTimeframe"];
 
 const OVERVIEW_TIMEFRAME_LABELS: Record<OverviewTimeframe, string> = {
+  all: "All time",
   now: "Last 24h",
   "1w": "1 week",
   "1m": "1 month",
@@ -75,6 +77,7 @@ function escapeHtmlAttribute(input: unknown) {
   return escapeHtml(input).replace(/`/g, "&#96;");
 }
 
+@ApiExcludeController()
 @Controller("admin/stats")
 export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
@@ -159,6 +162,7 @@ export class AdminController {
           <a href="/api/admin/stats/overview">Overview</a>
           <a href="/api/admin/stats/users">Users</a>
           <a href="/api/admin/stats/database">Database</a>
+          <a href="/api/admin/stats/api-docs">API Docs</a>
         </div>
         <div
           class="health-indicator"
@@ -1079,6 +1083,39 @@ export class AdminController {
           </script>
         `,
         { autoRefreshMs: 15000 }
+      )
+    );
+  }
+
+  @Get("api-docs")
+  async apiDocs(@Req() req: Request, @Res() res: Response) {
+    if (!this.authorize(req, res)) return;
+
+    res.send(
+      this.renderPage(
+        "Admin API Docs",
+        `
+          <h1>API Docs</h1>
+          <div class="meta">
+            Internal Swagger UI and the public Scalar reference are both backed by the same generated OpenAPI document.
+          </div>
+          <div class="actions">
+            <a class="button primary" href="/api/docs" target="_blank" rel="noreferrer">Open Swagger UI</a>
+            <a class="button" href="/api/reference" target="_blank" rel="noreferrer">Open Scalar Reference</a>
+            <a class="button" href="/api/openapi.json" target="_blank" rel="noreferrer">Open Raw OpenAPI</a>
+          </div>
+          <div class="card flush" style="min-height:78vh;">
+            <div class="card-header">
+              <h2>Embedded Swagger UI</h2>
+              <div class="muted">If embedding is inconvenient in your browser, use the direct links above.</div>
+            </div>
+            <iframe
+              src="/api/docs"
+              title="Matcha Internal Swagger UI"
+              style="width:100%; min-height:72vh; border:0; background:#fff;"
+            ></iframe>
+          </div>
+        `
       )
     );
   }

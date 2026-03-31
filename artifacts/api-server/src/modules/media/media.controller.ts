@@ -12,11 +12,16 @@ import {
   UploadedFile,
   UseInterceptors,
 } from "@nestjs/common";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { Request, Response } from "express";
 import { AuthService } from "../auth/auth.service";
 import { MediaService } from "./media.service";
+import { API_TAGS } from "../../docs/openapi/tags";
+import { MATCHA_BEARER_AUTH } from "../../docs/openapi/security";
 
+@ApiTags(API_TAGS.media)
+@ApiBearerAuth(MATCHA_BEARER_AUTH)
 @Controller("media")
 export class MediaController {
   constructor(
@@ -37,6 +42,7 @@ export class MediaController {
   }
 
   @Get("profile-images")
+  @ApiOperation({ summary: "List the current account profile images" })
   async listProfileImages(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -47,6 +53,7 @@ export class MediaController {
   }
 
   @Post("profile-images")
+  @ApiOperation({ summary: "Upload a profile image for the current account" })
   @UseInterceptors(
     FileInterceptor("file", {
       limits: { fileSize: 10 * 1024 * 1024 },
@@ -86,6 +93,7 @@ export class MediaController {
   }
 
   @Delete("profile-images/:profileImageId")
+  @ApiOperation({ summary: "Delete one profile image for the current account" })
   async deleteProfileImage(
     @Req() req: Request,
     @Param("profileImageId", ParseIntPipe) profileImageId: number,
@@ -101,6 +109,7 @@ export class MediaController {
   }
 
   @Get("public/:mediaAssetId")
+  @ApiOperation({ summary: "Serve a public media asset by id" })
   async getPublicMedia(
     @Param("mediaAssetId", ParseIntPipe) mediaAssetId: number,
     @Res() res: Response

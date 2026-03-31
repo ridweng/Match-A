@@ -10,10 +10,13 @@ import {
   Req,
   Res,
 } from "@nestjs/common";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z, ZodError } from "zod";
 import type { Request, Response } from "express";
 import { AuthService } from "../auth/auth.service";
 import { DiscoveryService } from "./discovery.service";
+import { API_TAGS } from "../../docs/openapi/tags";
+import { MATCHA_BEARER_AUTH } from "../../docs/openapi/security";
 
 const discoveryDecisionSchema = z.object({
   targetProfileId: z.coerce.number().int().positive(),
@@ -61,6 +64,8 @@ const discoveryWindowQuerySchema = z.object({
   cursor: z.string().trim().max(512).optional(),
 });
 
+@ApiTags(API_TAGS.discovery)
+@ApiBearerAuth(MATCHA_BEARER_AUTH)
 @Controller("discovery")
 export class DiscoveryController {
   constructor(
@@ -94,6 +99,7 @@ export class DiscoveryController {
   }
 
   @Get("preferences")
+  @ApiOperation({ summary: "Get the current discovery preference filters" })
   async getPreferences(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -104,6 +110,7 @@ export class DiscoveryController {
   }
 
   @Get("feed")
+  @ApiOperation({ summary: "Fetch a discovery feed window using the current queue cursor" })
   async getFeed(
     @Req() req: Request,
     @Query() query: Record<string, string | undefined>,
@@ -149,6 +156,7 @@ export class DiscoveryController {
   }
 
   @Get("window")
+  @ApiOperation({ summary: "Fetch the authoritative discovery deck window" })
   async getWindow(
     @Req() req: Request,
     @Query() query: Record<string, string | undefined>,
@@ -194,6 +202,7 @@ export class DiscoveryController {
   }
 
   @Patch("preferences")
+  @ApiOperation({ summary: "Update discovery preference filters and reset queue lineage" })
   async updatePreferences(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -232,6 +241,7 @@ export class DiscoveryController {
   }
 
   @Post("reset")
+  @ApiOperation({ summary: "Clear discovery decisions for the current actor" })
   async resetDecisions(@Req() req: Request, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -261,6 +271,7 @@ export class DiscoveryController {
   }
 
   @Post("like")
+  @ApiOperation({ summary: "Like a discovery profile and request the next queue state" })
   async likeProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -297,6 +308,7 @@ export class DiscoveryController {
   }
 
   @Post("decision")
+  @ApiOperation({ summary: "Apply one queued like or pass decision" })
   async decideProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
@@ -333,6 +345,7 @@ export class DiscoveryController {
   }
 
   @Post("pass")
+  @ApiOperation({ summary: "Pass on a discovery profile and request the next queue state" })
   async passProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));

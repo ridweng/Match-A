@@ -1,15 +1,33 @@
 import "reflect-metadata";
 import type { Request, Response } from "express";
+import type { OpenAPIObject } from "@nestjs/swagger";
 import { loadApiEnv } from "./config/env";
+
+function isAdminAuthorized(authHeader: string | undefined, username: string, password: string) {
+  const header = String(authHeader || "");
+  if (!header.startsWith("Basic ")) {
+    return false;
+  }
+  const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
+  const [providedUser, providedPassword] = decoded.split(":");
+  return providedUser === username && providedPassword === password;
+}
 
 async function bootstrap() {
   loadApiEnv();
-  const [{ ensureInstalledDatabase }, { NestFactory }, { AppModule }, { runtimeConfig }] =
+  const [
+    { ensureInstalledDatabase },
+    { NestFactory },
+    { AppModule },
+    { runtimeConfig },
+    { createOpenApiDocument, renderScalarReferenceHtml, setupSwaggerUi },
+  ] =
     await Promise.all([
       import("@workspace/db/install"),
       import("@nestjs/core"),
       import("./app.module"),
       import("./config/runtime"),
+      import("./docs/openapi/setup"),
     ]);
 
   await ensureInstalledDatabase();
@@ -17,7 +35,33 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     cors: true,
   });
+  app.setGlobalPrefix("api");
   const expressApp = app.getHttpAdapter().getInstance();
+  const openApiDocument: OpenAPIObject = createOpenApiDocument(app);
+
+  expressApp.use("/api/docs", (req: Request, res: Response, next: () => void) => {
+    if (!runtimeConfig.admin.enabled) {
+      res.status(404).send("Not found");
+      return;
+    }
+    if (
+      !isAdminAuthorized(
+        typeof req.headers.authorization === "string"
+          ? req.headers.authorization
+          : undefined,
+        runtimeConfig.admin.username,
+        runtimeConfig.admin.password
+      )
+    ) {
+      res.setHeader("WWW-Authenticate", 'Basic realm="Matcha Admin"');
+      res.status(401).send("Unauthorized");
+      return;
+    }
+    next();
+  });
+
+  setupSwaggerUi(app, openApiDocument);
+
   expressApp.get("/", (_req: Request, res: Response) => {
     res.type("html").send(`<!doctype html>
 <html lang="en">
@@ -137,6 +181,12 @@ async function bootstrap() {
   expressApp.get("/dashboard", (_req: Request, res: Response) => {
     res.redirect("/api/admin/stats/overview");
   });
+  expressApp.get("/api/openapi.json", (_req: Request, res: Response) => {
+    res.json(openApiDocument);
+  });
+  expressApp.get("/api/reference", (_req: Request, res: Response) => {
+    res.type("html").send(renderScalarReferenceHtml("/api/openapi.json"));
+  });
   expressApp.get("/api", (_req: Request, res: Response) => {
     res.json({
       name: "Matcha API",
@@ -145,6 +195,9 @@ async function bootstrap() {
         health: "/api/healthz",
         readiness: "/api/healthz/ready",
         adminDashboard: "/api/admin/stats/overview",
+        openApi: "/api/openapi.json",
+        apiReference: "/api/reference",
+        internalSwaggerUi: "/api/docs",
       },
     });
   });
@@ -154,7 +207,6 @@ async function bootstrap() {
       res.redirect("/api/admin/stats/overview");
     }
   );
-  app.setGlobalPrefix("api");
   await app.listen(runtimeConfig.port);
   console.log(`[api-server] listening on ${runtimeConfig.port}`);
 }

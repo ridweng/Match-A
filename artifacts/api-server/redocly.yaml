@@ -1,0 +1,9 @@
+apis:
+  matcha:
+    root: ../../docs/api/openapi.json
+
+rules:
+  operation-summary: error
+  operation-description: off
+  no-unused-components: warn
+  security-defined: off

@@ -8,6 +8,8 @@
     "build": "tsx ./build.ts",
     "start": "node ./dist/index.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "docs:openapi": "tsx ./src/scripts/generate-openapi.ts",
+    "docs:lint": "redocly lint ../../docs/api/openapi.json",
     "seed": "tsx ./src/scripts/seed.ts",
     "db:seed:dummy-users": "tsx ./src/scripts/seed-dummy-users.ts",
     "db:seed:all": "pnpm seed && pnpm db:seed:dummy-users",
@@ -23,8 +25,11 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.1.17",
     "@nestjs/platform-express": "^11.1.17",
+    "@nestjs/swagger": "^11.2.6",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
@@ -32,14 +37,17 @@
     "nodemailer": "^6.10.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "swagger-ui-express": "^5.0.1",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@redocly/cli": "^2.25.3",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
     "@types/nodemailer": "^7.0.11",
+    "core-js": "^3.49.0",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"
   }

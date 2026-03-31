@@ -4,9 +4,12 @@ import {
   Inject,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { EmailService } from "../email/email.service";
 import { HealthService } from "./health.service";
+import { API_TAGS } from "../../docs/openapi/tags";
 
+@ApiTags(API_TAGS.health)
 @Controller("healthz")
 export class HealthController {
   constructor(
@@ -15,11 +18,13 @@ export class HealthController {
   ) {}
 
   @Get()
+  @ApiOperation({ summary: "Check API liveness" })
   check() {
     return this.healthService.checkLiveness();
   }
 
   @Get("ready")
+  @ApiOperation({ summary: "Check API readiness and backing dependencies" })
   async readiness() {
     try {
       const status = await this.healthService.getReadinessStatus();
@@ -43,6 +48,7 @@ export class HealthController {
   }
 
   @Get("email")
+  @ApiOperation({ summary: "Check configured email delivery health" })
   emailHealth() {
     return this.emailService.getHealthStatus();
   }

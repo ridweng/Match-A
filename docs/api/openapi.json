@@ -1,0 +1,811 @@
+{
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/healthz": {
+      "get": {
+        "operationId": "Health_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Check API liveness",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/healthz/ready": {
+      "get": {
+        "operationId": "Health_readiness",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Check API readiness and backing dependencies",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/healthz/email": {
+      "get": {
+        "operationId": "Health_emailHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Check configured email delivery health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/auth/providers": {
+      "get": {
+        "operationId": "Auth_getProviders",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "List enabled authentication providers",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-up": {
+      "post": {
+        "operationId": "Auth_signUp",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Create a new email and password account",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-in": {
+      "post": {
+        "operationId": "Auth_signIn",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Sign in with email and password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "operationId": "Auth_refresh",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Exchange a refresh token for a new session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/sign-out": {
+      "post": {
+        "operationId": "Auth_signOut",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Invalidate the current access token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "operationId": "Auth_verifyEmail",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Confirm an email verification token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/verify-email/confirm": {
+      "get": {
+        "operationId": "Auth_verifyEmailConfirm",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Resolve the verification confirmation redirect",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/verify-email/resend": {
+      "post": {
+        "operationId": "Auth_resendVerificationEmail",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Resend the verification email for an account",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/verification-status": {
+      "post": {
+        "operationId": "Auth_getVerificationStatus",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Check whether an email address is verified",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/password-reset/request": {
+      "post": {
+        "operationId": "Auth_requestPasswordReset",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Start the password reset flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/password-reset/confirm": {
+      "post": {
+        "operationId": "Auth_confirmPasswordReset",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Finish the password reset flow with a new password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "Auth_getMe",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Get the current authenticated account",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "Auth_updateMe",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update the current authenticated account profile basics",
+        "tags": [
+          "auth"
+        ]
+      },
+      "delete": {
+        "operationId": "Auth_deleteMe",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Delete the current authenticated account",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/onboarding/complete": {
+      "post": {
+        "operationId": "Auth_completeOnboarding",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Mark onboarding as completed for the current account",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/settings": {
+      "get": {
+        "operationId": "Auth_getSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Get the current authenticated account settings",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "operationId": "Auth_updateSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Update the current authenticated account settings",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/social/start/{provider}": {
+      "get": {
+        "operationId": "Auth_startSocialAuth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start the social authentication redirect flow",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/social/callback/{provider}": {
+      "get": {
+        "operationId": "Auth_socialCallbackGet",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Handle a social authentication callback via GET",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "operationId": "Auth_socialCallbackPost",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Handle a social authentication callback via POST",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/discovery/preferences": {
+      "get": {
+        "operationId": "Discovery_getPreferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Get the current discovery preference filters",
+        "tags": [
+          "discovery"
+        ]
+      },
+      "patch": {
+        "operationId": "Discovery_updatePreferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Update discovery preference filters and reset queue lineage",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/feed": {
+      "get": {
+        "operationId": "Discovery_getFeed",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Fetch a discovery feed window using the current queue cursor",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/window": {
+      "get": {
+        "operationId": "Discovery_getWindow",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Fetch the authoritative discovery deck window",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/reset": {
+      "post": {
+        "operationId": "Discovery_resetDecisions",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Clear discovery decisions for the current actor",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/like": {
+      "post": {
+        "operationId": "Discovery_likeProfile",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Like a discovery profile and request the next queue state",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/decision": {
+      "post": {
+        "operationId": "Discovery_decideProfile",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Apply one queued like or pass decision",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/discovery/pass": {
+      "post": {
+        "operationId": "Discovery_passProfile",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Pass on a discovery profile and request the next queue state",
+        "tags": [
+          "discovery"
+        ]
+      }
+    },
+    "/api/media/profile-images": {
+      "get": {
+        "operationId": "Media_listProfileImages",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "List the current account profile images",
+        "tags": [
+          "media"
+        ]
+      },
+      "post": {
+        "operationId": "Media_uploadProfileImage",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Upload a profile image for the current account",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/media/profile-images/{profileImageId}": {
+      "delete": {
+        "operationId": "Media_deleteProfileImage",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Delete one profile image for the current account",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/media/public/{mediaAssetId}": {
+      "get": {
+        "operationId": "Media_getPublicMedia",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Serve a public media asset by id",
+        "tags": [
+          "media"
+        ]
+      }
+    },
+    "/api/viewer/bootstrap": {
+      "get": {
+        "operationId": "Viewer_getViewerBootstrap",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Get bootstrap data for the authenticated viewer shell",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/profile": {
+      "get": {
+        "operationId": "Viewer_getProfile",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Get the full editable viewer profile",
+        "tags": [
+          "viewer"
+        ]
+      },
+      "patch": {
+        "operationId": "Viewer_updateProfile",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Update the full viewer profile",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/settings": {
+      "get": {
+        "operationId": "Viewer_getSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Get viewer settings",
+        "tags": [
+          "viewer"
+        ]
+      },
+      "patch": {
+        "operationId": "Viewer_updateSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Update viewer settings",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/goals": {
+      "get": {
+        "operationId": "Viewer_getGoals",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "List the current viewer goal tasks",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/goals/{goalKey}": {
+      "patch": {
+        "operationId": "Viewer_completeGoal",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Mark a viewer goal task as completed",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/goals/reorder": {
+      "post": {
+        "operationId": "Viewer_reorderGoals",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Reorder the viewer goal tasks within one category",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/goals/unlock/seen": {
+      "post": {
+        "operationId": "Viewer_markGoalsUnlockSeen",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Mark the goals unlock notice as seen",
+        "tags": [
+          "viewer"
+        ]
+      }
+    },
+    "/api/me/discovery/preferences": {
+      "get": {
+        "operationId": "Viewer_getDiscoveryPreferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Get discovery preferences from the viewer surface",
+        "tags": [
+          "viewer"
+        ]
+      },
+      "patch": {
+        "operationId": "Viewer_updateDiscoveryPreferences",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "matcha-bearer": []
+          }
+        ],
+        "summary": "Update discovery preferences from the viewer surface",
+        "tags": [
+          "viewer"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Matcha API",
+    "description": "Canonical API contract for the Matcha backend. Target OpenAPI 3.1 where the active toolchain remains smooth.",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "matcha-bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "Bearer access token returned by Matcha authentication endpoints."
+      }
+    },
+    "schemas": {}
+  }
+}
