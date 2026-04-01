@@ -235,6 +235,10 @@ export class DiscoveryService {
     this.logger.warn(`[discovery-decision] ${event} ${JSON.stringify(payload)}`);
   }
 
+  private logQueueEvent(event: string, payload: Record<string, unknown>) {
+    this.logger.log(`[discovery-queue] ${event} ${JSON.stringify(payload)}`);
+  }
+
   private async buildDiscoveryState(
     client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
     userId: number,
@@ -1240,6 +1244,26 @@ export class DiscoveryService {
         exhausted: hydratedProfiles.length === 0,
       })}`
     );
+    this.logQueueEvent("window_response", {
+      actorId: actorProfileId,
+      requestId: null,
+      queueVersion,
+      policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+      visibleQueue: hydratedProfiles.map((profile) => profile.id),
+      activeProfileId: hydratedProfiles[0]?.id ?? null,
+      action: null,
+      replacementProfileId: null,
+      resultQueue: hydratedProfiles.map((profile) => profile.id),
+      queueInvalidationReason,
+      nextCursor,
+      hasMore,
+      eligibleRealCount: policyResult.diagnostics.eligibleRealCount,
+      eligibleDummyCount: policyResult.diagnostics.eligibleDummyCount,
+      returnedRealCount: supply.returnedRealCount,
+      returnedDummyCount: supply.returnedDummyCount,
+      dominantExclusionReason: policyResult.diagnostics.dominantExclusionReason,
+      exhaustedReason: policyResult.diagnostics.exhaustedReason,
+    });
 
     return {
       queueVersion,
@@ -1511,8 +1535,30 @@ export class DiscoveryService {
           queueInvalidationReason: cursorInvalidationReason,
           durationMs: Date.now() - startedAt,
         });
+        this.logQueueEvent("cursor_stale", {
+          actorId: actorProfileId,
+          requestId: normalizedRequestId,
+          queueVersion: requestedQueueVersion,
+          policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+          visibleQueue: normalizedVisibleProfileIds,
+          activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+          action: interactionType,
+          targetProfileId: targetProfile.id,
+          queueInvalidationReason: cursorInvalidationReason,
+        });
         throw new DiscoveryCursorError(cursorInvalidationReason);
       }
+      this.logQueueEvent("decision_validation", {
+        actorId: actorProfileId,
+        requestId: normalizedRequestId,
+        queueVersion: requestedQueueVersion,
+        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+        visibleQueue: normalizedVisibleProfileIds,
+        activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+        action: interactionType,
+        targetProfileId: targetProfile.id,
+        queueInvalidationReason: null,
+      });
 
       if (normalizedRequestId) {
         const existingRequest = await client.query<{ id: number }>(
@@ -1554,7 +1600,39 @@ export class DiscoveryService {
             },
             replacementProfileId: replacement.replacementProfile?.id ?? null,
           });
+          this.logQueueEvent("replacement_selected", {
+            actorId: actorProfileId,
+            requestId: normalizedRequestId,
+            queueVersion,
+            policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+            visibleQueue: normalizedVisibleProfileIds,
+            activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+            action: interactionType,
+            targetProfileId: targetProfile.id,
+            replacementProfileId: replacement.replacementProfile?.id ?? null,
+          });
           await client.query("COMMIT");
+          this.logQueueEvent("decision_response", {
+            actorId: actorProfileId,
+            requestId: normalizedRequestId,
+            queueVersion,
+            policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+            visibleQueue: normalizedVisibleProfileIds,
+            activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+            action: interactionType,
+            targetProfileId: targetProfile.id,
+            replacementProfileId: replacement.replacementProfile?.id ?? null,
+            decisionApplied: false,
+            decisionRejectedReason: "duplicate_request_id",
+            nextCursor: replacement.nextCursor,
+            hasMore: replacement.hasMore,
+            eligibleRealCount: replacement.supply.eligibleRealCount ?? null,
+            eligibleDummyCount: replacement.supply.eligibleDummyCount ?? null,
+            returnedRealCount: replacement.supply.returnedRealCount ?? null,
+            returnedDummyCount: replacement.supply.returnedDummyCount ?? null,
+            dominantExclusionReason: replacement.supply.dominantExclusionReason ?? null,
+            exhaustedReason: replacement.supply.exhaustedReason ?? null,
+          });
           return {
             decisionApplied: false,
             decisionState: interactionType,
@@ -1611,7 +1689,39 @@ export class DiscoveryService {
           unlockPending: currentUnlockState.unlockMessagePending,
           replacementProfileId: replacement.replacementProfile?.id ?? null,
         });
+        this.logQueueEvent("replacement_selected", {
+          actorId: actorProfileId,
+          requestId: normalizedRequestId,
+          queueVersion,
+          policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+          visibleQueue: normalizedVisibleProfileIds,
+          activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+          action: interactionType,
+          targetProfileId: targetProfile.id,
+          replacementProfileId: replacement.replacementProfile?.id ?? null,
+        });
         await client.query("COMMIT");
+        this.logQueueEvent("decision_response", {
+          actorId: actorProfileId,
+          requestId: normalizedRequestId,
+          queueVersion,
+          policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+          visibleQueue: normalizedVisibleProfileIds,
+          activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+          action: interactionType,
+          targetProfileId: targetProfile.id,
+          replacementProfileId: replacement.replacementProfile?.id ?? null,
+          decisionApplied: false,
+          decisionRejectedReason: "same_state_existing_decision",
+          nextCursor: replacement.nextCursor,
+          hasMore: replacement.hasMore,
+          eligibleRealCount: replacement.supply.eligibleRealCount ?? null,
+          eligibleDummyCount: replacement.supply.eligibleDummyCount ?? null,
+          returnedRealCount: replacement.supply.returnedRealCount ?? null,
+          returnedDummyCount: replacement.supply.returnedDummyCount ?? null,
+          dominantExclusionReason: replacement.supply.dominantExclusionReason ?? null,
+          exhaustedReason: replacement.supply.exhaustedReason ?? null,
+        });
         return {
           decisionApplied: false,
           decisionState: interactionType,
@@ -1757,8 +1867,40 @@ export class DiscoveryService {
         changedCategories: changedCategories.map((item) => item.category),
         shouldShowDiscoveryUpdate,
       });
+      this.logQueueEvent("replacement_selected", {
+        actorId: actorProfileId,
+        requestId: normalizedRequestId,
+        queueVersion,
+        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+        visibleQueue: normalizedVisibleProfileIds,
+        activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+        action: interactionType,
+        targetProfileId: targetProfile.id,
+        replacementProfileId: replacement.replacementProfile?.id ?? null,
+      });
 
       await client.query("COMMIT");
+      this.logQueueEvent("decision_response", {
+        actorId: actorProfileId,
+        requestId: normalizedRequestId,
+        queueVersion,
+        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+        visibleQueue: normalizedVisibleProfileIds,
+        activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+        action: interactionType,
+        targetProfileId: targetProfile.id,
+        replacementProfileId: replacement.replacementProfile?.id ?? null,
+        decisionApplied: true,
+        decisionRejectedReason: null,
+        nextCursor: replacement.nextCursor,
+        hasMore: replacement.hasMore,
+        eligibleRealCount: replacement.supply.eligibleRealCount ?? null,
+        eligibleDummyCount: replacement.supply.eligibleDummyCount ?? null,
+        returnedRealCount: replacement.supply.returnedRealCount ?? null,
+        returnedDummyCount: replacement.supply.returnedDummyCount ?? null,
+        dominantExclusionReason: replacement.supply.dominantExclusionReason ?? null,
+        exhaustedReason: replacement.supply.exhaustedReason ?? null,
+      });
 
       return {
         decisionApplied: true,

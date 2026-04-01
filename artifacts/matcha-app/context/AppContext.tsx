@@ -102,6 +102,11 @@ import {
   debugLog,
   debugWarn,
 } from "@/utils/debug";
+import {
+  applyDecisionToQueue,
+  assertDiscoveryQueueInvariants,
+  getDiscoveryQueueIds,
+} from "@/utils/discoveryQueue";
 
 export type { AuthUser };
 export type { ProfileEditableField, ProfileFieldSaveState };
@@ -744,6 +749,27 @@ type DiscoveryDecisionSnapshot = {
   unlockPending: boolean;
 };
 
+type DiscoveryQueueTraceLog = {
+  event: string;
+  actorId: number | null;
+  requestId: string | null;
+  queueVersion: string | number | null;
+  policyVersion: string | null;
+  visibleQueue: Array<string | number>;
+  activeProfileId: string | number | null;
+  action?: DiscoveryDecisionAction | null;
+  targetProfileId?: string | number | null;
+  replacementProfileId?: string | number | null;
+  resultQueue?: Array<string | number>;
+  decisionRejectedReason?: string | null;
+  canAct?: boolean;
+  source?: "window" | "decision" | "hard_refresh" | "render";
+};
+
+function logDiscoveryQueueTrace(payload: DiscoveryQueueTraceLog) {
+  debugDiscoveryLog(payload.event, payload);
+}
+
 function getViewerBootstrapStorageKey(userId: number) {
   return `${VIEWER_BOOTSTRAP_STORAGE_PREFIX}${userId}`;
 }
@@ -945,15 +971,14 @@ function pruneDiscoveryFeedWindow(
     supply: DiscoveryLikeResponse["supply"];
   }
 ): DiscoveryFeedResponse {
-  const nextProfiles = feed.profiles
-    .filter((profile) => profile.id !== input.targetProfileId)
-    .filter((profile, index, all) => all.findIndex((candidate) => candidate.id === profile.id) === index);
-  if (
-    input.replacementProfile &&
-    !nextProfiles.some((profile) => profile.id === input.replacementProfile?.id)
-  ) {
-    nextProfiles.push(input.replacementProfile);
-  }
+  const nextProfiles = applyDecisionToQueue(
+    feed.profiles,
+    input.targetProfileId,
+    input.replacementProfile
+  );
+  assertDiscoveryQueueInvariants(nextProfiles, {
+    targetProfileId: input.targetProfileId,
+  });
 
   return {
     ...feed,
@@ -3888,7 +3913,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const previousFeed = discoveryFeedRef.current;
-      const feed = await refreshDiscoveryFeed(token);
+      const feed = await refreshDiscoveryFeed(token, undefined, {
+        headers: options?.requestId
+          ? {
+              "X-Matcha-Request-Id": options.requestId,
+            }
+          : undefined,
+      });
+      assertDiscoveryQueueInvariants(feed.profiles);
       debugDiscoveryLog("feed_refresh_applied", {
         requestId: options?.requestId || null,
         reason: options?.reason || "manual",
@@ -3900,6 +3932,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         previousUnseenCount: previousFeed.supply?.unseenCount ?? null,
         nextUnseenCount: feed.supply?.unseenCount ?? null,
         fetchedAt: feed.supply?.fetchedAt ?? null,
+      });
+      logDiscoveryQueueTrace({
+        event:
+          options?.reason === "cursor_stale" ? "queue_hard_refresh_applied" : "queue_window_loaded",
+        actorId: userRef.current?.id ?? null,
+        requestId: options?.requestId ?? null,
+        queueVersion: feed.queueVersion ?? null,
+        policyVersion: feed.policyVersion ?? null,
+        visibleQueue: getDiscoveryQueueIds(feed.profiles.slice(0, 3)),
+        activeProfileId: feed.profiles[0]?.id ?? null,
+        canAct: feed.profiles.length > 0,
+        source: options?.reason === "cursor_stale" ? "hard_refresh" : "window",
       });
       discoveryFeedRef.current = feed;
       setDiscoveryFeed(feed);
@@ -3966,6 +4010,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         unseenCount: mergedFeed.supply?.unseenCount ?? null,
         fetchedAt: mergedFeed.supply?.fetchedAt ?? null,
       });
+      assertDiscoveryQueueInvariants(mergedFeed.profiles.slice(0, 3));
 
       discoveryFeedRef.current = mergedFeed;
       setDiscoveryFeed(mergedFeed);
@@ -4062,9 +4107,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         Number(discoveryFeedRef.current.queueVersion) > 0
           ? Number(discoveryFeedRef.current.queueVersion)
           : null;
-      const visibleProfileIds = discoveryFeedRef.current.profiles
-        .slice(0, 3)
-        .map((item) => item.id);
+      const currentVisibleQueue = discoveryFeedRef.current.profiles.slice(0, 3);
+      assertDiscoveryQueueInvariants(currentVisibleQueue);
+      const visibleProfileIds = getDiscoveryQueueIds(currentVisibleQueue).map((item) =>
+        Number(item)
+      );
       const before = getDiscoveryDecisionSnapshot({
         totalLikesCount: totalLikesCountRef.current,
         lifetimeCounts: lifetimeDiscoveryCountsRef.current,
@@ -4079,6 +4126,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         targetProfileId: profile.id,
         before,
       });
+      logDiscoveryQueueTrace({
+        event: "queue_before_decision_submit",
+        actorId: userRef.current?.id ?? null,
+        requestId,
+        queueVersion,
+        policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+        visibleQueue: visibleProfileIds,
+        activeProfileId: visibleProfileIds[0] ?? null,
+        action,
+        targetProfileId: profile.id,
+        canAct: visibleProfileIds[0] === profile.id,
+        source: "decision",
+      });
+      logDiscoveryQueueTrace({
+        event: "queue_decision_request_body",
+        actorId: userRef.current?.id ?? null,
+        requestId,
+        queueVersion,
+        policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+        visibleQueue: visibleProfileIds,
+        activeProfileId: visibleProfileIds[0] ?? null,
+        action,
+        targetProfileId: profile.id,
+        canAct: visibleProfileIds[0] === profile.id,
+        source: "decision",
+      });
 
       try {
         const result = await requestDecision(accessToken, {
@@ -4090,6 +4163,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           queueVersion,
         });
         const latencyMs = Date.now() - startedAt;
+        logDiscoveryQueueTrace({
+          event: "queue_decision_response_raw",
+          actorId: userRef.current?.id ?? null,
+          requestId,
+          queueVersion: result.queueVersion ?? queueVersion,
+          policyVersion: result.policyVersion ?? discoveryFeedRef.current.policyVersion ?? null,
+          visibleQueue: visibleProfileIds,
+          activeProfileId: visibleProfileIds[0] ?? null,
+          action,
+          targetProfileId: result.targetProfileId,
+          replacementProfileId: result.replacementProfile?.id ?? null,
+          decisionRejectedReason: result.decisionRejectedReason ?? null,
+          canAct: false,
+          source: "decision",
+        });
         applyDiscoveryPreferenceResult(result, {
           requestId,
           action,
@@ -4108,6 +4196,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               supply: result.supply,
             })
           : discoveryFeedRef.current;
+        if (result.decisionApplied) {
+          logDiscoveryQueueTrace({
+            event: "queue_after_mutation",
+            actorId: userRef.current?.id ?? null,
+            requestId,
+            queueVersion: nextFeed.queueVersion ?? queueVersion,
+            policyVersion: nextFeed.policyVersion ?? null,
+            visibleQueue: visibleProfileIds,
+            activeProfileId: visibleProfileIds[0] ?? null,
+            action,
+            targetProfileId: result.targetProfileId,
+            replacementProfileId: result.replacementProfile?.id ?? null,
+            resultQueue: getDiscoveryQueueIds(nextFeed.profiles.slice(0, 3)),
+            canAct: false,
+            source: "decision",
+          });
+        }
         debugDiscoveryLog("feed_window_progressed", {
           requestId,
           action,
@@ -4145,6 +4250,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch (error: any) {
         if (error?.code === "DISCOVERY_CURSOR_STALE") {
           const latencyMs = Date.now() - startedAt;
+          logDiscoveryQueueTrace({
+            event: "queue_hard_refresh_started",
+            actorId: userRef.current?.id ?? null,
+            requestId,
+            queueVersion,
+            policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+            visibleQueue: visibleProfileIds,
+            activeProfileId: visibleProfileIds[0] ?? null,
+            action,
+            targetProfileId: profile.id,
+            decisionRejectedReason: "cursor_stale",
+            canAct: false,
+            source: "hard_refresh",
+          });
           const refreshedFeed = await refreshDiscoveryFeedState(accessToken, {
             reason: "cursor_stale",
             requestId,
@@ -4188,6 +4307,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             latencyMs,
           });
         }
+        debugDiscoveryWarn("queue_invariant_violation", {
+          requestId,
+          action,
+          targetProfileId: profile.id,
+          code: error?.code || null,
+          message: error?.message || "UNKNOWN_ERROR",
+        });
         debugDiscoveryWarn("decision_request_failed", {
           requestId,
           action,

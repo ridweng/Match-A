@@ -1116,7 +1116,12 @@ function buildDemoDecisionMetadata() {
 
 export async function getDiscoveryFeedWindow(
   accessToken: string,
-  options?: { cursor?: string | null; limit?: number; size?: number }
+  options?: {
+    cursor?: string | null;
+    limit?: number;
+    size?: number;
+    headers?: Record<string, string>;
+  }
 ) {
   if (isDemoToken(accessToken)) {
     return buildDemoDiscoveryFeed(options?.cursor, options?.size ?? options?.limit);
@@ -1135,6 +1140,7 @@ export async function getDiscoveryFeedWindow(
     `/api/discovery/window${params.toString() ? `?${params.toString()}` : ""}`,
     {
       accessToken,
+      headers: options?.headers,
     }
   );
 }
@@ -1143,7 +1149,11 @@ export async function getDiscoveryFeed(accessToken: string) {
   return getDiscoveryFeedWindow(accessToken);
 }
 
-export async function refreshDiscoveryFeed(accessToken: string, limit?: number) {
+export async function refreshDiscoveryFeed(
+  accessToken: string,
+  limit?: number,
+  options: ProtectedRequestOptions = {}
+) {
   if (isDemoToken(accessToken)) {
     return buildDemoDiscoveryFeed(null, limit);
   }
@@ -1152,6 +1162,7 @@ export async function refreshDiscoveryFeed(accessToken: string, limit?: number) 
     `/api/discovery/window${limit ? `?size=${encodeURIComponent(String(limit))}` : ""}`,
     {
       accessToken,
+      headers: options.headers,
     }
   );
 }
@@ -1159,11 +1170,13 @@ export async function refreshDiscoveryFeed(accessToken: string, limit?: number) 
 export async function getNextDiscoveryFeedWindow(
   accessToken: string,
   cursor: string,
-  limit?: number
+  limit?: number,
+  options: ProtectedRequestOptions = {}
 ) {
   return getDiscoveryFeedWindow(accessToken, {
     cursor,
     size: limit,
+    ...(options.headers ? { headers: options.headers } : {}),
   });
 }
 
