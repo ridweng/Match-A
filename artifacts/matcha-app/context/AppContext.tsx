@@ -29,6 +29,7 @@ import {
   type AuthProvider,
   checkVerificationStatus as authCheckVerificationStatus,
   completeGoal as completeGoalRequest,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_DISCOVERY_FILTERS,
   deleteAccount as deleteAccountRequest,
   deleteProfilePhoto as deleteProfilePhotoRequest,
@@ -610,6 +611,7 @@ type AppContextType = {
   likedProfiles: number[];
   passedProfiles: number[];
   discoveryFeed: DiscoveryFeedResponse;
+  discoveryQueueRuntime: DiscoveryQueueRuntime;
   discoveryFilters: DiscoveryFilters;
   discoveryViewPreferences: DiscoveryViewPreferences;
   lastServerSyncAt: string | null;
@@ -630,6 +632,9 @@ type AppContextType = {
   fetchNextDiscoveryWindow: () => Promise<boolean>;
   resetDiscoveryHistory: () => Promise<boolean>;
   armDiscoveryCursorStaleSimulation: () => void;
+  recordDiscoveryQueueTrace: (
+    payload: Omit<DiscoveryQueueTraceLog, "actorId" | "traceSeq">
+  ) => DiscoveryQueueTraceLog;
   profile: UserProfile;
   accountProfile: AccountProfile;
   profileSaveStates: Partial<Record<ProfileEditableField, ProfileFieldSaveState>>;
@@ -660,6 +665,8 @@ const VIEWER_BOOTSTRAP_STORAGE_PREFIX = "viewerBootstrap:";
 const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
 const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
 const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
+const DISCOVERY_QUEUE_TRACE_BUFFER_LIMIT = 50;
+const DISABLE_PERSISTED_DISCOVERY_QUEUE_RESTORE = __DEV__;
 
 function createLocationSyncRequestId(prefix = "location_sync") {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -739,6 +746,19 @@ type DiscoveryDecisionOptions = {
   requestId?: string;
 };
 type DiscoveryDecisionRequester = typeof likeDiscoveryProfile;
+type DiscoveryQueueStatus =
+  | "idle"
+  | "decision_submitting"
+  | "hard_refreshing"
+  | "exhausted"
+  | "error";
+type DiscoveryPendingDecision = {
+  requestId: string;
+  action: DiscoveryDecisionAction;
+  targetProfileId: number;
+  submittedAt: string;
+  timeoutAt: string;
+} | null;
 type DiscoveryDecisionSnapshot = {
   totalLikesCount: number;
   lifetimeLikes: number;
@@ -753,9 +773,11 @@ type DiscoveryQueueTraceLog = {
   event: string;
   actorId: number | null;
   requestId: string | null;
+  traceSeq: number;
   queueVersion: string | number | null;
   policyVersion: string | null;
   visibleQueue: Array<string | number>;
+  renderedQueue?: Array<string | number | null>;
   activeProfileId: string | number | null;
   action?: DiscoveryDecisionAction | null;
   targetProfileId?: string | number | null;
@@ -764,11 +786,29 @@ type DiscoveryQueueTraceLog = {
   decisionRejectedReason?: string | null;
   canAct?: boolean;
   source?: "window" | "decision" | "hard_refresh" | "render";
+  note?: string | null;
+  errorCode?: string | null;
 };
-
-function logDiscoveryQueueTrace(payload: DiscoveryQueueTraceLog) {
-  debugDiscoveryLog(payload.event, payload);
-}
+type DiscoveryQueueRuntime = {
+  queue: {
+    items: DiscoveryFeedProfileResponse[];
+    queueVersion: string | number | null;
+    policyVersion: string | null;
+    nextCursor: string | null;
+    hasMore: boolean;
+    source: "window" | "decision" | "hard_refresh";
+    generatedAt: string | null;
+    invalidationReason: string | null;
+  };
+  status: DiscoveryQueueStatus;
+  pendingDecision: DiscoveryPendingDecision;
+  lastRequestId: string | null;
+  lastDecisionRejectedReason: string | null;
+  lastReplacementProfileId: number | null;
+  invariantViolation: string | null;
+  traceSeq: number;
+  traceBuffer: DiscoveryQueueTraceLog[];
+};
 
 function getViewerBootstrapStorageKey(userId: number) {
   return `${VIEWER_BOOTSTRAP_STORAGE_PREFIX}${userId}`;
@@ -842,6 +882,35 @@ function createEmptyDiscoveryFeed(): DiscoveryFeedState {
       fetchedAt: "",
     },
   };
+}
+
+function normalizeDiscoveryFeed(feed: DiscoveryFeedResponse): DiscoveryFeedResponse {
+  const profiles = Array.isArray(feed.profiles) ? feed.profiles.slice(0, 3) : [];
+  return {
+    ...feed,
+    profiles,
+    windowSize: profiles.length,
+    reserveCount: Math.min(3, profiles.length),
+  };
+}
+
+function deriveDiscoveryQueueStatus(
+  feed: DiscoveryFeedResponse,
+  options?: {
+    pendingDecision?: DiscoveryPendingDecision;
+    forceStatus?: DiscoveryQueueStatus | null;
+  }
+): DiscoveryQueueStatus {
+  if (options?.forceStatus) {
+    return options.forceStatus;
+  }
+  if (options?.pendingDecision) {
+    return "decision_submitting";
+  }
+  if (!feed.profiles.length && !feed.hasMore) {
+    return "exhausted";
+  }
+  return "idle";
 }
 
 function normalizeOnboardingStep(step: number | null | undefined) {
@@ -1093,6 +1162,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     createEmptyDiscoveryFeed()
   );
   const discoveryFeedRef = useRef<DiscoveryFeedResponse>(createEmptyDiscoveryFeed());
+  const [discoveryQueueStatus, setDiscoveryQueueStatus] =
+    useState<DiscoveryQueueStatus>("exhausted");
+  const [discoveryPendingDecision, setDiscoveryPendingDecision] =
+    useState<DiscoveryPendingDecision>(null);
+  const discoveryPendingDecisionRef = useRef<DiscoveryPendingDecision>(null);
+  const discoveryDecisionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [discoveryQueueLastRequestId, setDiscoveryQueueLastRequestId] = useState<string | null>(
+    null
+  );
+  const [discoveryQueueLastDecisionRejectedReason, setDiscoveryQueueLastDecisionRejectedReason] =
+    useState<string | null>(null);
+  const [discoveryQueueLastReplacementProfileId, setDiscoveryQueueLastReplacementProfileId] =
+    useState<number | null>(null);
+  const [discoveryQueueInvariantViolation, setDiscoveryQueueInvariantViolation] = useState<
+    string | null
+  >(null);
+  const discoveryTraceSeqRef = useRef(0);
+  const [discoveryQueueTraceSeq, setDiscoveryQueueTraceSeq] = useState(0);
+  const [discoveryQueueTraceBuffer, setDiscoveryQueueTraceBuffer] = useState<
+    DiscoveryQueueTraceLog[]
+  >([]);
   const simulateNextDiscoveryCursorStaleRef = useRef(false);
   const [discoveryFilters, setDiscoveryFilters] =
     useState<DiscoveryFilters>(DEFAULT_DISCOVERY_FILTERS);
@@ -1124,6 +1214,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const profileFieldStateTimersRef = useRef<
     Partial<Record<ProfileEditableField, ReturnType<typeof setTimeout>>>
   >({});
+
+  const clearDiscoveryDecisionTimeout = useCallback(() => {
+    if (discoveryDecisionTimeoutRef.current) {
+      clearTimeout(discoveryDecisionTimeoutRef.current);
+      discoveryDecisionTimeoutRef.current = null;
+    }
+  }, []);
+
+  const updateDiscoveryQueueStatus = useCallback((status: DiscoveryQueueStatus) => {
+    setDiscoveryQueueStatus(status);
+  }, []);
+
+  const updateDiscoveryPendingDecision = useCallback(
+    (pendingDecision: DiscoveryPendingDecision) => {
+      discoveryPendingDecisionRef.current = pendingDecision;
+      setDiscoveryPendingDecision(pendingDecision);
+    },
+    []
+  );
+
+  const recordDiscoveryQueueTrace = useCallback(
+    (payload: Omit<DiscoveryQueueTraceLog, "actorId" | "traceSeq">) => {
+      const traceSeq = discoveryTraceSeqRef.current + 1;
+      discoveryTraceSeqRef.current = traceSeq;
+      setDiscoveryQueueTraceSeq(traceSeq);
+      const entry: DiscoveryQueueTraceLog = {
+        ...payload,
+        actorId: userRef.current?.id ?? null,
+        traceSeq,
+      };
+      setDiscoveryQueueTraceBuffer((current) =>
+        [...current, entry].slice(-DISCOVERY_QUEUE_TRACE_BUFFER_LIMIT)
+      );
+      debugDiscoveryLog(entry.event, entry);
+      return entry;
+    },
+    []
+  );
+
+  const commitDiscoveryFeedState = useCallback(
+    (
+      nextFeed: DiscoveryFeedResponse,
+      options?: {
+        status?: DiscoveryQueueStatus | null;
+        pendingDecision?: DiscoveryPendingDecision;
+      }
+    ) => {
+      const normalizedFeed = normalizeDiscoveryFeed(nextFeed);
+      assertDiscoveryQueueInvariants(normalizedFeed.profiles);
+      discoveryFeedRef.current = normalizedFeed;
+      setDiscoveryFeed(normalizedFeed);
+      updateDiscoveryPendingDecision(options?.pendingDecision ?? discoveryPendingDecisionRef.current);
+      updateDiscoveryQueueStatus(
+        deriveDiscoveryQueueStatus(normalizedFeed, {
+          pendingDecision: options?.pendingDecision ?? discoveryPendingDecisionRef.current,
+          forceStatus: options?.status ?? null,
+        })
+      );
+      return normalizedFeed;
+    },
+    [updateDiscoveryPendingDecision, updateDiscoveryQueueStatus]
+  );
   const viewerBootstrapMetaRef = useRef<ViewerBootstrapMetadata>(
     createDefaultBootstrapMetadata()
   );
@@ -1199,8 +1351,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     likedProfilesRef.current = [];
     setPassedProfiles([]);
     passedProfilesRef.current = [];
-    setDiscoveryFeed(createEmptyDiscoveryFeed());
-    discoveryFeedRef.current = createEmptyDiscoveryFeed();
+    clearDiscoveryDecisionTimeout();
+    updateDiscoveryPendingDecision(null);
+    setDiscoveryQueueLastRequestId(null);
+    setDiscoveryQueueLastDecisionRejectedReason(null);
+    setDiscoveryQueueLastReplacementProfileId(null);
+    setDiscoveryQueueInvariantViolation(null);
+    commitDiscoveryFeedState(createEmptyDiscoveryFeed(), {
+      pendingDecision: null,
+    });
     setDiscoveryFilters(DEFAULT_DISCOVERY_FILTERS);
     discoveryFiltersRef.current = DEFAULT_DISCOVERY_FILTERS;
     setPopularAttributesByCategory(emptyPopularAttributes);
@@ -1601,15 +1760,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLikedProfiles(normalizedLikedProfileIds);
       passedProfilesRef.current = normalizedPassedProfileIds;
       setPassedProfiles(normalizedPassedProfileIds);
-      discoveryFeedRef.current =
-        bootstrap.discovery.feed || {
-          ...createEmptyDiscoveryFeed(),
-          supply: {
-            ...createEmptyDiscoveryFeed().supply,
-            fetchedAt: bootstrap.bootstrapGeneratedAt || new Date().toISOString(),
-          },
-        };
-      setDiscoveryFeed(discoveryFeedRef.current);
+      const restoredDiscoveryFeed =
+        options?.persist === false && DISABLE_PERSISTED_DISCOVERY_QUEUE_RESTORE
+          ? {
+              ...createEmptyDiscoveryFeed(),
+              supply: {
+                ...createEmptyDiscoveryFeed().supply,
+                fetchedAt: bootstrap.bootstrapGeneratedAt || new Date().toISOString(),
+              },
+            }
+          : bootstrap.discovery.feed || {
+              ...createEmptyDiscoveryFeed(),
+              supply: {
+                ...createEmptyDiscoveryFeed().supply,
+                fetchedAt: bootstrap.bootstrapGeneratedAt || new Date().toISOString(),
+              },
+            };
+      clearDiscoveryDecisionTimeout();
+      updateDiscoveryPendingDecision(null);
+      setDiscoveryQueueInvariantViolation(null);
+      setDiscoveryQueueLastRequestId(null);
+      setDiscoveryQueueLastDecisionRejectedReason(null);
+      setDiscoveryQueueLastReplacementProfileId(null);
+      commitDiscoveryFeedState(restoredDiscoveryFeed, {
+        pendingDecision: null,
+      });
       discoveryFiltersRef.current = {
         ...DEFAULT_DISCOVERY_FILTERS,
         ...(bootstrap.discovery.filters || {}),
@@ -1670,6 +1845,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+
+  useEffect(() => () => {
+    clearDiscoveryDecisionTimeout();
+  }, [clearDiscoveryDecisionTimeout]);
 
   useEffect(() => {
     userRef.current = user;
@@ -3913,14 +4092,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const previousFeed = discoveryFeedRef.current;
-      const feed = await refreshDiscoveryFeed(token, undefined, {
-        headers: options?.requestId
-          ? {
-              "X-Matcha-Request-Id": options.requestId,
-            }
-          : undefined,
+      const feed = normalizeDiscoveryFeed(
+        await refreshDiscoveryFeed(token, undefined, {
+          headers: options?.requestId
+            ? {
+                "X-Matcha-Request-Id": options.requestId,
+              }
+            : undefined,
+        })
+      );
+      const statusOverride =
+        options?.reason === "cursor_stale"
+          ? deriveDiscoveryQueueStatus(feed)
+          : deriveDiscoveryQueueStatus(feed);
+      commitDiscoveryFeedState(feed, {
+        status: statusOverride,
+        pendingDecision: null,
       });
-      assertDiscoveryQueueInvariants(feed.profiles);
       debugDiscoveryLog("feed_refresh_applied", {
         requestId: options?.requestId || null,
         reason: options?.reason || "manual",
@@ -3933,10 +4121,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         nextUnseenCount: feed.supply?.unseenCount ?? null,
         fetchedAt: feed.supply?.fetchedAt ?? null,
       });
-      logDiscoveryQueueTrace({
+      setDiscoveryQueueLastRequestId(options?.requestId ?? null);
+      setDiscoveryQueueLastDecisionRejectedReason(null);
+      setDiscoveryQueueLastReplacementProfileId(null);
+      recordDiscoveryQueueTrace({
         event:
           options?.reason === "cursor_stale" ? "queue_hard_refresh_applied" : "queue_window_loaded",
-        actorId: userRef.current?.id ?? null,
         requestId: options?.requestId ?? null,
         queueVersion: feed.queueVersion ?? null,
         policyVersion: feed.policyVersion ?? null,
@@ -3945,8 +4135,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         canAct: feed.profiles.length > 0,
         source: options?.reason === "cursor_stale" ? "hard_refresh" : "window",
       });
-      discoveryFeedRef.current = feed;
-      setDiscoveryFeed(feed);
       setLastServerSyncAt(feed.supply?.fetchedAt || new Date().toISOString());
       await persistViewerBootstrapCache({
         discovery: {
@@ -3968,7 +4156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       return feed;
     },
-    [persistViewerBootstrapCache]
+    [commitDiscoveryFeedState, persistViewerBootstrapCache, recordDiscoveryQueueTrace]
   );
 
   const appendDiscoveryFeedWindow = useCallback(
@@ -3982,21 +4170,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return currentFeed;
       }
 
-      const nextFeed = await getNextDiscoveryFeedWindow(token, currentFeed.nextCursor);
+      const fetchedFeed = await getNextDiscoveryFeedWindow(token, currentFeed.nextCursor);
       const knownIds = new Set(currentFeed.profiles.map((profile) => profile.id));
       const mergedFeed: DiscoveryFeedResponse = {
-        queueVersion: nextFeed.queueVersion ?? currentFeed.queueVersion,
-        policyVersion: nextFeed.policyVersion ?? currentFeed.policyVersion,
-        generatedAt: nextFeed.generatedAt ?? currentFeed.generatedAt,
-        windowSize: nextFeed.windowSize ?? currentFeed.windowSize,
-        reserveCount: nextFeed.reserveCount ?? currentFeed.reserveCount,
+        queueVersion: fetchedFeed.queueVersion ?? currentFeed.queueVersion,
+        policyVersion: fetchedFeed.policyVersion ?? currentFeed.policyVersion,
+        generatedAt: fetchedFeed.generatedAt ?? currentFeed.generatedAt,
+        windowSize: fetchedFeed.windowSize ?? currentFeed.windowSize,
+        reserveCount: fetchedFeed.reserveCount ?? currentFeed.reserveCount,
         profiles: [
           ...currentFeed.profiles,
-          ...nextFeed.profiles.filter((profile) => !knownIds.has(profile.id)),
+          ...fetchedFeed.profiles.filter((profile) => !knownIds.has(profile.id)),
         ],
-        nextCursor: nextFeed.nextCursor,
-        hasMore: nextFeed.hasMore,
-        supply: nextFeed.supply,
+        nextCursor: fetchedFeed.nextCursor,
+        hasMore: fetchedFeed.hasMore,
+        supply: fetchedFeed.supply,
       };
 
       debugDiscoveryLog("feed_window_appended", {
@@ -4010,10 +4198,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         unseenCount: mergedFeed.supply?.unseenCount ?? null,
         fetchedAt: mergedFeed.supply?.fetchedAt ?? null,
       });
-      assertDiscoveryQueueInvariants(mergedFeed.profiles.slice(0, 3));
-
-      discoveryFeedRef.current = mergedFeed;
-      setDiscoveryFeed(mergedFeed);
+      const nextFeed = commitDiscoveryFeedState(mergedFeed);
       setLastServerSyncAt(mergedFeed.supply?.fetchedAt || new Date().toISOString());
       await persistViewerBootstrapCache({
         discovery: {
@@ -4030,13 +4215,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           goalsUnlock: goalsUnlockStateRef.current,
           lastNotifiedPopularModeChangeAtLikeCount: totalLikesCountRef.current,
           filters: discoveryFiltersRef.current,
-          feed: mergedFeed,
+          feed: nextFeed,
         },
       });
 
-      return mergedFeed;
+      return nextFeed;
     },
-    [persistViewerBootstrapCache]
+    [commitDiscoveryFeedState, persistViewerBootstrapCache]
   );
 
   const applyDiscoveryPreferenceResult = useCallback(
@@ -4097,6 +4282,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const requestId =
         options?.requestId || createDiscoveryDecisionRequestId(action, profile.id);
+      const submittedAt = new Date().toISOString();
+      const timeoutAt = new Date(Date.now() + DEFAULT_REQUEST_TIMEOUT_MS).toISOString();
       const shouldSimulateCursorStale =
         __DEV__ && simulateNextDiscoveryCursorStaleRef.current;
       if (shouldSimulateCursorStale) {
@@ -4108,10 +4295,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ? Number(discoveryFeedRef.current.queueVersion)
           : null;
       const currentVisibleQueue = discoveryFeedRef.current.profiles.slice(0, 3);
-      assertDiscoveryQueueInvariants(currentVisibleQueue);
+      try {
+        assertDiscoveryQueueInvariants(currentVisibleQueue, {
+          expectedHeadId: profile.id,
+        });
+      } catch (error: any) {
+        const message = error?.message || "DISCOVERY_QUEUE_INVARIANT_VIOLATION";
+        setDiscoveryQueueInvariantViolation(message);
+        setDiscoveryQueueLastRequestId(requestId);
+        setDiscoveryQueueLastDecisionRejectedReason("invariant_violation");
+        recordDiscoveryQueueTrace({
+          event: "queue_invariant_violation",
+          requestId,
+          queueVersion,
+          policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+          visibleQueue: getDiscoveryQueueIds(currentVisibleQueue),
+          activeProfileId: currentVisibleQueue[0]?.id ?? null,
+          action,
+          targetProfileId: profile.id,
+          decisionRejectedReason: "invariant_violation",
+          source: "decision",
+          note: message,
+          errorCode: error?.code ?? null,
+        });
+        return null;
+      }
       const visibleProfileIds = getDiscoveryQueueIds(currentVisibleQueue).map((item) =>
         Number(item)
       );
+      if (visibleProfileIds[0] !== profile.id || discoveryPendingDecisionRef.current) {
+        setDiscoveryQueueLastRequestId(requestId);
+        setDiscoveryQueueLastDecisionRejectedReason("action_blocked");
+        recordDiscoveryQueueTrace({
+          event: "queue_action_blocked",
+          requestId,
+          queueVersion,
+          policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+          visibleQueue: visibleProfileIds,
+          activeProfileId: visibleProfileIds[0] ?? null,
+          action,
+          targetProfileId: profile.id,
+          decisionRejectedReason:
+            visibleProfileIds[0] !== profile.id ? "render_head_mismatch" : "pending_decision",
+          canAct: false,
+          source: "decision",
+        });
+        return null;
+      }
       const before = getDiscoveryDecisionSnapshot({
         totalLikesCount: totalLikesCountRef.current,
         lifetimeCounts: lifetimeDiscoveryCountsRef.current,
@@ -4119,6 +4349,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         goalsUnlock: goalsUnlockStateRef.current,
       });
       const startedAt = Date.now();
+      const pendingDecision: DiscoveryPendingDecision = {
+        requestId,
+        action,
+        targetProfileId: profile.id,
+        submittedAt,
+        timeoutAt,
+      };
+
+      setDiscoveryQueueInvariantViolation(null);
+      setDiscoveryQueueLastRequestId(requestId);
+      setDiscoveryQueueLastDecisionRejectedReason(null);
+      setDiscoveryQueueLastReplacementProfileId(null);
+      updateDiscoveryPendingDecision(pendingDecision);
+      updateDiscoveryQueueStatus("decision_submitting");
+      clearDiscoveryDecisionTimeout();
+      discoveryDecisionTimeoutRef.current = setTimeout(() => {
+        const currentPendingDecision = discoveryPendingDecisionRef.current as {
+          requestId: string;
+          targetProfileId: number;
+        } | null;
+        if (!currentPendingDecision || currentPendingDecision.requestId !== requestId) {
+          return;
+        }
+        updateDiscoveryPendingDecision(null);
+        updateDiscoveryQueueStatus(deriveDiscoveryQueueStatus(discoveryFeedRef.current));
+        setDiscoveryQueueLastDecisionRejectedReason("timeout");
+        recordDiscoveryQueueTrace({
+          event: "queue_decision_timeout",
+          requestId,
+          queueVersion: discoveryFeedRef.current.queueVersion ?? queueVersion,
+          policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+          visibleQueue: getDiscoveryQueueIds(discoveryFeedRef.current.profiles.slice(0, 3)),
+          activeProfileId: discoveryFeedRef.current.profiles[0]?.id ?? null,
+          action,
+          targetProfileId: profile.id,
+          decisionRejectedReason: "timeout",
+          canAct: false,
+          source: "decision",
+          note: `Decision request exceeded ${DEFAULT_REQUEST_TIMEOUT_MS}ms`,
+        });
+      }, DEFAULT_REQUEST_TIMEOUT_MS);
 
       debugDiscoveryLog("decision_request_sent", {
         requestId,
@@ -4126,9 +4397,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         targetProfileId: profile.id,
         before,
       });
-      logDiscoveryQueueTrace({
+      recordDiscoveryQueueTrace({
         event: "queue_before_decision_submit",
-        actorId: userRef.current?.id ?? null,
         requestId,
         queueVersion,
         policyVersion: discoveryFeedRef.current.policyVersion ?? null,
@@ -4139,9 +4409,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         canAct: visibleProfileIds[0] === profile.id,
         source: "decision",
       });
-      logDiscoveryQueueTrace({
+      recordDiscoveryQueueTrace({
         event: "queue_decision_request_body",
-        actorId: userRef.current?.id ?? null,
         requestId,
         queueVersion,
         policyVersion: discoveryFeedRef.current.policyVersion ?? null,
@@ -4163,10 +4432,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           queueVersion,
         });
         const latencyMs = Date.now() - startedAt;
-        logDiscoveryQueueTrace({
+        const responseRequestId = result.requestId ?? requestId;
+        recordDiscoveryQueueTrace({
           event: "queue_decision_response_raw",
-          actorId: userRef.current?.id ?? null,
-          requestId,
+          requestId: responseRequestId,
           queueVersion: result.queueVersion ?? queueVersion,
           policyVersion: result.policyVersion ?? discoveryFeedRef.current.policyVersion ?? null,
           visibleQueue: visibleProfileIds,
@@ -4178,8 +4447,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           canAct: false,
           source: "decision",
         });
+        const currentPendingDecision = discoveryPendingDecisionRef.current as {
+          requestId: string;
+          targetProfileId: number;
+        } | null;
+        if (
+          !currentPendingDecision ||
+          currentPendingDecision.requestId !== responseRequestId ||
+          currentPendingDecision.targetProfileId !== result.targetProfileId
+        ) {
+          const ignoredPendingDescriptor = currentPendingDecision
+            ? `pending=${currentPendingDecision.requestId}:${currentPendingDecision.targetProfileId}`
+            : "no_pending_decision";
+          recordDiscoveryQueueTrace({
+            event: "queue_response_ignored",
+            requestId: responseRequestId,
+            queueVersion: discoveryFeedRef.current.queueVersion ?? queueVersion,
+            policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+            visibleQueue: getDiscoveryQueueIds(discoveryFeedRef.current.profiles.slice(0, 3)),
+            activeProfileId: discoveryFeedRef.current.profiles[0]?.id ?? null,
+            action,
+            targetProfileId: result.targetProfileId,
+            replacementProfileId: result.replacementProfile?.id ?? null,
+            decisionRejectedReason: result.decisionRejectedReason ?? null,
+            canAct: false,
+            source: "decision",
+            note: ignoredPendingDescriptor,
+          });
+          if (currentPendingDecision?.requestId === responseRequestId) {
+            clearDiscoveryDecisionTimeout();
+            updateDiscoveryPendingDecision(null);
+            updateDiscoveryQueueStatus(deriveDiscoveryQueueStatus(discoveryFeedRef.current));
+          }
+          return null;
+        }
+        clearDiscoveryDecisionTimeout();
+        updateDiscoveryPendingDecision(null);
+        setDiscoveryQueueLastRequestId(responseRequestId);
+        setDiscoveryQueueLastDecisionRejectedReason(result.decisionRejectedReason ?? null);
+        setDiscoveryQueueLastReplacementProfileId(result.replacementProfile?.id ?? null);
         applyDiscoveryPreferenceResult(result, {
-          requestId,
+          requestId: responseRequestId,
           action,
           targetProfileId: profile.id,
           latencyMs,
@@ -4197,62 +4505,104 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             })
           : discoveryFeedRef.current;
         if (result.decisionApplied) {
-          logDiscoveryQueueTrace({
+          const previousProfileCount = discoveryFeedRef.current.profiles.length;
+          const committedFeed = commitDiscoveryFeedState(nextFeed, {
+            pendingDecision: null,
+          });
+          recordDiscoveryQueueTrace({
             event: "queue_after_mutation",
-            actorId: userRef.current?.id ?? null,
-            requestId,
-            queueVersion: nextFeed.queueVersion ?? queueVersion,
-            policyVersion: nextFeed.policyVersion ?? null,
+            requestId: responseRequestId,
+            queueVersion: committedFeed.queueVersion ?? queueVersion,
+            policyVersion: committedFeed.policyVersion ?? null,
             visibleQueue: visibleProfileIds,
             activeProfileId: visibleProfileIds[0] ?? null,
             action,
             targetProfileId: result.targetProfileId,
             replacementProfileId: result.replacementProfile?.id ?? null,
-            resultQueue: getDiscoveryQueueIds(nextFeed.profiles.slice(0, 3)),
+            resultQueue: getDiscoveryQueueIds(committedFeed.profiles.slice(0, 3)),
             canAct: false,
             source: "decision",
           });
+          debugDiscoveryLog("feed_window_progressed", {
+            requestId: responseRequestId,
+            action,
+            targetProfileId: result.targetProfileId,
+            previousProfileCount,
+            nextProfileCount: committedFeed.profiles.length,
+            replacementProfileId: result.replacementProfile?.id ?? null,
+            nextCursor: result.nextCursor,
+            hasMore: result.hasMore,
+            latencyMs,
+          });
+          setLastServerSyncAt(
+            result.threshold.lastDecisionEventAt ||
+              committedFeed.supply?.fetchedAt ||
+              new Date().toISOString()
+          );
+          await persistViewerBootstrapCache({
+            discovery: {
+              ...result,
+              feed: committedFeed,
+            },
+          });
+          debugDiscoveryLog("decision_request_completed", {
+            requestId: responseRequestId,
+            action,
+            targetProfileId: result.targetProfileId,
+            decisionApplied: result.decisionApplied,
+            decisionRejectedReason: result.decisionRejectedReason ?? null,
+            queueAction: "append-replacement",
+            latencyMs,
+          });
+          return {
+            ...result,
+            requestId: responseRequestId,
+          };
         }
-        debugDiscoveryLog("feed_window_progressed", {
-          requestId,
-          action,
-          targetProfileId: result.targetProfileId,
-          previousProfileCount: discoveryFeedRef.current.profiles.length,
-          nextProfileCount: nextFeed.profiles.length,
-          replacementProfileId: result.replacementProfile?.id ?? null,
-          nextCursor: result.nextCursor,
-          hasMore: result.hasMore,
-          latencyMs,
-        });
-        discoveryFeedRef.current = nextFeed;
-        setDiscoveryFeed(nextFeed);
-        setLastServerSyncAt(
-          result.threshold.lastDecisionEventAt ||
-            nextFeed.supply?.fetchedAt ||
-            new Date().toISOString()
-        );
+        updateDiscoveryQueueStatus(deriveDiscoveryQueueStatus(discoveryFeedRef.current));
         await persistViewerBootstrapCache({
           discovery: {
             ...result,
-            feed: nextFeed,
+            feed: discoveryFeedRef.current,
           },
         });
         debugDiscoveryLog("decision_request_completed", {
-          requestId,
+          requestId: responseRequestId,
           action,
           targetProfileId: result.targetProfileId,
           decisionApplied: result.decisionApplied,
           decisionRejectedReason: result.decisionRejectedReason ?? null,
-          queueAction: result.decisionApplied ? "append-replacement" : "noop",
+          queueAction: "noop",
           latencyMs,
         });
-        return result;
+        return {
+          ...result,
+          requestId: responseRequestId,
+        };
       } catch (error: any) {
+        const currentPendingDecision = discoveryPendingDecisionRef.current as {
+          requestId: string;
+          targetProfileId: number;
+        } | null;
+        const isCurrentPending =
+          currentPendingDecision?.requestId === requestId &&
+          currentPendingDecision.targetProfileId === profile.id;
+        const isTimeoutError =
+          error?.code === "NETWORK_REQUEST_FAILED" &&
+          typeof error?.message === "string" &&
+          error.message.includes("Request timed out");
+
         if (error?.code === "DISCOVERY_CURSOR_STALE") {
           const latencyMs = Date.now() - startedAt;
-          logDiscoveryQueueTrace({
+          clearDiscoveryDecisionTimeout();
+          if (isCurrentPending) {
+            updateDiscoveryPendingDecision(null);
+          }
+          updateDiscoveryQueueStatus("hard_refreshing");
+          setDiscoveryQueueLastRequestId(requestId);
+          setDiscoveryQueueLastDecisionRejectedReason("cursor_stale");
+          recordDiscoveryQueueTrace({
             event: "queue_hard_refresh_started",
-            actorId: userRef.current?.id ?? null,
             requestId,
             queueVersion,
             policyVersion: discoveryFeedRef.current.policyVersion ?? null,
@@ -4271,6 +4621,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }).catch(() => {});
           if (refreshedFeed) {
             return {
+              requestId,
               likedProfileIds: likedProfilesRef.current,
               passedProfileIds: passedProfilesRef.current,
               currentDecisionCounts: {
@@ -4307,29 +4658,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             latencyMs,
           });
         }
-        debugDiscoveryWarn("queue_invariant_violation", {
-          requestId,
-          action,
-          targetProfileId: profile.id,
-          code: error?.code || null,
-          message: error?.message || "UNKNOWN_ERROR",
-        });
-        debugDiscoveryWarn("decision_request_failed", {
-          requestId,
-          action,
-          targetProfileId: profile.id,
-          latencyMs: Date.now() - startedAt,
-          code: error?.code || null,
-          message: error?.message || "UNKNOWN_ERROR",
-        });
+        if (isCurrentPending) {
+          clearDiscoveryDecisionTimeout();
+          updateDiscoveryPendingDecision(null);
+          updateDiscoveryQueueStatus(deriveDiscoveryQueueStatus(discoveryFeedRef.current));
+          setDiscoveryQueueLastRequestId(requestId);
+          setDiscoveryQueueLastDecisionRejectedReason(
+            isTimeoutError ? "timeout" : error?.code || "request_failed"
+          );
+        }
+        if (isTimeoutError && isCurrentPending) {
+          recordDiscoveryQueueTrace({
+            event: "queue_decision_timeout",
+            requestId,
+            queueVersion,
+            policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+            visibleQueue: getDiscoveryQueueIds(discoveryFeedRef.current.profiles.slice(0, 3)),
+            activeProfileId: discoveryFeedRef.current.profiles[0]?.id ?? null,
+            action,
+            targetProfileId: profile.id,
+            decisionRejectedReason: "timeout",
+            canAct: false,
+            source: "decision",
+            note: error?.message || `Decision request exceeded ${DEFAULT_REQUEST_TIMEOUT_MS}ms`,
+            errorCode: error?.code ?? null,
+          });
+        } else if (isCurrentPending) {
+          recordDiscoveryQueueTrace({
+            event: "queue_network_error",
+            requestId,
+            queueVersion,
+            policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+            visibleQueue: getDiscoveryQueueIds(discoveryFeedRef.current.profiles.slice(0, 3)),
+            activeProfileId: discoveryFeedRef.current.profiles[0]?.id ?? null,
+            action,
+            targetProfileId: profile.id,
+            decisionRejectedReason: error?.code || "request_failed",
+            canAct: false,
+            source: "decision",
+            note: error?.message || "UNKNOWN_ERROR",
+            errorCode: error?.code ?? null,
+          });
+        }
         return null;
       }
     },
     [
       accessToken,
       applyDiscoveryPreferenceResult,
+      clearDiscoveryDecisionTimeout,
+      commitDiscoveryFeedState,
       persistViewerBootstrapCache,
+      recordDiscoveryQueueTrace,
       refreshDiscoveryFeedState,
+      updateDiscoveryPendingDecision,
+      updateDiscoveryQueueStatus,
     ]
   );
 
@@ -4365,8 +4748,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setDiscoveryThreshold(createEmptyDiscoveryThreshold());
       setGoalsUnlockState(createEmptyGoalsUnlockState());
       setGoalsUnlockPromptVisible(false);
-      setDiscoveryFeed(createEmptyDiscoveryFeed());
-      discoveryFeedRef.current = createEmptyDiscoveryFeed();
+      clearDiscoveryDecisionTimeout();
+      updateDiscoveryPendingDecision(null);
+      setDiscoveryQueueInvariantViolation(null);
+      setDiscoveryQueueLastRequestId(null);
+      setDiscoveryQueueLastDecisionRejectedReason(null);
+      setDiscoveryQueueLastReplacementProfileId(null);
+      commitDiscoveryFeedState(createEmptyDiscoveryFeed(), {
+        pendingDecision: null,
+      });
       setSessionSwipeCounts({ likes: 0, dislikes: 0 });
       await persistViewerBootstrapCache({
         discovery: {
@@ -4404,12 +4794,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await persistViewerBootstrapCache({
         discovery: result,
       });
-      setDiscoveryFeed(refreshedFeed);
       return true;
     } catch {
       return false;
     }
-  }, [accessToken, persistViewerBootstrapCache, refreshDiscoveryFeedState]);
+  }, [
+    accessToken,
+    clearDiscoveryDecisionTimeout,
+    commitDiscoveryFeedState,
+    persistViewerBootstrapCache,
+    refreshDiscoveryFeedState,
+    updateDiscoveryPendingDecision,
+  ]);
 
   const refreshDiscoveryCandidates = useCallback(async () => {
     if (!accessToken) {
@@ -4465,8 +4861,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (user?.id) {
         await persistDiscoveryFiltersForUser(user.id, nextFilters);
       }
-      discoveryFeedRef.current = createEmptyDiscoveryFeed();
-      setDiscoveryFeed(discoveryFeedRef.current);
+      clearDiscoveryDecisionTimeout();
+      updateDiscoveryPendingDecision(null);
+      setDiscoveryQueueInvariantViolation(null);
+      setDiscoveryQueueLastRequestId(null);
+      setDiscoveryQueueLastDecisionRejectedReason(null);
+      setDiscoveryQueueLastReplacementProfileId(null);
+      commitDiscoveryFeedState(createEmptyDiscoveryFeed(), {
+        pendingDecision: null,
+      });
       await persistViewerBootstrapCache({
         discovery: {
           likedProfileIds: likedProfilesRef.current,
@@ -4725,6 +5128,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [accessToken, persistViewerBootstrapCache]);
 
+  const discoveryQueueRuntime = useMemo<DiscoveryQueueRuntime>(
+    () => ({
+      queue: {
+        items: discoveryFeed.profiles.slice(0, 3),
+        queueVersion: discoveryFeed.queueVersion ?? null,
+        policyVersion: discoveryFeed.policyVersion ?? null,
+        nextCursor: discoveryFeed.nextCursor,
+        hasMore: discoveryFeed.hasMore,
+        source:
+          discoveryQueueStatus === "hard_refreshing"
+            ? "hard_refresh"
+            : discoveryPendingDecision
+              ? "decision"
+              : "window",
+        generatedAt: discoveryFeed.generatedAt ?? null,
+        invalidationReason: discoveryFeed.queueInvalidationReason ?? null,
+      },
+      status: discoveryQueueStatus,
+      pendingDecision: discoveryPendingDecision,
+      lastRequestId: discoveryQueueLastRequestId,
+      lastDecisionRejectedReason: discoveryQueueLastDecisionRejectedReason,
+      lastReplacementProfileId: discoveryQueueLastReplacementProfileId,
+      invariantViolation: discoveryQueueInvariantViolation,
+      traceSeq: discoveryQueueTraceSeq,
+      traceBuffer: discoveryQueueTraceBuffer,
+    }),
+    [
+      discoveryFeed,
+      discoveryPendingDecision,
+      discoveryQueueInvariantViolation,
+      discoveryQueueLastDecisionRejectedReason,
+      discoveryQueueLastReplacementProfileId,
+      discoveryQueueLastRequestId,
+      discoveryQueueStatus,
+      discoveryQueueTraceBuffer,
+      discoveryQueueTraceSeq,
+    ]
+  );
+
   return (
     <AppContext.Provider
       value={{
@@ -4783,6 +5225,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         likedProfiles,
         passedProfiles,
         discoveryFeed,
+        discoveryQueueRuntime,
         discoveryFilters,
         discoveryViewPreferences,
         lastServerSyncAt,
@@ -4795,6 +5238,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         fetchNextDiscoveryWindow,
         resetDiscoveryHistory,
         armDiscoveryCursorStaleSimulation,
+        recordDiscoveryQueueTrace,
         profile,
         accountProfile,
         profileSaveStates,

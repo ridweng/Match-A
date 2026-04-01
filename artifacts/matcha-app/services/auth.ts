@@ -268,6 +268,10 @@ export type DiscoveryFeedProfileResponse = {
   }>;
   categoryValues: PopularAttributeInputByCategory;
   debugMedia?: {
+    candidateBucket?: "real" | "dummy";
+    profileKind?: "user" | "dummy";
+    hasDummyMetadata?: boolean;
+    hasReadyMedia?: boolean;
     mediaSource: "real_media" | "dummy_fallback" | "missing_real_media";
     imageCount: number;
     photos: Array<{
@@ -327,6 +331,7 @@ export type DiscoveryDecisionNoopReason =
   | "cursor_stale";
 
 export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
+  requestId?: string | null;
   decisionApplied: boolean;
   decisionState: "like" | "pass";
   targetProfileId: number;
@@ -502,7 +507,7 @@ type RequestOptions = {
 
 type ProtectedRequestOptions = Pick<RequestOptions, "headers">;
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const MEDIA_UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
 
 class ApiError extends Error {
@@ -1215,6 +1220,7 @@ export async function likeDiscoveryProfile(
       const decisionMeta = buildDemoDecisionMetadata();
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
+        requestId: payload.requestId ?? null,
         decisionApplied: false,
         decisionState: "like",
         targetProfileId: payload.targetProfileId,
@@ -1302,6 +1308,7 @@ export async function likeDiscoveryProfile(
     const decisionMeta = buildDemoDecisionMetadata();
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
+      requestId: payload.requestId ?? null,
       decisionApplied: true,
       decisionState: "like",
       targetProfileId: payload.targetProfileId,
@@ -1336,6 +1343,7 @@ export async function passDiscoveryProfile(
       const decisionMeta = buildDemoDecisionMetadata();
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
+        requestId: payload.requestId ?? null,
         decisionApplied: false,
         decisionState: "pass",
         targetProfileId: payload.targetProfileId,
@@ -1385,6 +1393,7 @@ export async function passDiscoveryProfile(
     const decisionMeta = buildDemoDecisionMetadata();
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
+      requestId: payload.requestId ?? null,
       decisionApplied: true,
       decisionState: "pass",
       targetProfileId: payload.targetProfileId,

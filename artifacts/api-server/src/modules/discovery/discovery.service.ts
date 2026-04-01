@@ -101,11 +101,13 @@ type DiscoveryFeedGoalFeedbackRow = {
 type DiscoveryFeedOptions = {
   cursor?: string | null;
   limit?: number;
+  requestId?: string | null;
 };
 
 type DiscoveryWindowOptions = {
   size?: number | null;
   cursor?: string | null;
+  requestId?: string | null;
 };
 
 type ActorStateRow = {
@@ -978,6 +980,8 @@ export class DiscoveryService {
       const interests = interestsByProfile.get(profile.id) || [];
       const images = imagesByProfile.get(profile.id);
       const isDummyProfile = Boolean(profile.synthetic_group);
+      const candidateBucket: DiscoveryCandidateBucket =
+        profile.kind === "user" ? "real" : "dummy";
       const resolvedImages =
         images && images.length > 0
           ? images
@@ -1065,6 +1069,10 @@ export class DiscoveryService {
           studies: profile.education || null,
         }),
         debugMedia: {
+          candidateBucket,
+          profileKind: profile.kind,
+          hasDummyMetadata: isDummyProfile,
+          hasReadyMedia: Boolean(images && images.length > 0),
           mediaSource,
           imageCount: resolvedImages.length,
           photos: debugPhotos,
@@ -1076,11 +1084,33 @@ export class DiscoveryService {
       `[discovery-image-hydration] ${JSON.stringify(
         hydrated.map((profile) => ({
           profileId: profile.id,
+          candidateBucket: profile.debugMedia.candidateBucket,
+          profileKind: profile.debugMedia.profileKind,
+          hasDummyMetadata: profile.debugMedia.hasDummyMetadata,
+          hasReadyMedia: profile.debugMedia.hasReadyMedia,
           mediaSource: profile.debugMedia.mediaSource,
           imageCount: profile.debugMedia.imageCount,
         }))
       )}`
     );
+
+    hydrated.forEach((profile) => {
+      if (
+        profile.debugMedia.candidateBucket === "dummy" &&
+        profile.debugMedia.mediaSource === "real_media"
+      ) {
+        this.logger.warn(
+          `[queue_bucket_hydration_mismatch] ${JSON.stringify({
+            profileId: profile.id,
+            candidateBucket: profile.debugMedia.candidateBucket,
+            profileKind: profile.debugMedia.profileKind,
+            hasDummyMetadata: profile.debugMedia.hasDummyMetadata,
+            hasReadyMedia: profile.debugMedia.hasReadyMedia,
+            hydrationMediaSource: profile.debugMedia.mediaSource,
+          })}`
+        );
+      }
+    });
 
     return hydrated;
   }
@@ -1246,7 +1276,7 @@ export class DiscoveryService {
     );
     this.logQueueEvent("window_response", {
       actorId: actorProfileId,
-      requestId: null,
+      requestId: options?.requestId ?? null,
       queueVersion,
       policyVersion: DISCOVERY_POLICY_V1.policyVersion,
       visibleQueue: hydratedProfiles.map((profile) => profile.id),
@@ -1339,6 +1369,7 @@ export class DiscoveryService {
     return this.getWindow(userId, {
       size: options?.limit,
       cursor: options?.cursor || null,
+      requestId: options?.requestId || null,
     });
   }
 
@@ -1506,6 +1537,16 @@ export class DiscoveryService {
         queueVersion: requestedQueueVersion,
         previousTotals,
       });
+      this.logQueueEvent("decision_received", {
+        actorId: actorProfileId,
+        requestId: normalizedRequestId,
+        queueVersion: requestedQueueVersion,
+        policyVersion: DISCOVERY_POLICY_V1.policyVersion,
+        visibleQueue: normalizedVisibleProfileIds,
+        activeProfileId: normalizedVisibleProfileIds[0] ?? null,
+        action: interactionType,
+        targetProfileId,
+      });
 
       if (!targetProfile?.id || targetProfile.id === actorProfileId) {
         this.warnDecisionEvent("invalid_target", {
@@ -1634,6 +1675,7 @@ export class DiscoveryService {
             exhaustedReason: replacement.supply.exhaustedReason ?? null,
           });
           return {
+            requestId: normalizedRequestId,
             decisionApplied: false,
             decisionState: interactionType,
             targetProfileId: targetProfile.id,
@@ -1723,6 +1765,7 @@ export class DiscoveryService {
           exhaustedReason: replacement.supply.exhaustedReason ?? null,
         });
         return {
+          requestId: normalizedRequestId,
           decisionApplied: false,
           decisionState: interactionType,
           targetProfileId: targetProfile.id,
@@ -1903,6 +1946,7 @@ export class DiscoveryService {
       });
 
       return {
+        requestId: normalizedRequestId,
         decisionApplied: true,
         decisionState: interactionType,
         targetProfileId: targetProfile.id,

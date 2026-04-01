@@ -80,6 +80,12 @@ export class DiscoveryController {
       : undefined;
   }
 
+  private getRequestIdHeader(req: Request) {
+    return typeof req.headers["x-matcha-request-id"] === "string"
+      ? req.headers["x-matcha-request-id"]
+      : undefined;
+  }
+
   private sendAuthError(res: Response, error: unknown) {
     const message =
       error instanceof Error && error.message ? error.message : "UNAUTHORIZED";
@@ -123,6 +129,7 @@ export class DiscoveryController {
         await this.discoveryService.getFeed(auth.user.id, {
           cursor: parsed.cursor || null,
           limit: parsed.limit,
+          requestId: this.getRequestIdHeader(req) || null,
         })
       );
     } catch (error) {
@@ -169,6 +176,7 @@ export class DiscoveryController {
         await this.discoveryService.getWindow(auth.user.id, {
           size: parsed.size,
           cursor: parsed.cursor || null,
+          requestId: this.getRequestIdHeader(req) || null,
         })
       );
     } catch (error) {
