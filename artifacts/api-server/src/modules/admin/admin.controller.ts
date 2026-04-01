@@ -579,6 +579,7 @@ export class AdminController {
     @Res() res: Response,
     @Query("q") q?: string,
     @Query("kind") kind?: string,
+    @Query("activation") activation?: string,
     @Query("threshold") threshold?: string,
     @Query("genderIdentity") genderIdentity?: string,
     @Query("syntheticGroup") syntheticGroup?: string,
@@ -590,8 +591,14 @@ export class AdminController {
     const filters = {
       q,
       kind: kind === "user" || kind === "dummy" ? kind : "all",
-      threshold:
-        threshold === "reached" || threshold === "pending" ? threshold : "all",
+      activation:
+        activation === "activated" || activation === "not_activated"
+          ? activation
+          : threshold === "reached"
+            ? "activated"
+            : threshold === "pending"
+              ? "not_activated"
+              : "all",
       genderIdentity: String(genderIdentity || "").trim(),
       syntheticGroup: String(syntheticGroup || "").trim(),
       dummyBatchKey: String(dummyBatchKey || "").trim(),
@@ -637,9 +644,10 @@ export class AdminController {
           <td><a href="${escapeHtml(href)}">${escapeHtml(row.display_name || row.public_id)}</a><div class="muted">${escapeHtml(row.public_id)}</div></td>
           <td><span class="pill">${escapeHtml(row.kind)}</span></td>
           <td>${escapeHtml(row.gender_identity || "—")}<div class="muted">${escapeHtml(row.synthetic_group || "—")}</div></td>
+          <td>${escapeHtml(row.country || "Unknown")}</td>
           <td>${escapeHtml(row.total_likes ?? 0)}</td>
           <td>${escapeHtml(row.total_passes ?? 0)}</td>
-          <td>${row.threshold_reached ? "yes" : "no"}</td>
+          <td>${row.is_activated ? "yes" : "no"}</td>
           <td>${escapeHtml(row.dummy_batch_key || "—")}</td>
           <td>${escapeHtml(row.generation_version ?? "—")}</td>
           <td>${escapeHtml(toIso(row.last_decision_at))}</td>
@@ -664,10 +672,10 @@ export class AdminController {
                 <option value="user"${filters.kind === "user" ? " selected" : ""}>Real users</option>
                 <option value="dummy"${filters.kind === "dummy" ? " selected" : ""}>Dummy users</option>
               </select>
-              <select name="threshold" style="padding:10px 12px;border-radius:10px;border:1px solid #ccd5ce;">
-                <option value="all"${filters.threshold === "all" ? " selected" : ""}>All thresholds</option>
-                <option value="reached"${filters.threshold === "reached" ? " selected" : ""}>Reached</option>
-                <option value="pending"${filters.threshold === "pending" ? " selected" : ""}>Pending</option>
+              <select name="activation" style="padding:10px 12px;border-radius:10px;border:1px solid #ccd5ce;">
+                <option value="all"${filters.activation === "all" ? " selected" : ""}>All activation states</option>
+                <option value="activated"${filters.activation === "activated" ? " selected" : ""}>Activated</option>
+                <option value="not_activated"${filters.activation === "not_activated" ? " selected" : ""}>Not activated</option>
               </select>
               <select name="genderIdentity" style="padding:10px 12px;border-radius:10px;border:1px solid #ccd5ce;">
                 ${genderOptions}
@@ -693,16 +701,17 @@ export class AdminController {
                 <th>Profile</th>
                 <th>Kind</th>
                 <th>Gender</th>
+                <th>Country</th>
                 <th>Likes</th>
                 <th>Passes</th>
-                <th>Threshold</th>
+                <th>Activated</th>
                 <th>Dummy batch</th>
                 <th>Generation</th>
                 <th>Last decision</th>
                 <th>Last rebuild</th>
               </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="10" class="muted">No users found</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="11" class="muted">No users found</td></tr>'}</tbody>
           </table>
         `
       )

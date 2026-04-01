@@ -11,12 +11,13 @@ type UserListRow = {
   display_name: string;
   kind: "user" | "dummy";
   gender_identity: string;
+  country: string;
   synthetic_group: string | null;
   dummy_batch_key: string | null;
   generation_version: number | null;
   total_likes: number | null;
   total_passes: number | null;
-  threshold_reached: boolean | null;
+  is_activated: boolean;
   last_decision_at: string | Date | null;
   last_recomputed_at: string | Date | null;
 };
@@ -31,7 +32,7 @@ type RecentDecisionRow = {
 type UserListFilters = {
   q?: string;
   kind?: "all" | "user" | "dummy";
-  threshold?: "all" | "reached" | "pending";
+  activation?: "all" | "activated" | "not_activated";
   genderIdentity?: string;
   syntheticGroup?: string;
   dummyBatchKey?: string;
@@ -1594,13 +1595,14 @@ export class AdminService {
   }
 
   async getUsers(filters?: UserListFilters) {
+    await this.repairLegacyActivatedUsers();
     const normalizedSearch = `%${String(filters?.q || "").trim().toLowerCase()}%`;
     const hasSearch = Boolean(String(filters?.q || "").trim());
     const normalizedKind =
       filters?.kind === "user" || filters?.kind === "dummy" ? filters.kind : "all";
-    const normalizedThreshold =
-      filters?.threshold === "reached" || filters?.threshold === "pending"
-        ? filters.threshold
+    const normalizedActivation =
+      filters?.activation === "activated" || filters?.activation === "not_activated"
+        ? filters.activation
         : "all";
     const normalizedGenderIdentity = String(filters?.genderIdentity || "").trim();
     const normalizedSyntheticGroup = String(filters?.syntheticGroup || "").trim();
@@ -1610,49 +1612,102 @@ export class AdminService {
       Number.isFinite(filters.generationVersion)
         ? filters.generationVersion
         : null;
+    const [hasProfileCountryColumn, hasProfileLocationHistoryTable] = await Promise.all([
+      this.hasColumn("core", "profiles", "country"),
+      this.hasColumn("core", "profile_location_history", "country"),
+    ]);
+    const resolvedCountryExpression = this.buildResolvedCountryExpression(
+      "p",
+      hasProfileCountryColumn
+    );
 
     const result = await pool.query<UserListRow>(
-      `SELECT
-         p.id AS profile_id,
-         p.user_id,
-         p.public_id,
-         p.display_name,
-         p.kind,
-         p.gender_identity,
-         pdm.synthetic_group,
-         pdm.dummy_batch_key,
-         pdm.generation_version,
-         pth.total_likes,
-         pth.total_passes,
-         pth.threshold_reached,
-         (SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = p.id) AS last_decision_at,
-         ugpm.last_recomputed_at
-       FROM core.profiles p
-       LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
-       LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
-       LEFT JOIN goals.user_goal_projection_meta ugpm ON ugpm.user_id = p.user_id
+      `WITH
+       ${
+         hasProfileLocationHistoryTable
+           ? `latest_location_history AS (
+                SELECT DISTINCT ON (profile_id)
+                  profile_id,
+                  country,
+                  location,
+                  created_at
+                FROM core.profile_location_history
+                ORDER BY profile_id, created_at DESC
+              ),`
+           : ""
+       }
+       user_rows AS (
+         SELECT
+           p.id AS profile_id,
+           p.user_id,
+           p.public_id,
+           p.display_name,
+           p.kind,
+           p.gender_identity,
+           COALESCE(
+             ${
+               hasProfileLocationHistoryTable
+                 ? `NULLIF(TRIM(llh.country), ''),
+                    NULLIF(TRIM(SPLIT_PART(llh.location, ',', array_length(regexp_split_to_array(llh.location, ','), 1))), ''),`
+                 : ""
+             }
+             ${resolvedCountryExpression}
+           ) AS country,
+           pdm.synthetic_group,
+           pdm.dummy_batch_key,
+           pdm.generation_version,
+           pth.total_likes,
+           pth.total_passes,
+           CASE
+             WHEN o.status = 'completed'::onboarding_status
+              AND p.is_discoverable = true
+              AND EXISTS (
+                SELECT 1
+                FROM media.profile_images pi
+                JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+                WHERE pi.profile_id = p.id
+                  AND ma.status = 'ready'
+              )
+             THEN true
+             ELSE false
+           END AS is_activated,
+           (SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = p.id) AS last_decision_at,
+           ugpm.last_recomputed_at
+         FROM core.profiles p
+         ${
+           hasProfileLocationHistoryTable
+             ? "LEFT JOIN latest_location_history llh ON llh.profile_id = p.id"
+             : ""
+         }
+         LEFT JOIN core.user_onboarding o ON o.user_id = p.user_id
+         LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+         LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+         LEFT JOIN goals.user_goal_projection_meta ugpm ON ugpm.user_id = p.user_id
+         WHERE (
+           $1::boolean = false
+           OR LOWER(p.display_name) LIKE $2
+           OR LOWER(p.public_id) LIKE $2
+           OR LOWER(COALESCE(pdm.dummy_batch_key, '')) LIKE $2
+         )
+         AND ($3::text = 'all' OR p.kind = $3::profile_kind)
+         AND ($5::text = '' OR LOWER(p.gender_identity) = LOWER($5))
+         AND ($6::text = '' OR LOWER(COALESCE(pdm.synthetic_group, '')) = LOWER($6))
+         AND ($7::text = '' OR LOWER(COALESCE(pdm.dummy_batch_key, '')) = LOWER($7))
+         AND ($8::int IS NULL OR pdm.generation_version = $8)
+       )
+       SELECT *
+       FROM user_rows
        WHERE (
-         $1::boolean = false
-         OR LOWER(p.display_name) LIKE $2
-         OR LOWER(p.public_id) LIKE $2
-         OR LOWER(COALESCE(pdm.dummy_batch_key, '')) LIKE $2
-       )
-       AND ($3::text = 'all' OR p.kind = $3::profile_kind)
-       AND (
          $4::text = 'all'
-         OR ($4::text = 'reached' AND COALESCE(pth.threshold_reached, false) = true)
-         OR ($4::text = 'pending' AND COALESCE(pth.threshold_reached, false) = false)
+         OR ($4::text = 'activated' AND is_activated = true)
+         OR ($4::text = 'not_activated' AND is_activated = false)
        )
-       AND ($5::text = '' OR LOWER(p.gender_identity) = LOWER($5))
-       AND ($6::text = '' OR LOWER(COALESCE(pdm.synthetic_group, '')) = LOWER($6))
-       AND ($7::text = '' OR LOWER(COALESCE(pdm.dummy_batch_key, '')) = LOWER($7))
-       AND ($8::int IS NULL OR pdm.generation_version = $8)
-       ORDER BY p.kind ASC, p.id ASC`,
+       ORDER BY kind ASC, profile_id ASC`,
       [
         hasSearch,
         normalizedSearch,
         normalizedKind,
-        normalizedThreshold,
+        normalizedActivation,
         normalizedGenderIdentity,
         normalizedSyntheticGroup,
         normalizedDummyBatchKey,
