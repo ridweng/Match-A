@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
@@ -43,6 +44,14 @@ type SettingsDraft = {
   pronouns: string;
   personality: string;
 };
+
+const DEVELOPMENT_PACKAGE_VERSION = (() => {
+  try {
+    return require("../package.json")?.version ?? null;
+  } catch {
+    return null;
+  }
+})();
 
 function keepAllowedValue<T extends string>(value: string, allowed: readonly T[]) {
   return allowed.includes(value as T) ? value : "";
@@ -473,6 +482,8 @@ export default function SettingsScreen() {
   const [localLanguage, setLocalLanguage] = useState<"es" | "en">(language);
   const [saveFeedback, setSaveFeedback] = useState<"idle" | "saved" | "error">("idle");
   const isOffline = !isOnline;
+  const appVersion =
+    Constants.expoConfig?.version || DEVELOPMENT_PACKAGE_VERSION;
 
   useEffect(() => {
     setLocal(settingsSeed);
@@ -836,6 +847,14 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           </View>
+
+          {appVersion ? (
+            <View style={s.versionFooter}>
+              <Text style={s.versionFooterText}>
+                {t("Versión", "Version")} {appVersion}
+              </Text>
+            </View>
+          ) : null}
       </KeyboardAwareScrollViewCompat>
     </View>
   );
@@ -1169,5 +1188,16 @@ const s = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     fontSize: 15,
     color: colors.dislikeRed,
+  },
+  versionFooter: {
+    marginTop: 8,
+    marginBottom: 12,
+    alignItems: "center",
+  },
+  versionFooterText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 12,
+    color: colors.textMuted,
+    letterSpacing: 0.2,
   },
 });

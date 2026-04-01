@@ -20,6 +20,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardProviderCompat } from "@/components/KeyboardProviderCompat";
 import Colors from "@/constants/colors";
 import { AppProvider, useApp } from "@/context/AppContext";
+import { debugLog } from "@/utils/debug";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,16 +32,16 @@ function RootLayoutNav() {
     authBusy,
     postAuthRedirectRoute,
     clearPostAuthRedirectRoute,
-    biometricLockRequired,
+    accessState,
     t,
     goalsUnlockPromptVisible,
     dismissGoalsUnlockPrompt,
   } = useApp();
   const pathname = usePathname();
   const isAuthCallbackActive = pathname === "/auth-callback";
-  const isLocked = authStatus === "authenticated" && biometricLockRequired;
-  const shouldShowTabs =
-    authStatus === "authenticated" && !biometricLockRequired;
+  const isLocked =
+    accessState === "authenticated_locked" || accessState === "unlocking";
+  const shouldShowTabs = accessState === "authenticated_unlocked";
 
   const [loadingVisible, setLoadingVisible] = useState(true);
   const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
@@ -54,7 +55,7 @@ function RootLayoutNav() {
   }, [loadingVisible]);
 
   useEffect(() => {
-    if (authStatus === "loading") {
+    if (accessState === "booting") {
       setLoadingVisible(true);
       return;
     }
@@ -66,7 +67,7 @@ function RootLayoutNav() {
 
     let nextRoute: string | null = null;
 
-    if (authStatus !== "authenticated") {
+    if (accessState === "unauthenticated" || authStatus !== "authenticated") {
       if (pathname !== "/login" && !isAuthCallbackActive) {
         nextRoute = "/login";
       }
@@ -82,7 +83,8 @@ function RootLayoutNav() {
       }
     } else if (
       shouldShowTabs &&
-      (pathname === "/login" ||
+      (pathname === "/" ||
+        pathname === "/login" ||
         pathname === "/biometric-lock" ||
         pathname === "/auth-callback")
     ) {
@@ -90,6 +92,12 @@ function RootLayoutNav() {
     }
 
     if (nextRoute) {
+      debugLog("[biometric] biometric_route_guard_redirect", {
+        accessState,
+        authStatus,
+        pathname,
+        nextRoute,
+      });
       setLoadingVisible(true);
       if (lastRedirectRef.current !== nextRoute) {
         lastRedirectRef.current = nextRoute;
@@ -106,6 +114,7 @@ function RootLayoutNav() {
 
     return () => cancelAnimationFrame(frame);
   }, [
+    accessState,
     authStatus,
     authBusy,
     clearPostAuthRedirectRoute,

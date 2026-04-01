@@ -13,7 +13,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { AppState, Keyboard, Platform } from "react-native";
+import { AppState, Keyboard, Platform, type AppStateStatus } from "react-native";
 
 import {
   acknowledgeGoalsUnlockSeen as acknowledgeGoalsUnlockSeenRequest,
@@ -179,11 +179,26 @@ type LocationSyncResult = {
 };
 
 type BiometricResult = { ok: boolean; code?: string };
+type AccessGateState =
+  | "booting"
+  | "unauthenticated"
+  | "authenticated_locked"
+  | "unlocking"
+  | "authenticated_unlocked"
+  | "signing_out";
+type LockTrigger = "cold_start" | "resume_from_background" | "manual_relock" | null;
+type LockScreenPresence = {
+  mounted: boolean;
+  focused: boolean;
+};
 type DiscoveryViewPreferences = {
   selectedTab: "discover" | "filters";
   cardDensity: "comfortable" | "compact";
   reduceMotion: boolean;
 };
+
+const MIN_LOCK_INTERRUPTION_MS = 1500;
+const PROMPT_REENTRY_COOLDOWN_MS = 1000;
 
 const GOAL_CATEGORIES: GoalCategory[] = [
   "physical",
@@ -558,10 +573,19 @@ type AppContextType = {
     options?: { step?: number; requestId?: string }
   ) => Promise<boolean>;
   finishOnboarding: (data: OnboardingDraftInput) => Promise<boolean>;
+  accessState: AccessGateState;
   biometricLockRequired: boolean;
   biometricBusy: boolean;
   biometricsEnabled: boolean;
-  unlockWithBiometrics: () => Promise<BiometricResult>;
+  bootstrapComplete: boolean;
+  appReadyForBiometric: boolean;
+  lockCycleId: number;
+  deferredReplayPending: boolean;
+  lastLockTrigger: LockTrigger;
+  lastBiometricErrorCode: string | null;
+  beginBiometricUnlock: (trigger?: LockTrigger) => Promise<BiometricResult>;
+  setLockScreenPresence: (presence: LockScreenPresence) => void;
+  forceLogoutForBiometricPolicy: (reason: string) => Promise<void>;
   setBiometricsEnabled: (enabled: boolean) => Promise<BiometricResult>;
   language: "es" | "en";
   setLanguage: (lang: "es" | "en") => void;
@@ -1297,8 +1321,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const hasCompletedOnboardingRef = useRef(false);
   const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
-  const [biometricLockRequired, setBiometricLockRequired] = useState(false);
+  const biometricsEnabledRef = useRef(false);
+  const [accessState, setAccessStateState] = useState<AccessGateState>("booting");
+  const accessStateRef = useRef<AccessGateState>("booting");
   const [biometricBusy, setBiometricBusy] = useState(false);
+  const biometricBusyRef = useRef(false);
+  const [bootstrapComplete, setBootstrapCompleteState] = useState(false);
+  const bootstrapCompleteRef = useRef(false);
+  const [appReadyForBiometric, setAppReadyForBiometricState] = useState(false);
+  const appReadyForBiometricRef = useRef(false);
+  const [lockScreenMounted, setLockScreenMountedState] = useState(false);
+  const lockScreenMountedRef = useRef(false);
+  const [lockScreenFocused, setLockScreenFocusedState] = useState(false);
+  const lockScreenFocusedRef = useRef(false);
+  const [lockCycleId, setLockCycleId] = useState(0);
+  const lockCycleIdRef = useRef(0);
+  const [deferredReplayPending, setDeferredReplayPendingState] = useState(false);
+  const deferredReplayPendingRef = useRef(false);
+  const [lastAppState, setLastAppState] = useState<AppStateStatus>(AppState.currentState);
+  const [lastBackgroundAt, setLastBackgroundAtState] = useState<number | null>(null);
+  const lastBackgroundAtRef = useRef<number | null>(null);
+  const [lastUnlockAt, setLastUnlockAtState] = useState<number | null>(null);
+  const [lastPromptCompletedAt, setLastPromptCompletedAtState] = useState<number | null>(null);
+  const lastPromptCompletedAtRef = useRef<number | null>(null);
+  const [pendingUnlockDestination, setPendingUnlockDestination] =
+    useState<"/(tabs)/discover" | null>(null);
+  const [lastLockTrigger, setLastLockTriggerState] = useState<LockTrigger>(null);
+  const [lastBiometricErrorCode, setLastBiometricErrorCode] = useState<string | null>(null);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [providerAvailability, setProviderAvailability] = useState<ProviderAvailability>({
     google: false,
     facebook: false,
@@ -1313,6 +1363,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const requestQueueReplay = useCallback(() => {
     void replayMutationQueueRef.current();
   }, []);
+  const setAccessState = useCallback((next: AccessGateState) => {
+    accessStateRef.current = next;
+    setAccessStateState(next);
+  }, []);
+  const setBiometricBusyState = useCallback((next: boolean) => {
+    biometricBusyRef.current = next;
+    setBiometricBusy(next);
+  }, []);
+  const setBootstrapComplete = useCallback((next: boolean) => {
+    bootstrapCompleteRef.current = next;
+    setBootstrapCompleteState(next);
+  }, []);
+  const setBiometricAppReady = useCallback((next: boolean) => {
+    appReadyForBiometricRef.current = next;
+    setAppReadyForBiometricState(next);
+  }, []);
+  const setLockScreenMounted = useCallback((next: boolean) => {
+    lockScreenMountedRef.current = next;
+    setLockScreenMountedState(next);
+  }, []);
+  const setLockScreenFocused = useCallback((next: boolean) => {
+    lockScreenFocusedRef.current = next;
+    setLockScreenFocusedState(next);
+  }, []);
+  const setDeferredReplayPending = useCallback((next: boolean) => {
+    deferredReplayPendingRef.current = next;
+    setDeferredReplayPendingState(next);
+  }, []);
+  const setLastBackgroundAt = useCallback((next: number | null) => {
+    lastBackgroundAtRef.current = next;
+    setLastBackgroundAtState(next);
+  }, []);
+  const setLastPromptCompletedAt = useCallback((next: number | null) => {
+    lastPromptCompletedAtRef.current = next;
+    setLastPromptCompletedAtState(next);
+  }, []);
+  const incrementLockCycleId = useCallback(() => {
+    lockCycleIdRef.current += 1;
+    setLockCycleId(lockCycleIdRef.current);
+    return lockCycleIdRef.current;
+  }, []);
+  const logBiometricEvent = useCallback(
+    (event: string, extra?: Record<string, unknown>) => {
+      debugLog(`[biometric] ${event}`, {
+        authStatus,
+        accessState: accessStateRef.current,
+        biometricsEnabled: biometricsEnabledRef.current,
+        promptInFlight: biometricBusyRef.current,
+        bootstrapComplete: bootstrapCompleteRef.current,
+        appReadyForBiometric: appReadyForBiometricRef.current,
+        lockScreenMounted: lockScreenMountedRef.current,
+        lockScreenFocused: lockScreenFocusedRef.current,
+        lockCycleId: lockCycleIdRef.current,
+        deferredReplayPending: deferredReplayPendingRef.current,
+        ...extra,
+      });
+    },
+    [authStatus]
+  );
   const resetClientState = useCallback(() => {
     const emptyPopularAttributes = createEmptyPopularAttributesByCategory();
     const defaultGoals = normalizeStoredGoals(DEFAULT_GOALS);
@@ -1337,7 +1446,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setRefreshToken(null);
     refreshTokenRef.current = null;
     setPostAuthRedirectRoute(null);
-    setBiometricLockRequired(false);
+    setAccessState("unauthenticated");
+    setBiometricBusyState(false);
+    setBiometricAppReady(false);
+    setBootstrapComplete(false);
+    setLockScreenMounted(false);
+    setLockScreenFocused(false);
+    setDeferredReplayPending(false);
+    setLastBackgroundAt(null);
+    setLastPromptCompletedAt(null);
+    setLastUnlockAtState(null);
+    setPendingUnlockDestination(null);
+    setLastLockTriggerState(null);
+    setLastBiometricErrorCode(null);
+    setLockCycleId(0);
+    lockCycleIdRef.current = 0;
     setHasCompletedOnboarding(false);
     hasCompletedOnboardingRef.current = false;
     setNeedsProfileCompletion(false);
@@ -1392,6 +1515,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     pendingPostLoginRouteRef.current = null;
     await AsyncStorage.removeItem(PENDING_POST_LOGIN_ROUTE_STORAGE_KEY);
   }, []);
+
+  useEffect(() => {
+    biometricsEnabledRef.current = biometricsEnabled;
+  }, [biometricsEnabled]);
+
+  useEffect(() => {
+    if (authStatus === "loading") {
+      setAccessState("booting");
+      setBiometricAppReady(false);
+      return;
+    }
+    if (authStatus !== "authenticated" && accessStateRef.current !== "signing_out") {
+      setAccessState("unauthenticated");
+      setDeferredReplayPending(false);
+    }
+  }, [authStatus, setAccessState, setBiometricAppReady, setDeferredReplayPending]);
+
+  useEffect(() => {
+    if (authStatus === "loading" || !bootstrapCompleteRef.current) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      setBiometricAppReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [authStatus, bootstrapComplete, setBiometricAppReady]);
 
   const setPendingPostLoginRoute = useCallback(async (route: PendingPostLoginRoute) => {
     pendingPostLoginRouteRef.current = route;
@@ -2327,6 +2476,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         userId: normalizedSessionUser.id,
       });
       setAuthStatus("authenticated");
+      setAccessState("authenticated_unlocked");
       requestQueueReplay();
     },
     [
@@ -2334,6 +2484,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       applyViewerBootstrap,
       clearOnboardingResumeState,
       requestQueueReplay,
+      setAccessState,
     ]
   );
 
@@ -2426,7 +2577,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPendingVerificationPassword(null);
       setVerificationStatus(recoveryEmail ? "pending" : "idle");
       setSessionOfflineFallback(false);
-      setBiometricLockRequired(false);
+      setAccessState("unauthenticated");
+      setBiometricBusyState(false);
+      setDeferredReplayPending(false);
+      setLastBiometricErrorCode(null);
       setAuthStatus(recoveryEmail ? "verification_pending" : "unauthenticated");
       setAuthError(null);
       await clearStoredSessionTokens();
@@ -2435,6 +2589,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       authResendVerificationEmail,
       cacheOnboardingResumeDraft,
       clearStoredSessionTokens,
+      setAccessState,
+      setBiometricBusyState,
+      setDeferredReplayPending,
       setPendingPostLoginRoute,
       setSignInPrefill,
     ]
@@ -2550,6 +2707,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
+        setBootstrapComplete(false);
+        setBiometricAppReady(false);
+        setAccessState("booting");
+        logBiometricEvent("biometric_boot_restore_started");
         const [
           lang,
           savedDiscoveryFilters,
@@ -2662,6 +2823,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         const bioEnabled = savedBiometrics === "true";
         setBiometricsEnabledState(bioEnabled);
+        biometricsEnabledRef.current = bioEnabled;
 
         if (storedRefreshToken) {
           try {
@@ -2678,8 +2840,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
             await clearOnboardingResumeForFreshIncompleteSession(session);
             await applySession(session);
+            logBiometricEvent("biometric_boot_restore_authenticated", {
+              userId: session.user.id,
+            });
             if (bioEnabled && Platform.OS !== "web") {
-              setBiometricLockRequired(true);
+              incrementLockCycleId();
+              setPendingUnlockDestination("/(tabs)/discover");
+              setLastLockTriggerState("cold_start");
+              setLastBiometricErrorCode(null);
+              setAccessState("authenticated_locked");
+              logBiometricEvent("biometric_lock_armed", {
+                trigger: "cold_start",
+              });
+            } else {
+              setAccessState("authenticated_unlocked");
             }
           } catch (error) {
             if (cachedBootstrapRaw && !isInvalidRefreshError(error)) {
@@ -2688,8 +2862,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               });
               setSessionOfflineFallback(true);
               setAuthStatus("authenticated");
+              logBiometricEvent("biometric_boot_restore_authenticated", {
+                userId: lastAuthUserId,
+                source: "warm_cache",
+              });
               if (bioEnabled && Platform.OS !== "web") {
-                setBiometricLockRequired(true);
+                incrementLockCycleId();
+                setPendingUnlockDestination("/(tabs)/discover");
+                setLastLockTriggerState("cold_start");
+                setLastBiometricErrorCode(null);
+                setAccessState("authenticated_locked");
+                logBiometricEvent("biometric_lock_armed", {
+                  trigger: "cold_start",
+                });
+              } else {
+                setAccessState("authenticated_unlocked");
               }
               return;
             }
@@ -2707,12 +2894,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               AsyncStorage.removeItem(LAST_AUTH_USER_ID_STORAGE_KEY),
             ]);
             setAuthStatus("unauthenticated");
+            setAccessState("unauthenticated");
           }
         } else {
           setAuthStatus("unauthenticated");
+          setAccessState("unauthenticated");
         }
       } catch {
         setAuthStatus("unauthenticated");
+        setAccessState("unauthenticated");
+      } finally {
+        setBootstrapComplete(true);
       }
     })();
   }, [
@@ -2725,23 +2917,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     resetClientState,
     restoreProfilePhotos,
     setSignInPrefill,
+    incrementLockCycleId,
+    logBiometricEvent,
+    setAccessState,
+    setBiometricAppReady,
+    setBootstrapComplete,
   ]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") {
-      return;
-    }
-
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        requestQueueReplay();
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [requestQueueReplay]);
 
   useEffect(() => {
     void NetInfo.fetch().then((state) => {
@@ -3862,36 +4043,276 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [persistViewerBootstrapCache]
   );
 
-  const unlockWithBiometrics = useCallback(async (): Promise<BiometricResult> => {
-    if (Platform.OS === "web") {
-      setBiometricLockRequired(false);
-      return { ok: true };
+  const runDeferredReplayIfNeeded = useCallback(() => {
+    if (!deferredReplayPendingRef.current || authStatus !== "authenticated") {
+      return;
     }
-    setBiometricBusy(true);
-    try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      if (!hasHardware) return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!isEnrolled) return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Desbloquear MatchA",
-        fallbackLabel: "Usar contraseña",
-        cancelLabel: "Cancelar",
-      });
-      if (result.success) {
-        setBiometricLockRequired(false);
+    setDeferredReplayPending(false);
+    logBiometricEvent("biometric_deferred_replay_executed");
+    requestQueueReplay();
+  }, [authStatus, logBiometricEvent, requestQueueReplay, setDeferredReplayPending]);
+
+  const authenticateWithBiometricPrompt = useCallback(
+    async (options: {
+      promptMessage: string;
+      cancelLabel: string;
+      fallbackLabel?: string;
+    }) =>
+      LocalAuthentication.authenticateAsync({
+        promptMessage: options.promptMessage,
+        cancelLabel: options.cancelLabel,
+        fallbackLabel: options.fallbackLabel,
+      }),
+    []
+  );
+
+  const forceLogoutForBiometricPolicy = useCallback(
+    async (reason: string) => {
+      logBiometricEvent("biometric_forced_logout", { reason });
+      setAccessState("signing_out");
+      setDeferredReplayPending(false);
+      setPendingUnlockDestination(null);
+      setLastBiometricErrorCode(reason);
+      await logout();
+      setAccessState("unauthenticated");
+    },
+    [logBiometricEvent, logout, setAccessState, setDeferredReplayPending]
+  );
+
+  const armBiometricLock = useCallback(
+    (trigger: LockTrigger) => {
+      if (Platform.OS === "web") {
+        return;
+      }
+      if (authStatus !== "authenticated" || !biometricsEnabledRef.current) {
+        return;
+      }
+      if (
+        accessStateRef.current === "authenticated_locked" ||
+        accessStateRef.current === "unlocking" ||
+        accessStateRef.current === "signing_out"
+      ) {
+        return;
+      }
+      const now = Date.now();
+      const lastCompletedAt = lastPromptCompletedAtRef.current;
+      if (
+        lastCompletedAt &&
+        now - lastCompletedAt < PROMPT_REENTRY_COOLDOWN_MS
+      ) {
+        logBiometricEvent("biometric_prompt_cooldown_ignored", {
+          trigger,
+          elapsedMs: now - lastCompletedAt,
+        });
+        return;
+      }
+
+      incrementLockCycleId();
+      setAccessState("authenticated_locked");
+      setPendingUnlockDestination("/(tabs)/discover");
+      setLastLockTriggerState(trigger);
+      setLastBiometricErrorCode(null);
+      logBiometricEvent("biometric_lock_armed", { trigger });
+    },
+    [authStatus, incrementLockCycleId, logBiometricEvent, setAccessState]
+  );
+
+  const beginBiometricUnlock = useCallback(
+    async (trigger?: LockTrigger): Promise<BiometricResult> => {
+      if (Platform.OS === "web") {
+        setAccessState("authenticated_unlocked");
         return { ok: true };
       }
-      if (result.error === "user_cancel" || result.error === "system_cancel") {
-        return { ok: false, code: "BIOMETRIC_CANCELLED" };
+      const now = Date.now();
+      if (
+        biometricBusyRef.current ||
+        accessStateRef.current !== "authenticated_locked" ||
+        !bootstrapCompleteRef.current ||
+        !appReadyForBiometricRef.current ||
+        !lockScreenMountedRef.current ||
+        !lockScreenFocusedRef.current ||
+        appStateRef.current !== "active"
+      ) {
+        logBiometricEvent("biometric_prompt_requested", {
+          trigger: trigger ?? lastLockTrigger,
+          blocked: true,
+        });
+        return { ok: false, code: "BIOMETRIC_AUTH_FAILED" };
       }
-      return { ok: false, code: "BIOMETRIC_AUTH_FAILED" };
-    } catch {
-      return { ok: false, code: "BIOMETRIC_AUTH_FAILED" };
-    } finally {
-      setBiometricBusy(false);
+      if (
+        lastPromptCompletedAtRef.current &&
+        now - lastPromptCompletedAtRef.current < PROMPT_REENTRY_COOLDOWN_MS
+      ) {
+        logBiometricEvent("biometric_prompt_cooldown_ignored", {
+          trigger: trigger ?? lastLockTrigger,
+          elapsedMs: now - lastPromptCompletedAtRef.current,
+        });
+        return { ok: false, code: "BIOMETRIC_AUTH_FAILED" };
+      }
+
+      logBiometricEvent("biometric_prompt_requested", {
+        trigger: trigger ?? lastLockTrigger,
+      });
+      setBiometricBusyState(true);
+      setAccessState("unlocking");
+      try {
+        const hasHardware = await LocalAuthentication.hasHardwareAsync();
+        if (!hasHardware) {
+          await forceLogoutForBiometricPolicy("BIOMETRICS_UNAVAILABLE");
+          return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
+        }
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+        if (!isEnrolled) {
+          await forceLogoutForBiometricPolicy("BIOMETRICS_NOT_ENROLLED");
+          return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
+        }
+        logBiometricEvent("biometric_prompt_started", {
+          trigger: trigger ?? lastLockTrigger,
+        });
+        const result = await authenticateWithBiometricPrompt({
+          promptMessage: "Desbloquear MatchA",
+          fallbackLabel: "Usar contraseña",
+          cancelLabel: "Cancelar",
+        });
+        logBiometricEvent("biometric_prompt_result", {
+          trigger: trigger ?? lastLockTrigger,
+          resultCode: result.success ? "success" : result.error || "BIOMETRIC_AUTH_FAILED",
+        });
+        if (result.success) {
+          setPendingUnlockDestination("/(tabs)/discover");
+          setLastBiometricErrorCode(null);
+          setLastUnlockAtState(now);
+          setLastPromptCompletedAt(now);
+          setAccessState("authenticated_unlocked");
+          setPostAuthRedirectRoute(null);
+          logBiometricEvent("biometric_unlock_succeeded", {
+            trigger: trigger ?? lastLockTrigger,
+          });
+          runDeferredReplayIfNeeded();
+          return { ok: true };
+        }
+        const nextCode =
+          result.error === "user_cancel" || result.error === "system_cancel"
+            ? "BIOMETRIC_CANCELLED"
+            : "BIOMETRIC_AUTH_FAILED";
+        setLastBiometricErrorCode(nextCode);
+        setLastPromptCompletedAt(now);
+        setAccessState("authenticated_locked");
+        logBiometricEvent(
+          nextCode === "BIOMETRIC_CANCELLED"
+            ? "biometric_unlock_cancelled"
+            : "biometric_unlock_failed",
+          {
+            trigger: trigger ?? lastLockTrigger,
+            resultCode: nextCode,
+          }
+        );
+        return { ok: false, code: nextCode };
+      } catch {
+        setLastBiometricErrorCode("BIOMETRIC_AUTH_FAILED");
+        setLastPromptCompletedAt(now);
+        setAccessState("authenticated_locked");
+        logBiometricEvent("biometric_unlock_failed", {
+          trigger: trigger ?? lastLockTrigger,
+          resultCode: "BIOMETRIC_AUTH_FAILED",
+        });
+        return { ok: false, code: "BIOMETRIC_AUTH_FAILED" };
+      } finally {
+        setBiometricBusyState(false);
+      }
+    },
+    [
+      authenticateWithBiometricPrompt,
+      forceLogoutForBiometricPolicy,
+      lastLockTrigger,
+      logBiometricEvent,
+      runDeferredReplayIfNeeded,
+      setAccessState,
+      setBiometricBusyState,
+      setLastPromptCompletedAt,
+    ]
+  );
+
+  const setLockScreenPresence = useCallback((presence: LockScreenPresence) => {
+    setLockScreenMounted(presence.mounted);
+    setLockScreenFocused(presence.focused);
+  }, [setLockScreenFocused, setLockScreenMounted]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      return;
     }
-  }, []);
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const previousAppState = appStateRef.current;
+      appStateRef.current = nextState;
+      setLastAppState(nextState);
+      logBiometricEvent("biometric_appstate_changed", {
+        previousAppState,
+        nextAppState: nextState,
+      });
+
+      const now = Date.now();
+      if (nextState === "background" || nextState === "inactive") {
+        setLastBackgroundAt(now);
+        return;
+      }
+
+      if (nextState !== "active") {
+        return;
+      }
+
+      const inactiveDuration =
+        lastBackgroundAtRef.current == null ? null : now - lastBackgroundAtRef.current;
+      const resumedFromBackground = previousAppState === "background";
+      const resumedFromInactive = previousAppState === "inactive";
+      const shouldLockFromInactive =
+        resumedFromInactive &&
+        inactiveDuration != null &&
+        inactiveDuration >= MIN_LOCK_INTERRUPTION_MS;
+
+      if (resumedFromInactive && !shouldLockFromInactive) {
+        logBiometricEvent("biometric_resume_ignored_short_interrupt", {
+          previousAppState,
+          nextAppState: nextState,
+          interruptionMs: inactiveDuration,
+        });
+      }
+
+      const shouldLock =
+        authStatus === "authenticated" &&
+        biometricsEnabledRef.current &&
+        (resumedFromBackground || shouldLockFromInactive);
+
+      if (shouldLock) {
+        logBiometricEvent("biometric_resume_detected", {
+          previousAppState,
+          nextAppState: nextState,
+          interruptionMs: inactiveDuration,
+        });
+        armBiometricLock("resume_from_background");
+        setDeferredReplayPending(true);
+        logBiometricEvent("biometric_deferred_replay_scheduled", {
+          previousAppState,
+          nextAppState: nextState,
+        });
+        return;
+      }
+
+      requestQueueReplay();
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [
+    armBiometricLock,
+    authStatus,
+    logBiometricEvent,
+    requestQueueReplay,
+    setDeferredReplayPending,
+    setLastBackgroundAt,
+  ]);
 
   const setBiometricsEnabled = useCallback(
     async (enabled: boolean): Promise<BiometricResult> => {
@@ -3905,17 +4326,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (!hasHardware) return { ok: false, code: "BIOMETRICS_UNAVAILABLE" };
           return { ok: false, code: "BIOMETRICS_NOT_ENROLLED" };
         }
-        const result = await LocalAuthentication.authenticateAsync({
+        const result = await authenticateWithBiometricPrompt({
           promptMessage: "Confirmar biometría",
           cancelLabel: "Cancelar",
         });
         if (!result.success) return { ok: false, code: "BIOMETRIC_CANCELLED" };
       }
       setBiometricsEnabledState(enabled);
+      biometricsEnabledRef.current = enabled;
       await AsyncStorage.setItem("biometricsEnabled", enabled ? "true" : "false");
       return { ok: true };
     },
-    []
+    [authenticateWithBiometricPrompt]
   );
 
   const updateProfileField = useCallback(
@@ -5167,6 +5589,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
+  const biometricLockRequired =
+    accessState === "authenticated_locked" || accessState === "unlocking";
+
   return (
     <AppContext.Provider
       value={{
@@ -5197,10 +5622,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setOnboardingResumeStep,
         saveOnboardingDraft,
         finishOnboarding,
+        accessState,
         biometricLockRequired,
         biometricBusy,
         biometricsEnabled,
-        unlockWithBiometrics,
+        bootstrapComplete,
+        appReadyForBiometric,
+        lockCycleId,
+        deferredReplayPending,
+        lastLockTrigger,
+        lastBiometricErrorCode,
+        beginBiometricUnlock,
+        setLockScreenPresence,
+        forceLogoutForBiometricPolicy,
         setBiometricsEnabled,
         language,
         setLanguage,

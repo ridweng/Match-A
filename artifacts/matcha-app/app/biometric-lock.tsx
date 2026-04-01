@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { router } from "expo-router";
-import React, { useEffect, useRef } from "react";
+import { usePathname } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -41,18 +41,23 @@ function getBiometricMessage(
 export default function BiometricLockScreen() {
   const insets = useSafeAreaInsets();
   const {
-    authStatus,
+    accessState,
+    appReadyForBiometric,
     biometricBusy,
-    biometricLockRequired,
+    lockCycleId,
     logout,
+    lastBiometricErrorCode,
     t,
-    unlockWithBiometrics,
+    beginBiometricUnlock,
+    setLockScreenPresence,
   } = useApp();
-  const hasPromptedRef = useRef(false);
+  const pathname = usePathname();
+  const lastPromptedCycleRef = useRef<number | null>(null);
   const [message, setMessage] = React.useState("");
+  const [screenReady, setScreenReady] = useState(false);
 
   const runBiometricUnlock = async () => {
-    const result = await unlockWithBiometrics();
+    const result = await beginBiometricUnlock();
     if (result.ok) {
       setMessage("");
       return;
@@ -61,23 +66,38 @@ export default function BiometricLockScreen() {
   };
 
   useEffect(() => {
-    if (authStatus !== "authenticated") {
-      router.replace("/login");
-      return;
-    }
-    if (!biometricLockRequired) {
-      router.replace("/(tabs)/discover");
-      return;
-    }
-    if (!hasPromptedRef.current) {
-      hasPromptedRef.current = true;
+    setMessage(getBiometricMessage(lastBiometricErrorCode || undefined, t));
+  }, [lastBiometricErrorCode, t]);
+
+  useEffect(() => {
+    setLockScreenPresence({
+      mounted: true,
+      focused: pathname === "/biometric-lock",
+    });
+    setScreenReady(pathname === "/biometric-lock");
+    return () => {
+      setScreenReady(false);
+      setLockScreenPresence({
+        mounted: false,
+        focused: false,
+      });
+    };
+  }, [pathname, setLockScreenPresence]);
+
+  useEffect(() => {
+    if (
+      appReadyForBiometric &&
+      screenReady &&
+      accessState === "authenticated_locked" &&
+      lastPromptedCycleRef.current !== lockCycleId
+    ) {
+      lastPromptedCycleRef.current = lockCycleId;
       runBiometricUnlock().catch(() => {});
     }
-  }, [authStatus, biometricLockRequired]);
+  }, [accessState, appReadyForBiometric, lockCycleId, screenReady]);
 
   const handleFallbackLogout = async () => {
     await logout();
-    router.replace("/login");
   };
 
   return (
