@@ -503,6 +503,10 @@ type RequestOptions = {
   accessToken?: string | null;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  debugContext?: {
+    event: string;
+    payload: Record<string, unknown>;
+  };
 };
 
 type ProtectedRequestOptions = Pick<RequestOptions, "headers">;
@@ -618,6 +622,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let response: Response;
   try {
+    if (options.debugContext) {
+      debugLog(`[discovery-decision] ${options.debugContext.event}`, {
+        ...options.debugContext.payload,
+        path,
+        method: options.method || "GET",
+        hasAccessToken: Boolean(options.accessToken),
+        timeoutMs,
+      });
+    }
     const fetchPromise = fetch(`${getBaseUrl()}${path}`, {
       method: options.method || "GET",
       headers: {
@@ -649,6 +662,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       (typeof error?.message === "string" &&
         error.message.includes("Request timed out"));
     debugWarn("[api] network request failed", {
+      ...(options.debugContext?.payload || {}),
       path,
       method: options.method || "GET",
       message: isTimeoutError
@@ -675,6 +689,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
     debugWarn("[api] request failed", {
+      ...(options.debugContext?.payload || {}),
       path,
       method: options.method || "GET",
       status: response.status,
@@ -1199,6 +1214,14 @@ export async function submitDiscoveryDecision(
     accessToken,
     method: "POST",
     body: payload,
+    debugContext: {
+      event: "decision_transport_attempt",
+      payload: {
+        requestId: payload.requestId ?? null,
+        action: payload.action,
+        targetProfileId: payload.targetProfileId,
+      },
+    },
   });
 }
 

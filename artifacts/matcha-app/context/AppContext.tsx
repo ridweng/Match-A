@@ -554,6 +554,7 @@ type AppContextType = {
   user: AuthUser | null;
   authBusy: boolean;
   authError: string | null;
+  hasAccessToken: boolean;
   isOnline: boolean;
   authFormPrefill: AuthFormPrefill | null;
   pendingVerificationEmail: string | null;
@@ -768,6 +769,8 @@ type OnboardingResumeDraft = {
 type DiscoveryDecisionAction = "like" | "pass";
 type DiscoveryDecisionOptions = {
   requestId?: string;
+  renderedFrontId?: number | null;
+  tapSource?: "button" | "gesture";
 };
 type DiscoveryDecisionRequester = typeof likeDiscoveryProfile;
 type DiscoveryQueueStatus =
@@ -812,6 +815,24 @@ type DiscoveryQueueTraceLog = {
   source?: "window" | "decision" | "hard_refresh" | "render";
   note?: string | null;
   errorCode?: string | null;
+  logicalHeadId?: string | number | null;
+  renderedFrontId?: string | number | null;
+  hasAccessToken?: boolean;
+  isOnline?: boolean;
+  isOffline?: boolean;
+  isDeckAnimating?: boolean;
+  hasPendingDecision?: boolean;
+  authStatus?: AuthStatus | null;
+  isRefreshingToken?: boolean | null;
+  sessionId?: string | null;
+  accessTokenAgeMs?: number | null;
+  tapSource?: "button" | "gesture" | null;
+  path?: string | null;
+  method?: string | null;
+  timeoutMs?: number | null;
+  cursorPresent?: boolean;
+  hasCategoryValues?: boolean;
+  presentedPosition?: number | null;
 };
 type DiscoveryQueueRuntime = {
   queue: {
@@ -4698,14 +4719,75 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => {
-      if (!accessToken || !isOnlineRef.current) {
-        return null;
-      }
-
       const requestId =
         options?.requestId || createDiscoveryDecisionRequestId(action, profile.id);
       const submittedAt = new Date().toISOString();
       const timeoutAt = new Date(Date.now() + DEFAULT_REQUEST_TIMEOUT_MS).toISOString();
+      const currentVisibleQueueAtStart = discoveryFeedRef.current.profiles.slice(0, 3);
+      const visibleQueueAtStart = getDiscoveryQueueIds(currentVisibleQueueAtStart).map((item) =>
+        Number(item)
+      );
+      const queueVersionAtStart =
+        Number.isFinite(discoveryFeedRef.current.queueVersion) &&
+        Number(discoveryFeedRef.current.queueVersion) > 0
+          ? Number(discoveryFeedRef.current.queueVersion)
+          : null;
+      recordDiscoveryQueueTrace({
+        event: "decision_submit_started",
+        requestId,
+        queueVersion: queueVersionAtStart,
+        policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+        visibleQueue: visibleQueueAtStart,
+        activeProfileId: currentVisibleQueueAtStart[0]?.id ?? null,
+        action,
+        targetProfileId: profile.id,
+        logicalHeadId: currentVisibleQueueAtStart[0]?.id ?? null,
+        renderedFrontId: options?.renderedFrontId ?? null,
+        hasAccessToken: Boolean(accessToken),
+        isOnline: isOnlineRef.current,
+        canAct: visibleQueueAtStart[0] === profile.id,
+        source: "decision",
+      });
+      recordDiscoveryQueueTrace({
+        event: "decision_auth_context_snapshot",
+        requestId,
+        queueVersion: queueVersionAtStart,
+        policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+        visibleQueue: visibleQueueAtStart,
+        activeProfileId: currentVisibleQueueAtStart[0]?.id ?? null,
+        action,
+        targetProfileId: profile.id,
+        hasAccessToken: Boolean(accessToken),
+        authStatus,
+        isRefreshingToken: false,
+        sessionId: null,
+        accessTokenAgeMs: null,
+        canAct: visibleQueueAtStart[0] === profile.id,
+        source: "decision",
+      });
+      if (!accessToken || !isOnlineRef.current) {
+        setDiscoveryQueueLastRequestId(requestId);
+        setDiscoveryQueueLastDecisionRejectedReason(
+          !accessToken ? "missing_access_token" : "offline"
+        );
+        recordDiscoveryQueueTrace({
+          event: "queue_action_blocked",
+          requestId,
+          queueVersion: queueVersionAtStart,
+          policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+          visibleQueue: visibleQueueAtStart,
+          activeProfileId: currentVisibleQueueAtStart[0]?.id ?? null,
+          action,
+          targetProfileId: profile.id,
+          decisionRejectedReason: !accessToken ? "missing_access_token" : "offline",
+          hasAccessToken: Boolean(accessToken),
+          isOnline: isOnlineRef.current,
+          canAct: false,
+          source: "decision",
+          note: !accessToken ? "Decision blocked: missing access token" : "Decision blocked: offline",
+        });
+        return null;
+      }
       const shouldSimulateCursorStale =
         __DEV__ && simulateNextDiscoveryCursorStaleRef.current;
       if (shouldSimulateCursorStale) {
@@ -4840,7 +4922,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         activeProfileId: visibleProfileIds[0] ?? null,
         action,
         targetProfileId: profile.id,
+        logicalHeadId: visibleProfileIds[0] ?? null,
+        renderedFrontId: options?.renderedFrontId ?? null,
+        cursorPresent: shouldSimulateCursorStale,
+        hasCategoryValues: Boolean(profile.categoryValues),
+        presentedPosition: null,
         canAct: visibleProfileIds[0] === profile.id,
+        source: "decision",
+      });
+      recordDiscoveryQueueTrace({
+        event: "decision_transport_attempt",
+        requestId,
+        queueVersion,
+        policyVersion: discoveryFeedRef.current.policyVersion ?? null,
+        visibleQueue: visibleProfileIds,
+        activeProfileId: visibleProfileIds[0] ?? null,
+        action,
+        targetProfileId: profile.id,
+        path: "/api/discovery/decision",
+        method: "POST",
+        hasAccessToken: Boolean(accessToken),
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        canAct: false,
         source: "decision",
       });
 
@@ -5606,6 +5709,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         user,
         authBusy,
         authError,
+        hasAccessToken: Boolean(accessToken),
         isOnline,
         authFormPrefill,
         pendingVerificationEmail,
