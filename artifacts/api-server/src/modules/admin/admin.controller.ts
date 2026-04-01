@@ -648,6 +648,7 @@ export class AdminController {
           <td>${escapeHtml(row.total_likes ?? 0)}</td>
           <td>${escapeHtml(row.total_passes ?? 0)}</td>
           <td>${row.is_activated ? "yes" : "no"}</td>
+          <td>${row.threshold_plus_30 ? "yes" : "no"}</td>
           <td>${escapeHtml(row.dummy_batch_key || "—")}</td>
           <td>${escapeHtml(row.generation_version ?? "—")}</td>
           <td>${escapeHtml(toIso(row.last_decision_at))}</td>
@@ -705,13 +706,14 @@ export class AdminController {
                 <th>Likes</th>
                 <th>Passes</th>
                 <th>Activated</th>
+                <th>Threshold +30</th>
                 <th>Dummy batch</th>
                 <th>Generation</th>
                 <th>Last decision</th>
                 <th>Last rebuild</th>
               </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="11" class="muted">No users found</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="12" class="muted">No users found</td></tr>'}</tbody>
           </table>
         `
       )

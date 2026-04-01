@@ -18,6 +18,7 @@ type UserListRow = {
   total_likes: number | null;
   total_passes: number | null;
   is_activated: boolean;
+  threshold_plus_30: boolean;
   last_decision_at: string | Date | null;
   last_recomputed_at: string | Date | null;
 };
@@ -1671,6 +1672,10 @@ export class AdminService {
              THEN true
              ELSE false
            END AS is_activated,
+           CASE
+             WHEN COALESCE(pth.total_likes, 0) >= 30 THEN true
+             ELSE false
+           END AS threshold_plus_30,
            (SELECT MAX(pi.created_at) FROM discovery.profile_interactions pi WHERE pi.actor_profile_id = p.id) AS last_decision_at,
            ugpm.last_recomputed_at
          FROM core.profiles p
