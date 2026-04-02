@@ -1,6 +1,6 @@
 {
   "name": "@workspace/matcha-app",
-  "version": "3.5.1",
+  "version": "4.0.2",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {

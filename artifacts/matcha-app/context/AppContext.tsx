@@ -5279,7 +5279,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           latencyMs,
           before,
         });
-        const nextFeed = result.decisionApplied
+        
+        // Queue should advance if decision was applied OR if it was idempotent with a valid replacement
+        const shouldAdvanceQueue = result.decisionApplied || (
+          !result.decisionApplied &&
+          (result.decisionRejectedReason === "same_state_existing_decision" ||
+           result.decisionRejectedReason === "duplicate_request_id") &&
+          result.replacementProfile !== null
+        );
+        
+        const nextFeed = shouldAdvanceQueue
           ? pruneDiscoveryFeedWindow(discoveryFeedRef.current, {
               targetProfileId: result.targetProfileId,
               replacementProfile: result.replacementProfile,
@@ -5290,7 +5299,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               supply: result.supply,
             })
           : discoveryFeedRef.current;
-        if (result.decisionApplied) {
+        if (shouldAdvanceQueue) {
           const previousProfileCount = discoveryFeedRef.current.profiles.length;
           const committedFeed = commitDiscoveryFeedState(nextFeed, {
             pendingDecision: null,
