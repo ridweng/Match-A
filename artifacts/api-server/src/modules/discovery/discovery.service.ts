@@ -1189,7 +1189,8 @@ export class DiscoveryService {
 
     for (let index = startIndex; index < orderedCandidates.length; index += 1) {
       const candidate = orderedCandidates[index]!;
-      if (excludedIds.has(candidate.profile.id)) {
+      const normalizedCandidateId = this.normalizeProfileId(candidate.profile.id);
+      if (normalizedCandidateId !== null && excludedIds.has(normalizedCandidateId)) {
         continue;
       }
       replacementCandidate = candidate;
