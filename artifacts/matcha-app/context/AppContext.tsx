@@ -810,6 +810,20 @@ type DiscoveryDecisionSnapshot = {
   unlockAvailable: boolean;
   unlockPending: boolean;
 };
+export type DiscoveryQueueSlotPhase = "full" | "cover" | "metadata";
+export type DiscoveryQueueSlotMetadata = Omit<
+  DiscoveryFeedProfileResponse,
+  "images"
+>;
+export type DiscoveryQueueSlot = {
+  phase: DiscoveryQueueSlotPhase;
+  id: number;
+  publicId: string;
+  profile: DiscoveryFeedProfileResponse;
+  metadata: DiscoveryQueueSlotMetadata;
+  coverImage: string | null;
+  images: string[];
+};
 
 type DiscoveryQueueTraceLog = {
   event: string;
@@ -849,9 +863,9 @@ type DiscoveryQueueTraceLog = {
   hasCategoryValues?: boolean;
   presentedPosition?: number | null;
 };
-type DiscoveryQueueRuntime = {
+export type DiscoveryQueueRuntime = {
   queue: {
-    items: DiscoveryFeedProfileResponse[];
+    items: DiscoveryQueueSlot[];
     queueVersion: string | number | null;
     policyVersion: string | null;
     nextCursor: string | null;
@@ -1181,6 +1195,54 @@ function getDiscoveryDecisionSnapshot(
     unlockAvailable: input.goalsUnlock.available,
     unlockPending: input.goalsUnlock.unlockMessagePending,
   };
+}
+
+function buildDiscoveryQueueSlotMetadata(
+  profile: DiscoveryFeedProfileResponse
+): DiscoveryQueueSlotMetadata {
+  const { images: _images, ...metadata } = profile;
+  return metadata;
+}
+
+export function buildDiscoveryQueueSlot(
+  profile: DiscoveryFeedProfileResponse,
+  phase: DiscoveryQueueSlotPhase
+): DiscoveryQueueSlot {
+  const normalizedId = normalizeDiscoveryProfileId(profile.id);
+  const normalizedProfile =
+    normalizedId !== null && normalizedId !== profile.id
+      ? {
+          ...profile,
+          id: normalizedId,
+        }
+      : profile;
+  const coverImage = normalizedProfile.images[0] ?? null;
+
+  return {
+    phase,
+    id: normalizedProfile.id,
+    publicId: normalizedProfile.publicId,
+    profile: normalizedProfile,
+    metadata: buildDiscoveryQueueSlotMetadata(normalizedProfile),
+    coverImage,
+    images:
+      phase === "full"
+        ? normalizedProfile.images
+        : phase === "cover" && coverImage
+          ? [coverImage]
+          : [],
+  };
+}
+
+export function buildDiscoveryQueueSlots(
+  profiles: readonly DiscoveryFeedProfileResponse[]
+): DiscoveryQueueSlot[] {
+  const phases: DiscoveryQueueSlotPhase[] = ["full", "cover", "metadata"];
+  return profiles
+    .slice(0, 3)
+    .map((profile, index) =>
+      buildDiscoveryQueueSlot(profile, phases[index] ?? "metadata")
+    );
 }
 
 function pruneDiscoveryFeedWindow(
@@ -5954,7 +6016,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const discoveryQueueRuntime = useMemo<DiscoveryQueueRuntime>(
     () => ({
       queue: {
-        items: discoveryFeed.profiles.slice(0, 3),
+        items: buildDiscoveryQueueSlots(discoveryFeed.profiles),
         queueVersion: discoveryFeed.queueVersion ?? null,
         policyVersion: discoveryFeed.policyVersion ?? null,
         nextCursor: discoveryFeed.nextCursor,

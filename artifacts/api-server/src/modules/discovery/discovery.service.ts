@@ -595,7 +595,7 @@ export class DiscoveryService {
     actorProfileId: number,
     profile: DiscoveryFeedProfileRow,
     filters: DiscoveryFilters,
-    decidedIds: Set<number>
+    decidedPublicIds: Set<string>
   ): DiscoveryExclusionReason | null {
     if (profile.id === actorProfileId) {
       return "self_excluded";
@@ -623,7 +623,7 @@ export class DiscoveryService {
       return genderReason;
     }
 
-    if (decidedIds.has(profile.id)) {
+    if (decidedPublicIds.has(profile.public_id)) {
       return "already_decided";
     }
 
@@ -754,16 +754,16 @@ export class DiscoveryService {
        ORDER BY p.id ASC`,
       []
     );
-    const decisionsResult = await client.query<{ target_profile_id: number | null }>(
-      `SELECT target_profile_id
+    const decisionsResult = await client.query<{ target_profile_public_id: string }>(
+      `SELECT target_profile_public_id
        FROM discovery.profile_decisions
        WHERE actor_profile_id = $1`,
       [actorProfileId]
     );
-    const decidedIds = new Set(
+    const decidedPublicIds = new Set(
       decisionsResult.rows
-        .map((row) => Number(row.target_profile_id))
-        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((row) => String(row.target_profile_public_id).trim())
+        .filter((value) => value.length > 0)
     );
 
     const exclusionCounts: Partial<Record<DiscoveryExclusionReason, number>> = {};
@@ -777,7 +777,7 @@ export class DiscoveryService {
         actorProfileId,
         profile,
         filters,
-        decidedIds
+        decidedPublicIds
       );
       if (failureReason) {
         exclusionCounts[failureReason] = Number(exclusionCounts[failureReason] || 0) + 1;
@@ -1731,9 +1731,9 @@ export class DiscoveryService {
         `SELECT current_state
          FROM discovery.profile_decisions
          WHERE actor_profile_id = $1
-           AND target_profile_id = $2
+           AND target_profile_public_id = $2
          LIMIT 1`,
-        [actorProfileId, targetProfile.id]
+        [actorProfileId, targetProfile.public_id]
       );
 
       if (existingDecision.rows[0]?.current_state === interactionType) {

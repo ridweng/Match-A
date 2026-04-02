@@ -978,10 +978,12 @@ export const discoveryActorQueueTable = discoverySchema.table(
     targetProfileId: bigint("target_profile_id", { mode: "number" })
       .notNull()
       .references(() => profilesTable.id, { onDelete: "cascade" }),
+    targetProfilePublicId: varchar("target_profile_public_id", { length: 64 }).notNull(),
     status: discoveryQueueStatusEnum("status").notNull().default("reserved"),
     generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
     sourceBucket: varchar("source_bucket", { length: 64 }),
     rankScore: bigint("rank_score", { mode: "number" }),
+    hydrationLevel: varchar("hydration_level", { length: 16 }).notNull().default("full"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -998,6 +1000,9 @@ export const discoveryActorQueueTable = discoverySchema.table(
       table.actorProfileId,
       table.queueVersion,
       table.status
+    ),
+    actorQueueTargetPublicIdIndex: index("actor_queue_target_public_id_idx").on(
+      table.targetProfilePublicId
     ),
   })
 );

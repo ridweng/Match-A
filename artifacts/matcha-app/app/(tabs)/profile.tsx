@@ -187,6 +187,7 @@ export default function ProfileScreen() {
   const {
     t,
     accountProfile,
+    discoveryQueueRuntime,
     heightUnit,
     isOnline,
     language,
@@ -881,6 +882,33 @@ export default function ProfileScreen() {
             )}
           </Pressable>
           <SaveFeedbackText status={saveStatus} t={t} />
+          {__DEV__ ? (
+            <Pressable
+              onPress={() => {
+                console.log("[profile][discovery_queue_slots]", {
+                  queueVersion: discoveryQueueRuntime.queue.queueVersion,
+                  policyVersion: discoveryQueueRuntime.queue.policyVersion,
+                  items: discoveryQueueRuntime.queue.items.map((slot) => ({
+                    phase: slot.phase,
+                    id: slot.id,
+                    pk: slot.id,
+                    publicId: slot.publicId,
+                    metadata: slot.metadata,
+                    coverImage: slot.coverImage,
+                    images: slot.images,
+                  })),
+                });
+              }}
+              style={({ pressed }) => [
+                styles.devDebugButton,
+                pressed && styles.devDebugButtonPressed,
+              ]}
+            >
+              <Text style={styles.devDebugButtonText}>
+                {t("Log queue slots", "Log queue slots")}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
       </KeyboardAwareScrollViewCompat>
@@ -1094,6 +1122,24 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontSize: 15,
     color: Colors.textInverted,
+  },
+  devDebugButton: {
+    marginTop: 12,
+    minHeight: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  devDebugButtonPressed: {
+    opacity: 0.8,
+  },
+  devDebugButtonText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 14,
+    color: Colors.textSecondary,
   },
   photoGrid: {
     flexDirection: "row",

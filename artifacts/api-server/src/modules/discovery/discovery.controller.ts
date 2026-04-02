@@ -18,8 +18,9 @@ import { DiscoveryService } from "./discovery.service";
 import { API_TAGS } from "../../docs/openapi/tags";
 import { MATCHA_BEARER_AUTH } from "../../docs/openapi/security";
 
-const discoveryDecisionSchema = z.object({
-  targetProfileId: z.coerce.number().int().positive(),
+const discoveryDecisionBaseSchema = z.object({
+  targetProfilePublicId: z.string().trim().min(1).max(64).optional(),
+  targetProfileId: z.coerce.number().int().positive().optional(),
   categoryValues: z.object({
     physical: z.string().trim().max(120).nullable().optional(),
     personality: z.string().trim().max(120).nullable().optional(),
@@ -30,14 +31,29 @@ const discoveryDecisionSchema = z.object({
   }),
   requestId: z.string().trim().max(128).optional(),
   cursor: z.string().trim().max(512).nullable().optional(),
+  visibleProfilePublicIds: z.array(z.string().trim().min(1).max(64)).max(3).optional(),
   visibleProfileIds: z.array(z.coerce.number().int().positive()).max(3).optional(),
   queueVersion: z.coerce.number().int().positive().optional(),
   presentedPosition: z.coerce.number().int().positive().optional(),
 });
 
-const discoveryQueuedDecisionSchema = discoveryDecisionSchema.extend({
+const discoveryDecisionSchema = discoveryDecisionBaseSchema.refine(
+  (data) => data.targetProfilePublicId || data.targetProfileId,
+  {
+    message: "Either targetProfilePublicId or targetProfileId must be provided",
+    path: ["targetProfilePublicId"],
+  }
+);
+
+const discoveryQueuedDecisionSchema = discoveryDecisionBaseSchema.extend({
   action: z.enum(["like", "pass"]),
-});
+}).refine(
+  (data) => data.targetProfilePublicId || data.targetProfileId,
+  {
+    message: "Either targetProfilePublicId or targetProfileId must be provided",
+    path: ["targetProfilePublicId"],
+  }
+);
 
 const discoveryFiltersSchema = z.object({
   selectedGenders: z

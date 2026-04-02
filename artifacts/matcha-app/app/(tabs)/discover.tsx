@@ -45,7 +45,11 @@ import {
   getReligionLabel,
   getTobaccoUseLabel,
 } from "@/constants/profile-options";
-import { useApp } from "@/context/AppContext";
+import {
+  buildDiscoveryQueueSlot,
+  useApp,
+  type DiscoveryQueueSlot,
+} from "@/context/AppContext";
 import { getZodiacSignFromIsoDate, getZodiacSignLabel } from "@/utils/dateOfBirth";
 import {
   isDiscoveryImageWarm,
@@ -116,10 +120,11 @@ type PopularUpdateBanner = {
   body: string;
 };
 type DeckSlotName = "front" | "second" | "third";
+type DiscoverEntry = DiscoveryQueueSlot;
 type DeckShellId = "shellA" | "shellB" | "shellC";
 type DeckSlotState = {
   shellId: DeckShellId;
-  profile: DiscoverProfile | null;
+  entry: DiscoverEntry | null;
   index: number | null;
   primaryReady: boolean;
   extraPhotosReady: boolean;
@@ -278,17 +283,17 @@ function clampNumber(value: number, min: number, max: number) {
 
 function createDeckSlot(
   shellId: DeckShellId,
-  profile: DiscoverProfile | null,
+  entry: DiscoverEntry | null,
   index: number | null,
   primaryReady = false,
   extraPhotosReady = false
 ): DeckSlotState {
   return {
     shellId,
-    profile,
+    entry,
     index,
-    primaryReady: profile ? primaryReady : true,
-    extraPhotosReady: profile ? extraPhotosReady : true,
+    primaryReady: entry ? primaryReady : true,
+    extraPhotosReady: entry ? extraPhotosReady : true,
   };
 }
 
@@ -316,11 +321,17 @@ function updateDeckSlot(
   };
 }
 
-function isPrimaryImageReady(profile: DiscoverProfile | null) {
+function getSlotProfile(entry: DiscoverEntry | null) {
+  return entry?.profile ?? null;
+}
+
+function isPrimaryImageReady(entry: DiscoverEntry | null) {
+  const profile = getSlotProfile(entry);
   return profile ? isDiscoveryProfileWarm(profile, 1) : true;
 }
 
-function areFrontExtrasReady(profile: DiscoverProfile | null) {
+function areFrontExtrasReady(entry: DiscoverEntry | null) {
+  const profile = getSlotProfile(entry);
   if (!profile || profile.images.length <= 1) {
     return true;
   }
@@ -329,20 +340,20 @@ function areFrontExtrasReady(profile: DiscoverProfile | null) {
 }
 
 function getNextDistinctIndex(
-  profiles: DiscoverProfile[],
+  entries: DiscoverEntry[],
   startIndex: number,
   excludedIds: Set<number>
 ) {
-  if (!profiles.length || excludedIds.size >= profiles.length || startIndex >= profiles.length) {
+  if (!entries.length || excludedIds.size >= entries.length || startIndex >= entries.length) {
     return null;
   }
 
   for (
     let candidateIndex = Math.max(0, startIndex);
-    candidateIndex < profiles.length;
+    candidateIndex < entries.length;
     candidateIndex += 1
   ) {
-    const candidate = profiles[candidateIndex];
+    const candidate = entries[candidateIndex];
     if (candidate && !excludedIds.has(candidate.id)) {
       return candidateIndex;
     }
@@ -351,8 +362,8 @@ function getNextDistinctIndex(
   return null;
 }
 
-function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState {
-  if (!profiles.length) {
+function buildDeckState(entries: DiscoverEntry[], startIndex = 0): DeckState {
+  if (!entries.length) {
     return {
       shells: {
         shellA: createDeckSlot("shellA", null, null, true, true),
@@ -370,7 +381,7 @@ function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState 
   }
 
   const safeStart = Math.max(0, startIndex);
-  if (safeStart >= profiles.length) {
+  if (safeStart >= entries.length) {
     return {
       shells: {
         shellA: createDeckSlot("shellA", null, null, true, true),
@@ -386,19 +397,19 @@ function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState 
       queueCursor: safeStart,
     };
   }
-  const front = profiles[safeStart] ?? null;
+  const front = entries[safeStart] ?? null;
   const secondIndex = getNextDistinctIndex(
-    profiles,
+    entries,
     safeStart + 1,
     new Set(front ? [front.id] : [])
   );
-  const second = secondIndex == null ? null : profiles[secondIndex] ?? null;
+  const second = secondIndex == null ? null : entries[secondIndex] ?? null;
   const thirdIndex = getNextDistinctIndex(
-    profiles,
+    entries,
     (secondIndex ?? safeStart) + 1,
     new Set([front?.id, second?.id].filter((value): value is number => typeof value === "number"))
   );
-  const third = thirdIndex == null ? null : profiles[thirdIndex] ?? null;
+  const third = thirdIndex == null ? null : entries[thirdIndex] ?? null;
   const lastAssignedIndex = thirdIndex ?? secondIndex ?? safeStart;
 
   return {
@@ -430,14 +441,14 @@ function buildDeckState(profiles: DiscoverProfile[], startIndex = 0): DeckState 
 }
 
 function getAnchoredDeckStartIndex(
-  profiles: DiscoverProfile[],
+  entries: DiscoverEntry[],
   currentFrontProfileId: number | null
 ) {
-  if (!profiles.length || !currentFrontProfileId) {
+  if (!entries.length || !currentFrontProfileId) {
     return 0;
   }
 
-  const nextIndex = profiles.findIndex((profile) => profile.id === currentFrontProfileId);
+  const nextIndex = entries.findIndex((entry) => entry.id === currentFrontProfileId);
   return nextIndex >= 0 ? nextIndex : 0;
 }
 
@@ -994,15 +1005,15 @@ export default function DiscoverScreen() {
 
   const isOffline = !isOnline;
 
-  const feedProfiles = discoveryFeed.profiles ?? [];
-  const sourceProfiles = useMemo(() => feedProfiles, [feedProfiles]);
-  const filteredProfiles = useMemo(() => sourceProfiles, [sourceProfiles]);
+  const queueItems = discoveryQueueRuntime.queue.items ?? [];
+  const sourceEntries = useMemo(() => queueItems, [queueItems]);
+  const filteredEntries = useMemo(() => sourceEntries, [sourceEntries]);
   const supply = discoveryFeed.supply;
   const eligibleCount = Number(supply?.eligibleCount) || 0;
   const unseenCount = Number(supply?.unseenCount) || 0;
   const refillThreshold = Math.max(1, Number(supply?.refillThreshold) || 2);
   const hasMoreServerProfiles = Boolean(discoveryFeed.hasMore);
-  const hasFilterMatches = sourceProfiles.length > 0;
+  const hasFilterMatches = sourceEntries.length > 0;
   const hasCatalogMatches = eligibleCount > 0;
   const frontSlot = getDeckSlotByRole(deck, "front");
   const secondSlot = getDeckSlotByRole(deck, "second");
@@ -1010,12 +1021,15 @@ export default function DiscoverScreen() {
   const frontShellId = deck.order.front;
   const secondShellId = deck.order.second;
   const thirdShellId = deck.order.third;
-  const frontProfile = frontSlot.profile;
-  const secondProfile = secondSlot.profile;
-  const thirdProfile = thirdSlot.profile;
+  const frontEntry = frontSlot.entry;
+  const secondEntry = secondSlot.entry;
+  const thirdEntry = thirdSlot.entry;
+  const frontProfile = frontEntry?.profile ?? null;
+  const secondProfile = secondEntry?.profile ?? null;
+  const thirdProfile = thirdEntry?.profile ?? null;
   const logicalQueueIds = useMemo(
-    () => getDiscoveryQueueIds(discoveryFeed.profiles.slice(0, 3)),
-    [discoveryFeed.profiles]
+    () => getDiscoveryQueueIds(queueItems.slice(0, 3)),
+    [queueItems]
   );
   const renderedQueueIds = useMemo(
     () => [
@@ -1032,9 +1046,9 @@ export default function DiscoverScreen() {
   const effectiveQueueInvariantViolation =
     queueInvariantViolation ?? runtimeInvariantViolation ?? null;
   const currentImages =
-    frontProfile && frontCachedProfileId === frontProfile.id && frontCachedImages.length
+    frontEntry && frontCachedProfileId === frontEntry.id && frontCachedImages.length
       ? frontCachedImages
-      : frontProfile?.images ?? [];
+      : frontEntry?.images ?? [];
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
@@ -1047,6 +1061,7 @@ export default function DiscoverScreen() {
   const frontImageKey = frontProfile
     ? `${frontProfile.id}:${Math.min(activePhotoIndex, Math.max(currentImages.length - 1, 0))}`
     : "front-image:empty";
+  const secondImageUri = secondEntry?.coverImage ?? secondProfile?.images[0] ?? null;
   const secondImageKey = secondProfile
     ? `${secondProfile.id}:0`
     : "second-image:empty";
@@ -1138,13 +1153,16 @@ export default function DiscoverScreen() {
   );
   const insightLookup = useMemo(() => {
     const map = new Map<string, { es: string; en: string }>();
-    [...feedProfiles, ...(lastLikedProfile ? [lastLikedProfile] : [])].forEach((profile) => {
+    [
+      ...sourceEntries.map((entry) => entry.profile),
+      ...(lastLikedProfile ? [lastLikedProfile] : []),
+    ].forEach((profile) => {
       profile.insightTags.forEach((tag) => {
         map.set(tag.en, tag);
       });
     });
     return map;
-  }, [feedProfiles, lastLikedProfile]);
+  }, [lastLikedProfile, sourceEntries]);
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
   const { bottomObstructionHeight: filterBottomObstruction } = useBottomObstruction({
@@ -1305,15 +1323,15 @@ export default function DiscoverScreen() {
 
   useEffect(() => {
     trace("source_profiles_changed", {
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
     });
-  }, [sourceProfiles.length, trace]);
+  }, [sourceEntries.length, trace]);
 
   useEffect(() => {
     trace("filtered_profiles_changed", {
-      filteredProfilesLength: filteredProfiles.length,
+      filteredProfilesLength: filteredEntries.length,
     });
-  }, [filteredProfiles.length, trace]);
+  }, [filteredEntries.length, trace]);
 
   useEffect(() => {
     trace("loaded_count_changed", {
@@ -1564,7 +1582,7 @@ export default function DiscoverScreen() {
     }
 
     trace("deck_rebuild_requested", {
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       loadedCount,
       deferred: shouldDeferDeckRebuild,
     });
@@ -1575,23 +1593,23 @@ export default function DiscoverScreen() {
     }
 
     const currentFrontProfileId =
-      getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null;
+      getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null;
     const nextStartIndex = getAnchoredDeckStartIndex(
-      sourceProfiles,
+      sourceEntries,
       currentFrontProfileId
     );
     const nextLoadedCount = Math.min(
-      sourceProfiles.length,
+      sourceEntries.length,
       Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
     );
     trace("deck_rebuild_start", {
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       nextLoadedCount,
       nextStartIndex,
       currentFrontProfileId,
     });
     setLoadedCount(nextLoadedCount);
-    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), nextStartIndex));
+    setDeck(buildDeckState(sourceEntries.slice(0, nextLoadedCount), nextStartIndex));
     setActivePhotoIndex(0);
     setSwipeState("idle");
     setIsInfoVisible(false);
@@ -1602,7 +1620,7 @@ export default function DiscoverScreen() {
     flipAnim.setValue(0);
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
     trace("deck_rebuild_end", {
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       nextLoadedCount,
     });
   }, [
@@ -1613,8 +1631,8 @@ export default function DiscoverScreen() {
     position,
     swipeFeedbackX,
     shouldDeferDeckRebuild,
-    sourceProfiles,
-    sourceProfiles.length,
+    sourceEntries,
+    sourceEntries.length,
     trace,
   ]);
 
@@ -1630,23 +1648,23 @@ export default function DiscoverScreen() {
 
     deferredDeckRebuildRef.current = false;
     const currentFrontProfileId =
-      getDeckSlotByRole(deckRef.current, "front").profile?.id ?? null;
+      getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null;
     const nextStartIndex = getAnchoredDeckStartIndex(
-      sourceProfiles,
+      sourceEntries,
       currentFrontProfileId
     );
     const nextLoadedCount = Math.min(
-      sourceProfiles.length,
+      sourceEntries.length,
       Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
     );
     trace("deck_rebuild_deferred_commit", {
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       nextLoadedCount,
       nextStartIndex,
       currentFrontProfileId,
     });
     setLoadedCount(nextLoadedCount);
-    setDeck(buildDeckState(sourceProfiles.slice(0, nextLoadedCount), nextStartIndex));
+    setDeck(buildDeckState(sourceEntries.slice(0, nextLoadedCount), nextStartIndex));
     setActivePhotoIndex(0);
     setSwipeState("idle");
     setIsInfoVisible(false);
@@ -1663,8 +1681,8 @@ export default function DiscoverScreen() {
     loadedCount,
     position,
     swipeFeedbackX,
-    sourceProfiles,
-    sourceProfiles.length,
+    sourceEntries,
+    sourceEntries.length,
     trace,
     traceFocused,
   ]);
@@ -1672,13 +1690,13 @@ export default function DiscoverScreen() {
   React.useEffect(() => {
     trace("loaded_count_guard_check", {
       loadedCount,
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       frontIndex: deck.frontIndex,
       isOffline,
       hasFrontProfile: Boolean(frontProfile),
     });
 
-    if (isOffline || loadedCount >= sourceProfiles.length || !frontProfile) {
+    if (isOffline || loadedCount >= sourceEntries.length || !frontProfile) {
       return;
     }
 
@@ -1688,33 +1706,33 @@ export default function DiscoverScreen() {
     }
 
     setLoadedCount((current) =>
-      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
+      Math.min(sourceEntries.length, current + DISCOVERY_PAGE_SIZE)
     );
-  }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceProfiles.length]);
+  }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceEntries.length]);
 
   React.useEffect(() => {
     trace("loaded_count_recovery_check", {
       loadedCount,
-      sourceProfilesLength: sourceProfiles.length,
+      sourceProfilesLength: sourceEntries.length,
       isOffline,
       hasDeckProfiles,
     });
     if (
       isOffline ||
       hasDeckProfiles ||
-      loadedCount >= sourceProfiles.length ||
-      !sourceProfiles.length
+      loadedCount >= sourceEntries.length ||
+      !sourceEntries.length
     ) {
       return;
     }
 
     setLoadedCount((current) =>
-      Math.min(sourceProfiles.length, current + DISCOVERY_PAGE_SIZE)
+      Math.min(sourceEntries.length, current + DISCOVERY_PAGE_SIZE)
     );
-  }, [hasDeckProfiles, isOffline, loadedCount, sourceProfiles.length, sourceProfiles]);
+  }, [hasDeckProfiles, isOffline, loadedCount, sourceEntries.length, sourceEntries]);
 
   React.useEffect(() => {
-    if (!filteredProfiles.length) {
+    if (!filteredEntries.length) {
       return;
     }
 
@@ -1742,17 +1760,17 @@ export default function DiscoverScreen() {
         const currentSecond = getDeckSlotByRole(currentDeck, "second");
         let nextDeck = currentDeck;
 
-        if (currentFront.profile) {
+        if (currentFront.entry) {
           nextDeck = updateDeckSlot(nextDeck, currentFront.shellId, (slot) => ({
             ...slot,
-            primaryReady: isPrimaryImageReady(slot.profile),
+            primaryReady: isPrimaryImageReady(slot.entry),
           }));
         }
 
-        if (currentSecond.profile) {
+        if (currentSecond.entry) {
           nextDeck = updateDeckSlot(nextDeck, currentSecond.shellId, (slot) => ({
             ...slot,
-            primaryReady: isPrimaryImageReady(slot.profile),
+            primaryReady: isPrimaryImageReady(slot.entry),
           }));
         }
 
@@ -1761,7 +1779,7 @@ export default function DiscoverScreen() {
       setPreloadRevision((value) => value + 1);
     });
   }, [
-    filteredProfiles,
+    filteredEntries,
     frontProfile,
     secondProfile,
     thirdProfile,
@@ -1795,11 +1813,11 @@ export default function DiscoverScreen() {
 
       setDeck((currentDeck) => {
         const currentFront = getDeckSlotByRole(currentDeck, "front");
-        if (currentFront.profile?.id !== frontProfile.id) {
+        if (currentFront.entry?.id !== frontProfile.id) {
           return currentDeck;
         }
 
-        const nextReady = areFrontExtrasReady(frontProfile);
+        const nextReady = areFrontExtrasReady(frontEntry);
         if (currentFront.extraPhotosReady === nextReady) {
           return currentDeck;
         }
@@ -1815,6 +1833,7 @@ export default function DiscoverScreen() {
       cancelled = true;
     };
   }, [
+    frontEntry,
     frontProfile,
     frontSlot.extraPhotosReady,
     shouldFreezeReadinessWrites,
@@ -1899,7 +1918,7 @@ export default function DiscoverScreen() {
 
     setDeck((currentDeck) => {
       const slot = getDeckSlotByRole(currentDeck, slotName);
-      if (!slot.profile || slot.profile.id !== profileId || slot.primaryReady) {
+      if (!slot.entry || slot.entry.id !== profileId || slot.primaryReady) {
         return currentDeck;
       }
 
@@ -1910,11 +1929,15 @@ export default function DiscoverScreen() {
     });
   }, [shouldFreezeReadinessWrites, trace]);
 
-  const syncFrontExtraPhotoState = useCallback((profile: DiscoverProfile) => {
-    const nextReady = areFrontExtrasReady(profile);
+  const syncFrontExtraPhotoState = useCallback((entry: DiscoverEntry | null) => {
+    if (!entry) {
+      return;
+    }
+
+    const nextReady = areFrontExtrasReady(entry);
     setDeck((currentDeck) => {
       const currentFront = getDeckSlotByRole(currentDeck, "front");
-      if (currentFront.profile?.id !== profile.id) {
+      if (currentFront.entry?.id !== entry.id) {
         return currentDeck;
       }
       if (currentFront.extraPhotosReady === nextReady) {
@@ -1959,15 +1982,15 @@ export default function DiscoverScreen() {
     });
     if (!nextUri || isDiscoveryImageWarm(nextUri)) {
       setActivePhotoIndex(nextIndex);
-      syncFrontExtraPhotoState(frontProfile);
+      syncFrontExtraPhotoState(frontEntry);
       return;
     }
 
     const frontProfileId = frontProfile.id;
     void warmDiscoveryProfileImages(frontProfile, 1, nextIndex).then(() => {
-      syncFrontExtraPhotoState(frontProfile);
+      syncFrontExtraPhotoState(frontEntry);
       if (
-        getDeckSlotByRole(deckRef.current, "front").profile?.id === frontProfileId &&
+        getDeckSlotByRole(deckRef.current, "front").entry?.id === frontProfileId &&
         isDiscoveryImageWarm(nextUri)
       ) {
         setActivePhotoIndex(nextIndex);
@@ -1975,6 +1998,7 @@ export default function DiscoverScreen() {
     });
   }, [
     activePhotoIndex,
+    frontEntry,
     currentImages.length,
     frontProfile,
     shouldSuppressVisualChurn,
@@ -2358,7 +2382,12 @@ export default function DiscoverScreen() {
             resetCardState();
             return;
           }
-          if (!result.decisionApplied) {
+          const shouldAdvanceQueue =
+            result.decisionApplied ||
+            ((result.decisionRejectedReason === "same_state_existing_decision" ||
+              result.decisionRejectedReason === "duplicate_request_id") &&
+              Boolean(result.replacementProfile));
+          if (!shouldAdvanceQueue) {
             if (result.decisionRejectedReason === "cursor_stale") {
               setIsQueueLoading(true);
               debugDiscoveryWarn("swipe_hard_refresh_after_stale", {
@@ -2382,9 +2411,11 @@ export default function DiscoverScreen() {
           try {
             expectedResultQueue = getDiscoveryQueueIds(
               applyDecisionToQueue(
-                sourceProfiles.slice(0, 3),
+                sourceEntries.slice(0, 3),
                 decisionContext.targetProfileId,
                 result.replacementProfile
+                  ? buildDiscoveryQueueSlot(result.replacementProfile, "metadata")
+                  : null
               )
             );
             expectedRenderQueueRef.current = {
@@ -2469,7 +2500,7 @@ export default function DiscoverScreen() {
       settleCardVisualState,
       secondReady,
       secondProfile?.id,
-      sourceProfiles,
+      sourceEntries,
       trace,
     ]
   );
@@ -2751,45 +2782,47 @@ export default function DiscoverScreen() {
                     enabled={traceFocused}
                     trace={trace}
                   />
-                  <ExpoImage
-                    source={{ uri: secondProfile.images[0] }}
-                    recyclingKey={
-                      shouldUseStableSlotImageKeys ? "second-slot" : secondImageKey
-                    }
-                    style={[
-                      styles.cardImage,
-                      !secondSlot.primaryReady && styles.cardImagePending,
-                    ]}
-                    contentFit="cover"
-                    cachePolicy="memory-disk"
-                    transition={0}
-                    onLoadStart={() => {
-                      trace("image_load_start", {
-                        slot: "second",
-                        profileId: secondProfile.id,
-                        imageKey: secondImageKey,
-                        uri: secondProfile.images[0],
-                      });
-                    }}
-                    onLoadEnd={() => {
-                      trace("image_load_end", {
-                        slot: "second",
-                        profileId: secondProfile.id,
-                        imageKey: secondImageKey,
-                        uri: secondProfile.images[0],
-                      });
-                      markSlotReady("second", secondProfile.id);
-                    }}
-                    onError={() => {
-                      trace("image_load_error", {
-                        slot: "second",
-                        profileId: secondProfile.id,
-                        imageKey: secondImageKey,
-                        uri: secondProfile.images[0],
-                      });
-                      markSlotReady("second", secondProfile.id);
-                    }}
-                  />
+                  {secondImageUri ? (
+                    <ExpoImage
+                      source={{ uri: secondImageUri }}
+                      recyclingKey={
+                        shouldUseStableSlotImageKeys ? "second-slot" : secondImageKey
+                      }
+                      style={[
+                        styles.cardImage,
+                        !secondSlot.primaryReady && styles.cardImagePending,
+                      ]}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={0}
+                      onLoadStart={() => {
+                        trace("image_load_start", {
+                          slot: "second",
+                          profileId: secondProfile.id,
+                          imageKey: secondImageKey,
+                          uri: secondImageUri,
+                        });
+                      }}
+                      onLoadEnd={() => {
+                        trace("image_load_end", {
+                          slot: "second",
+                          profileId: secondProfile.id,
+                          imageKey: secondImageKey,
+                          uri: secondImageUri,
+                        });
+                        markSlotReady("second", secondProfile.id);
+                      }}
+                      onError={() => {
+                        trace("image_load_error", {
+                          slot: "second",
+                          profileId: secondProfile.id,
+                          imageKey: secondImageKey,
+                          uri: secondImageUri,
+                        });
+                        markSlotReady("second", secondProfile.id);
+                      }}
+                    />
+                  ) : null}
                 </>
               ) : null}
             </Animated.View>
