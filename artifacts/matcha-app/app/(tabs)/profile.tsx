@@ -77,7 +77,6 @@ import {
   saveProfilePhotoLocally,
 } from "@/utils/profilePhotos";
 import type { ProfileEditableField } from "@/context/AppContext";
-import { debugLog } from "@/utils/debug";
 
 function SummaryField({
   label,
@@ -468,10 +467,6 @@ export default function ProfileScreen() {
       ethnicity: normalizeEthnicity(draftProfile.ethnicity),
       interests: draftProfile.interests,
     };
-
-    debugLog("[profile-save] tapped", {
-      fields: Object.keys(patch),
-    });
     const ok = await saveProfileChanges(patch);
     setSaveStatus(ok ? "saved" : "error");
     if (ok) {
@@ -583,29 +578,6 @@ export default function ProfileScreen() {
             ) : null}
           </View>
         </View>
-
-        {__DEV__ ? (
-          <View style={styles.debugCard} testID="profile-photo-debug">
-            <Text style={styles.debugTitle}>
-              {t("Inspector de fotos", "Photo inspector")}
-            </Text>
-            <Text style={styles.debugLine} testID="profile-primary-photo-debug">
-              {`primary profileImageId=${primaryProfilePhoto?.profileImageId ?? "null"} mediaAssetId=${primaryProfilePhoto?.mediaAssetId ?? "null"} sortOrder=${primaryProfilePhoto?.sortOrder ?? "null"} status=${primaryProfilePhoto?.status ?? "null"} source=${getProfilePhotoSource(primaryProfilePhoto)}`}
-            </Text>
-            {normalizedPhotos.length ? (
-              normalizedPhotos.map((photo) => (
-                <Text
-                  key={`profile-debug-${photo.sortOrder}-${photo.profileImageId ?? "none"}-${photo.mediaAssetId ?? "none"}`}
-                  style={styles.debugLine}
-                >
-                  {`slot=${photo.sortOrder} profileImageId=${photo.profileImageId ?? "null"} mediaAssetId=${photo.mediaAssetId ?? "null"} status=${photo.status} source=${photo.source} remoteUrl=${photo.remoteUrl || "null"} localUri=${photo.localUri || "null"}`}
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.debugLine}>{t("Sin fotos", "No photos")}</Text>
-            )}
-          </View>
-        ) : null}
 
         <View style={styles.section}>
           <View style={styles.sectionHeading}>
@@ -1060,26 +1032,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     fontSize: 12,
     color: Colors.primaryLight,
-  },
-  debugCard: {
-    marginTop: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: "rgba(111,168,255,0.22)",
-    backgroundColor: "rgba(111,168,255,0.08)",
-    padding: 14,
-    gap: 6,
-  },
-  debugTitle: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 13,
-    color: Colors.info,
-  },
-  debugLine: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 12,
-    lineHeight: 17,
-    color: Colors.textSecondary,
   },
   section: {
     marginTop: 26,

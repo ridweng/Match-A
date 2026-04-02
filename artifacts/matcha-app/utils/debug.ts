@@ -17,9 +17,8 @@ function parseFlag(value: string, fallback = false) {
 }
 
 export const debugEnabled = parseFlag(rawDevelopmentFlag);
-export const discoveryDebugEnabled = parseFlag(rawDiscoveryDebugFlag, debugEnabled);
-export const discoveryVerboseDebugEnabled =
-  discoveryDebugEnabled && parseFlag(rawDiscoveryVerboseFlag, false);
+export const discoveryDebugEnabled = false;
+export const discoveryVerboseDebugEnabled = false;
 
 export function debugLog(...args: unknown[]) {
   if (!debugEnabled) {

@@ -14,7 +14,6 @@ import {
   PanResponder,
   Platform,
   Pressable,
-  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -62,7 +61,9 @@ import {
 import {
   applyDecisionToQueue,
   assertDiscoveryQueueInvariants,
+  discoveryIdsEqual,
   getDiscoveryQueueIds,
+  normalizeDiscoveryProfileId,
 } from "@/utils/discoveryQueue";
 import {
   debugDiscoveryLog,
@@ -78,6 +79,7 @@ import type {
   TherianMode,
 } from "@/services/auth";
 
+const SWIPE_OUT_DURATION = 280;
 const SWIPE_THRESHOLD = 80;
 const SWIPE_FEEDBACK_DISTANCE = 150;
 const SWIPE_FEEDBACK_BUTTON_DURATION = 210;
@@ -662,7 +664,6 @@ export default function DiscoverScreen() {
     refreshProfileLocation,
     refreshDiscoveryCandidates,
     saveDiscoveryFilters,
-    armDiscoveryCursorStaleSimulation,
   } = useApp();
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
   const defaultFilters = useMemo<DiscoveryFilters>(
@@ -765,6 +766,18 @@ export default function DiscoverScreen() {
       }
     })();
   }, [pathname, refreshProfileLocation]);
+
+  useEffect(() => {
+    if (!pathname.endsWith("/discover") || !hasAccessToken) {
+      return;
+    }
+    if (discoveryFeed.profiles.length === 0) {
+      setIsQueueLoading(true);
+      void refreshDiscoveryCandidates().finally(() => {
+        setIsQueueLoading(false);
+      });
+    }
+  }, [pathname, hasAccessToken]);
 
   const retryLocationPromptFlow = useCallback(
     async (origin: "prompt_button" | "app_foreground") => {
@@ -982,10 +995,7 @@ export default function DiscoverScreen() {
   const isOffline = !isOnline;
 
   const feedProfiles = discoveryFeed.profiles ?? [];
-  const sourceProfiles = useMemo(
-    () => feedProfiles.slice(0, DISCOVERY_PAGE_SIZE),
-    [feedProfiles]
-  );
+  const sourceProfiles = useMemo(() => feedProfiles, [feedProfiles]);
   const filteredProfiles = useMemo(() => sourceProfiles, [sourceProfiles]);
   const supply = discoveryFeed.supply;
   const eligibleCount = Number(supply?.eligibleCount) || 0;
@@ -1008,13 +1018,16 @@ export default function DiscoverScreen() {
     [discoveryFeed.profiles]
   );
   const renderedQueueIds = useMemo(
-    () => [frontProfile?.id ?? null, secondProfile?.id ?? null, thirdProfile?.id ?? null],
+    () => [
+      normalizeDiscoveryProfileId(frontProfile?.id ?? null),
+      normalizeDiscoveryProfileId(secondProfile?.id ?? null),
+      normalizeDiscoveryProfileId(thirdProfile?.id ?? null),
+    ],
     [frontProfile?.id, secondProfile?.id, thirdProfile?.id]
   );
   const logicalActiveProfileId = logicalQueueIds[0] ?? null;
   const secondReady = secondProfile ? secondSlot.primaryReady : true;
   const hasPendingDecision = discoveryQueueRuntime.pendingDecision !== null;
-  const activePendingDecisionId = discoveryQueueRuntime.pendingDecision?.targetProfileId ?? null;
   const runtimeInvariantViolation = discoveryQueueRuntime.invariantViolation;
   const effectiveQueueInvariantViolation =
     queueInvariantViolation ?? runtimeInvariantViolation ?? null;
@@ -1062,9 +1075,8 @@ export default function DiscoverScreen() {
     !isQueueLoading &&
     discoveryQueueRuntime.status === "idle" &&
     !hasPendingDecision &&
-    !effectiveQueueInvariantViolation &&
     Boolean(frontProfile) &&
-    logicalActiveProfileId === (frontProfile?.id ?? null);
+    discoveryIdsEqual(logicalActiveProfileId, frontProfile?.id ?? null);
   const logQueueTrace = useCallback(
     (
       payload: Omit<
@@ -1133,79 +1145,6 @@ export default function DiscoverScreen() {
     });
     return map;
   }, [feedProfiles, lastLikedProfile]);
-  const debugQueueLines = useMemo(
-    () => {
-      if (!__DEV__) {
-        return [];
-      }
-      const traceBuffer = discoveryQueueRuntime.traceBuffer;
-      const lastTap =
-        [...traceBuffer].reverse().find((entry) => entry.event === "decision_tap") ?? null;
-      const lastRequestBody =
-        [...traceBuffer]
-          .reverse()
-          .find((entry) => entry.event === "queue_decision_request_body") ?? null;
-      const lastNetworkError =
-        [...traceBuffer]
-          .reverse()
-          .find(
-            (entry) =>
-              entry.event === "queue_network_error" ||
-              entry.event === "queue_decision_timeout"
-          ) ?? null;
-      const lastResponse =
-        [...traceBuffer]
-          .reverse()
-          .find(
-            (entry) =>
-              entry.event === "queue_decision_response_raw" ||
-              entry.event === "queue_response_ignored"
-          ) ?? null;
-      const lastBlocked =
-        [...traceBuffer].reverse().find((entry) => entry.event === "queue_action_blocked") ??
-        null;
-      return [
-            `policyVersion=${discoveryFeed.policyVersion || "null"} queueVersion=${discoveryFeed.queueVersion ?? "null"}`,
-            `logicalQueue=[${logicalQueueIds.join(", ")}] renderedQueue=[${renderedQueueIds.map((id) => id ?? "null").join(", ")}]`,
-            `logicalActive=${logicalActiveProfileId ?? "null"} renderedActive=${renderedQueueIds[0] ?? "null"} canAct=${canAct ? "true" : "false"}`,
-            `status=${discoveryQueueRuntime.status} pendingDecision=${activePendingDecisionId ?? "null"} traceSeq=${discoveryQueueRuntime.traceSeq}`,
-            `hasAccessToken=${hasAccessToken ? "true" : "false"} authStatus=${authStatus} isOffline=${isOffline ? "true" : "false"} isDeckAnimating=${isDeckAnimating ? "true" : "false"} hasPendingDecision=${hasPendingDecision ? "true" : "false"}`,
-            `lastRequestId=${discoveryQueueRuntime.lastRequestId ?? "null"} lastReplacement=${discoveryQueueRuntime.lastReplacementProfileId ?? "null"} rejectedReason=${discoveryQueueRuntime.lastDecisionRejectedReason ?? "null"}`,
-            `lastTap=${lastTap ? `${lastTap.action ?? "null"}:${lastTap.targetProfileId ?? "null"}:${lastTap.tapSource ?? "null"}` : "null"}`,
-            `lastBlockReason=${lastBlocked?.decisionRejectedReason ?? "null"}`,
-            `lastRequestBody=${lastRequestBody ? `${lastRequestBody.action ?? "null"}:${lastRequestBody.targetProfileId ?? "null"}:qv=${lastRequestBody.queueVersion ?? "null"}` : "null"}`,
-            `lastNetworkError=${lastNetworkError ? `${lastNetworkError.decisionRejectedReason ?? "null"}:${lastNetworkError.errorCode ?? "null"}` : "null"}`,
-            `lastResponse=${lastResponse ? `${lastResponse.requestId ?? "null"}:${lastResponse.action ?? "null"}:${lastResponse.targetProfileId ?? "null"}:${lastResponse.decisionRejectedReason ?? "null"}:${lastResponse.replacementProfileId ?? "null"}` : "null"}`,
-            `eligibleRealCount=${discoveryFeed.supply?.eligibleRealCount ?? "null"} eligibleDummyCount=${discoveryFeed.supply?.eligibleDummyCount ?? "null"}`,
-            `returnedRealCount=${discoveryFeed.supply?.returnedRealCount ?? "null"} returnedDummyCount=${discoveryFeed.supply?.returnedDummyCount ?? "null"}`,
-            `dominantExclusionReason=${discoveryFeed.supply?.dominantExclusionReason ?? "null"} exhaustedReason=${discoveryFeed.supply?.exhaustedReason ?? "null"}`,
-            `queueInvariantViolation=${effectiveQueueInvariantViolation ?? "null"}`,
-          ];
-    },
-    [
-      activePendingDecisionId,
-      authStatus,
-      canAct,
-      discoveryFeed.policyVersion,
-      discoveryFeed.queueVersion,
-      discoveryFeed.supply,
-      discoveryQueueRuntime.traceBuffer,
-      discoveryQueueRuntime.lastDecisionRejectedReason,
-      discoveryQueueRuntime.lastReplacementProfileId,
-      discoveryQueueRuntime.lastRequestId,
-      discoveryQueueRuntime.status,
-      discoveryQueueRuntime.traceSeq,
-      effectiveQueueInvariantViolation,
-      hasAccessToken,
-      hasPendingDecision,
-      isDeckAnimating,
-      isOffline,
-      logicalActiveProfileId,
-      logicalQueueIds,
-      renderedQueueIds,
-    ]
-  );
-
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const bottomPad = insets.bottom + (Platform.OS === "web" ? 34 : 0);
   const { bottomObstructionHeight: filterBottomObstruction } = useBottomObstruction({
@@ -1408,12 +1347,12 @@ export default function DiscoverScreen() {
       return;
     }
 
-    if (!logicalQueueIds.length || !renderedQueueIds[0]) {
+    if (!logicalQueueIds.length || renderedQueueIds[0] == null) {
       setQueueInvariantViolation(null);
       return;
     }
 
-    if (logicalQueueIds[0] !== renderedQueueIds[0]) {
+    if (!discoveryIdsEqual(logicalQueueIds[0], renderedQueueIds[0])) {
       const message = `Rendered head mismatch: logical=${logicalQueueIds[0]} rendered=${renderedQueueIds[0]}`;
       setQueueInvariantViolation(message);
       logQueueTrace({
@@ -1443,7 +1382,10 @@ export default function DiscoverScreen() {
 
     const renderedHead = renderedQueueIds[0] ?? null;
     const expectedHead = expected.resultQueue[0] ?? null;
-    if (renderedHead !== expectedHead) {
+    const renderCommittedMatches =
+      (renderedHead === null && expectedHead === null) ||
+      discoveryIdsEqual(renderedHead, expectedHead);
+    if (!renderCommittedMatches) {
       const message = `Next committed render mismatch: expected ${expectedHead ?? "none"}, got ${renderedHead ?? "none"}`;
       setQueueInvariantViolation(message);
       logQueueTrace({
@@ -1616,6 +1558,11 @@ export default function DiscoverScreen() {
   }, [activeFilters]);
 
   React.useEffect(() => {
+    if (isDeckAnimating) {
+      deferredDeckRebuildRef.current = true;
+      return;
+    }
+
     trace("deck_rebuild_requested", {
       sourceProfilesLength: sourceProfiles.length,
       loadedCount,
@@ -1661,6 +1608,7 @@ export default function DiscoverScreen() {
   }, [
     deckProgress,
     flipAnim,
+    isDeckAnimating,
     loadedCount,
     position,
     swipeFeedbackX,
@@ -2137,42 +2085,30 @@ export default function DiscoverScreen() {
     });
   }, [refreshDiscoveryCandidates, resetCardState]);
 
-  const handleCopyQueueTrace = useCallback(() => {
-    const traceText = discoveryQueueRuntime.traceBuffer
-      .map((entry) => JSON.stringify(entry))
-      .join("\n");
-    if (!traceText) {
-      return;
-    }
-
-    void (async () => {
-      if (
-        IS_WEB &&
-        typeof navigator !== "undefined" &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.writeText === "function"
-      ) {
-        await navigator.clipboard.writeText(traceText);
-        return;
-      }
-
-      await Share.share({
-        message: traceText,
-      });
-    })().catch(() => {});
-  }, [discoveryQueueRuntime.traceBuffer]);
-
   const animateButtonSwipeFeedback = useCallback(
     (direction: SwipeDirection, onComplete: () => void) => {
-      const target = direction === "right" ? SWIPE_FEEDBACK_DISTANCE : -SWIPE_FEEDBACK_DISTANCE;
+      const feedbackTarget =
+        direction === "right" ? SWIPE_FEEDBACK_DISTANCE : -SWIPE_FEEDBACK_DISTANCE;
+      const flyTarget = direction === "right" ? width * 1.5 : -width * 1.5;
+
       swipeFeedbackX.setValue(0);
-      Animated.sequence([
+
+      Animated.parallel([
         Animated.timing(swipeFeedbackX, {
-          toValue: target,
+          toValue: feedbackTarget,
           duration: SWIPE_FEEDBACK_BUTTON_DURATION,
           useNativeDriver: false,
         }),
-        Animated.delay(SWIPE_FEEDBACK_COMMIT_HOLD_DURATION),
+        Animated.timing(position, {
+          toValue: { x: flyTarget, y: 0 },
+          duration: SWIPE_FEEDBACK_BUTTON_DURATION + SWIPE_FEEDBACK_COMMIT_HOLD_DURATION,
+          useNativeDriver: false,
+        }),
+        Animated.timing(deckProgress, {
+          toValue: 1,
+          duration: SWIPE_FEEDBACK_BUTTON_DURATION + SWIPE_FEEDBACK_COMMIT_HOLD_DURATION,
+          useNativeDriver: false,
+        }),
       ]).start(({ finished }) => {
         if (!finished) {
           resetCardState();
@@ -2181,12 +2117,25 @@ export default function DiscoverScreen() {
         onComplete();
       });
     },
-    [resetCardState, swipeFeedbackX]
+    [deckProgress, position, resetCardState, swipeFeedbackX, width],
   );
-
   const holdGestureSwipeFeedback = useCallback(
     (onComplete: () => void) => {
-      Animated.delay(SWIPE_FEEDBACK_COMMIT_HOLD_DURATION).start(({ finished }) => {
+      const direction = swipeDirectionRef.current;
+      const flyTarget = direction === "right" ? width * 1.5 : -width * 1.5;
+
+      Animated.parallel([
+        Animated.timing(position, {
+          toValue: { x: flyTarget, y: 0 },
+          duration: SWIPE_OUT_DURATION,
+          useNativeDriver: false,
+        }),
+        Animated.timing(deckProgress, {
+          toValue: 1,
+          duration: SWIPE_OUT_DURATION,
+          useNativeDriver: false,
+        }),
+      ]).start(({ finished }) => {
         if (!finished) {
           resetCardState();
           return;
@@ -2194,65 +2143,158 @@ export default function DiscoverScreen() {
         onComplete();
       });
     },
-    [resetCardState]
+    [deckProgress, position, resetCardState, width],
   );
 
   const commitDiscoverySwipe = useCallback(
     (direction: SwipeDirection, origin: SwipeCommitOrigin = "button") => {
+      const action: "like" | "pass" = direction === "right" ? "like" : "pass";
+      const renderedFrontId = normalizeDiscoveryProfileId(frontProfile?.id ?? null);
+      const targetProfileId = logicalActiveProfileId ?? renderedFrontId ?? null;
       logQueueTrace({
         event: "decision_tap",
         requestId: null,
-        action: direction === "right" ? "like" : "pass",
-        targetProfileId: frontProfile?.id ?? null,
+        action,
+        targetProfileId,
         logicalHeadId: logicalActiveProfileId,
-        renderedFrontId: frontProfile?.id ?? null,
+        renderedFrontId,
         tapSource: origin,
         hasAccessToken,
+        authStatus,
         isOffline,
         isDeckAnimating,
         hasPendingDecision,
         source: "render",
       });
-      if (!frontProfile || isDeckAnimating || hasPendingDecision || isOffline || !canAct) {
-        const message =
-          frontProfile && logicalActiveProfileId !== frontProfile.id
-            ? `Action blocked: logical head ${logicalActiveProfileId ?? "none"} does not match rendered front ${frontProfile.id}`
-            : "Action blocked by queue runtime";
-        if (__DEV__ && frontProfile && logicalActiveProfileId !== frontProfile.id) {
+      if (!frontProfile) {
+        logQueueTrace({
+          event: "queue_action_blocked",
+          requestId: null,
+          action,
+          targetProfileId: null,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId: null,
+          decisionRejectedReason: "missing_front_profile",
+          hasAccessToken,
+          authStatus,
+          isOffline,
+          isDeckAnimating,
+          hasPendingDecision,
+          note: "Action blocked: no rendered front profile",
+          source: "render",
+        });
+        return false;
+      }
+      if (isDeckAnimating) {
+        logQueueTrace({
+          event: "queue_action_blocked",
+          requestId: discoveryQueueRuntime.lastRequestId,
+          action,
+          targetProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
+          decisionRejectedReason: "deck_animating",
+          hasAccessToken,
+          authStatus,
+          isOffline,
+          isDeckAnimating: true,
+          hasPendingDecision,
+          note: "Action blocked: deck animation in progress",
+          source: "render",
+        });
+        return false;
+      }
+      if (hasPendingDecision) {
+        logQueueTrace({
+          event: "queue_action_blocked",
+          requestId: discoveryQueueRuntime.lastRequestId,
+          action,
+          targetProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
+          decisionRejectedReason: "pending_decision",
+          hasAccessToken,
+          authStatus,
+          isOffline,
+          isDeckAnimating,
+          hasPendingDecision: true,
+          note: "Action blocked: pending decision already in flight",
+          source: "render",
+        });
+        return false;
+      }
+      if (isOffline) {
+        logQueueTrace({
+          event: "queue_action_blocked",
+          requestId: discoveryQueueRuntime.lastRequestId,
+          action,
+          targetProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
+          decisionRejectedReason: "offline",
+          hasAccessToken,
+          authStatus,
+          isOffline: true,
+          isDeckAnimating,
+          hasPendingDecision,
+          note: "Action blocked: device is offline",
+          source: "render",
+        });
+        return false;
+      }
+      if (!canAct) {
+        const isRenderHeadMismatch = !discoveryIdsEqual(logicalActiveProfileId, frontProfile.id);
+        const message = isRenderHeadMismatch
+          ? `Action blocked: logical head ${logicalActiveProfileId ?? "none"} does not match rendered front ${renderedFrontId ?? "none"}`
+          : "Action blocked: queue runtime reported canAct=false";
+        if (__DEV__ && isRenderHeadMismatch) {
           setQueueInvariantViolation(message);
         }
         logQueueTrace({
           event: "queue_action_blocked",
           requestId: discoveryQueueRuntime.lastRequestId,
-          action: direction === "right" ? "like" : "pass",
-          targetProfileId: frontProfile?.id ?? null,
-          decisionRejectedReason:
-            frontProfile && logicalActiveProfileId !== frontProfile.id
-              ? "render_head_mismatch"
-              : "cannot_act",
+          action,
+          targetProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
+          decisionRejectedReason: isRenderHeadMismatch ? "render_head_mismatch" : "cannot_act",
+          hasAccessToken,
+          authStatus,
+          isOffline,
+          isDeckAnimating,
+          hasPendingDecision,
+          note: message,
+          source: "render",
+        });
+        return false;
+      }
+      if (logicalActiveProfileId === null || renderedFrontId === null) {
+        const message = "Action blocked: tap snapshot is missing a normalized front/head id";
+        setQueueInvariantViolation(message);
+        logQueueTrace({
+          event: "queue_action_blocked",
+          requestId: discoveryQueueRuntime.lastRequestId,
+          action,
+          targetProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
+          decisionRejectedReason: "malformed_snapshot",
+          hasAccessToken,
+          authStatus,
+          isOffline,
+          isDeckAnimating,
+          hasPendingDecision,
           note: message,
           source: "render",
         });
         return false;
       }
       if (!secondReady) {
-        logQueueTrace({
-          event: "queue_action_blocked",
-          requestId: null,
-          action: direction === "right" ? "like" : "pass",
-          targetProfileId: frontProfile.id,
-          decisionRejectedReason: "second_not_ready",
-          note: "Action blocked: second card not ready",
-          source: "render",
+        debugDiscoveryWarn("second_card_not_ready_bypassed", {
+          targetProfileId: logicalActiveProfileId,
+          logicalHeadId: logicalActiveProfileId,
+          renderedFrontId,
         });
-        swipeDirectionRef.current = direction;
-        trace("swipe_blocked", {
-          swipeDirection: direction,
-          reason: "second_not_ready",
-        });
-        resetPosition();
-        setSwipeState("idle");
-        return false;
       }
 
       swipeDirectionRef.current = direction;
@@ -2262,10 +2304,24 @@ export default function DiscoverScreen() {
         secondId: secondProfile?.id ?? null,
       });
       const profile = frontProfile;
-      const requestId = createTraceId(
-        `${direction === "right" ? "discovery_like" : "discovery_pass"}_${profile.id}`
-      );
+      const requestId = createTraceId(`discovery_${action}_${logicalActiveProfileId}`);
       const requestDecision = direction === "right" ? likeProfile : passProfile;
+      const queueVersion =
+        Number.isFinite(Number(discoveryFeed.queueVersion)) &&
+        Number(discoveryFeed.queueVersion) > 0
+          ? Number(discoveryFeed.queueVersion)
+          : null;
+      const decisionContext = {
+        requestId,
+        action,
+        targetProfileId: logicalActiveProfileId,
+        expectedHeadId: logicalActiveProfileId,
+        visibleProfileIds: logicalQueueIds,
+        queueVersion,
+        policyVersion: discoveryFeed.policyVersion ?? null,
+        renderedFrontId,
+        tapSource: origin,
+      };
       setIsDeckAnimating(true);
       Haptics.impactAsync(
         direction === "right"
@@ -2277,9 +2333,9 @@ export default function DiscoverScreen() {
         debugDiscoveryLog("swipe_commit", {
           requestId,
           direction,
-          targetProfileId: profile.id,
+          targetProfileId: decisionContext.targetProfileId,
           screenSessionId: screenSessionIdRef.current,
-          pendingDecisionProfileId: profile.id,
+          pendingDecisionProfileId: decisionContext.targetProfileId,
         });
         trace("swipe_animation_end", {
           swipeDirection: direction,
@@ -2289,14 +2345,15 @@ export default function DiscoverScreen() {
           let expectedResultQueue: Array<string | number> | null = null;
           const result = await requestDecision(profile, {
             requestId,
-            renderedFrontId: profile.id,
+            renderedFrontId,
             tapSource: origin,
+            decisionContext,
           });
           if (!result) {
             debugDiscoveryWarn("swipe_reset_after_no_response", {
               requestId,
               direction,
-              targetProfileId: profile.id,
+              targetProfileId: decisionContext.targetProfileId,
             });
             resetCardState();
             return;
@@ -2307,7 +2364,7 @@ export default function DiscoverScreen() {
               debugDiscoveryWarn("swipe_hard_refresh_after_stale", {
                 requestId,
                 direction,
-                targetProfileId: profile.id,
+                targetProfileId: decisionContext.targetProfileId,
                 queueVersion: result.queueVersion ?? null,
               });
               resetCardState();
@@ -2316,7 +2373,7 @@ export default function DiscoverScreen() {
             debugDiscoveryLog("swipe_reset_after_noop", {
               requestId,
               direction,
-              targetProfileId: profile.id,
+              targetProfileId: decisionContext.targetProfileId,
               decisionRejectedReason: result.decisionRejectedReason ?? null,
             });
             resetCardState();
@@ -2324,7 +2381,11 @@ export default function DiscoverScreen() {
           }
           try {
             expectedResultQueue = getDiscoveryQueueIds(
-              applyDecisionToQueue(sourceProfiles.slice(0, 3), profile.id, result.replacementProfile)
+              applyDecisionToQueue(
+                sourceProfiles.slice(0, 3),
+                decisionContext.targetProfileId,
+                result.replacementProfile
+              )
             );
             expectedRenderQueueRef.current = {
               requestId,
@@ -2346,7 +2407,7 @@ export default function DiscoverScreen() {
 
           recordDiscoverySwipe(direction, {
             requestId,
-            targetProfileId: profile.id,
+            targetProfileId: decisionContext.targetProfileId,
           });
           if (direction === "right") {
             setLastLikedProfile(profile);
@@ -2354,7 +2415,7 @@ export default function DiscoverScreen() {
           debugDiscoveryLog("swipe_applied", {
             requestId,
             direction,
-            targetProfileId: profile.id,
+            targetProfileId: decisionContext.targetProfileId,
           });
 
           if (
@@ -2369,6 +2430,8 @@ export default function DiscoverScreen() {
               body: message.body,
             });
             setShowInsight(true);
+
+            settleCardVisualState();
           }
         })();
       };
@@ -2384,9 +2447,12 @@ export default function DiscoverScreen() {
       animateButtonSwipeFeedback,
       buildPopularUpdateMessage,
       canAct,
+      discoveryFeed.policyVersion,
+      discoveryFeed.queueVersion,
       discoveryQueueRuntime.lastRequestId,
       frontProfile,
       hasAccessToken,
+      authStatus,
       hasPendingDecision,
       holdGestureSwipeFeedback,
       isDeckAnimating,
@@ -2394,11 +2460,13 @@ export default function DiscoverScreen() {
       likeProfile,
       logQueueTrace,
       logicalActiveProfileId,
+      logicalQueueIds,
       passProfile,
       recordDiscoverySwipe,
       resetPosition,
       resetCardState,
       setQueueInvariantViolation,
+      settleCardVisualState,
       secondReady,
       secondProfile?.id,
       sourceProfiles,
@@ -2407,13 +2475,19 @@ export default function DiscoverScreen() {
   );
 
   const swipeRight = useCallback(
-    (origin: SwipeCommitOrigin = "button") => commitDiscoverySwipe("right", origin),
-    [commitDiscoverySwipe]
+    (origin: SwipeCommitOrigin = "button") => {
+      console.log("[swipe] swipeRight called", { canAct, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
+      return commitDiscoverySwipe("right", origin);
+    },
+    [commitDiscoverySwipe, canAct, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
   );
 
   const swipeLeft = useCallback(
-    (origin: SwipeCommitOrigin = "button") => commitDiscoverySwipe("left", origin),
-    [commitDiscoverySwipe]
+    (origin: SwipeCommitOrigin = "button") => {
+      console.log("[swipe] swipeLeft called", { canAct, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
+      return commitDiscoverySwipe("left", origin);
+    },
+    [commitDiscoverySwipe, canAct, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
   );
 
   const panResponder = useMemo(
@@ -3131,70 +3205,6 @@ export default function DiscoverScreen() {
             </Pressable>
           </View>
 
-          {__DEV__ ? (
-            <View style={styles.debugPanel} testID="discover-debug-panel">
-              <Text style={styles.debugPanelTitle}>
-                {t("Inspector de discovery", "Discovery inspector")}
-              </Text>
-              <Text style={styles.debugPanelLine} testID="discover-front-debug-line">
-                {`frontProfileId=${frontProfile.id} bucket=${frontProfile.debugMedia?.candidateBucket ?? "unknown"} mediaSource=${frontProfile.debugMedia?.mediaSource ?? "unknown"} imageCount=${frontProfile.debugMedia?.imageCount ?? currentImages.length}`}
-              </Text>
-              {frontProfile.debugMedia?.photos?.map((photo) => (
-                <Text
-                  key={`discover-debug-photo-${frontProfile.id}-${photo.sortOrder}-${photo.profileImageId ?? "none"}-${photo.mediaAssetId ?? "none"}`}
-                  style={styles.debugPanelLine}
-                >
-                  {`slot=${photo.sortOrder} profileImageId=${photo.profileImageId ?? "null"} mediaAssetId=${photo.mediaAssetId ?? "null"} source=${photo.source} remoteUrl=${photo.remoteUrl || "null"}`}
-                </Text>
-              ))}
-              {debugQueueLines.map((line) => (
-                <Text key={line} style={styles.debugPanelLine}>
-                  {line}
-                </Text>
-              ))}
-              {effectiveQueueInvariantViolation ? (
-                <Text style={[styles.debugPanelLine, styles.debugPanelWarning]}>
-                  {effectiveQueueInvariantViolation}
-                </Text>
-              ) : null}
-              <Pressable
-                onPress={handleCopyQueueTrace}
-                testID="discover-debug-copy-trace-button"
-                style={({ pressed }) => [
-                  styles.debugActionButton,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text style={styles.debugActionButtonText}>
-                  {t("Copiar trazas de cola", "Copy queue trace")}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={handleRetryDiscovery}
-                testID="discover-debug-hard-refresh-button"
-                style={({ pressed }) => [
-                  styles.debugActionButton,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text style={styles.debugActionButtonText}>
-                  {t("Recargar ventana", "Hard refresh")}
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={armDiscoveryCursorStaleSimulation}
-                testID="discover-debug-stale-cursor-button"
-                style={({ pressed }) => [
-                  styles.debugActionButton,
-                  pressed && { opacity: 0.82 },
-                ]}
-              >
-                <Text style={styles.debugActionButtonText}>
-                  {t("Simular cursor obsoleto", "Simulate stale cursor")}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
         </>
       ) : showQueueLoading ? (
         <View style={styles.cardStack}>

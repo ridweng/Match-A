@@ -14,7 +14,7 @@ import {
   type PopularAttributeInputByCategory,
   type PopularAttributeSnapshot,
 } from "@/utils/popularAttributes";
-import { debugLog, debugWarn } from "@/utils/debug";
+import { debugDiscoveryLog, debugLog, debugWarn } from "@/utils/debug";
 
 export type AuthProvider = "google" | "facebook" | "apple";
 export type AuthCallbackProvider = AuthProvider | "email";
@@ -623,7 +623,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   let response: Response;
   try {
     if (options.debugContext) {
-      debugLog(`[discovery-decision] ${options.debugContext.event}`, {
+      debugDiscoveryLog(options.debugContext.event, {
         ...options.debugContext.payload,
         path,
         method: options.method || "GET",
@@ -688,6 +688,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
+    console.log("[api] request error response", {
+      path,
+      status: response.status,
+      error: data.error,
+      message: data.message,
+      body: JSON.stringify(data).slice(0, 300),
+    });
     debugWarn("[api] request failed", {
       ...(options.debugContext?.payload || {}),
       path,
@@ -1122,15 +1129,48 @@ function buildDemoDiscoveryFeed(cursor?: string | null, limit = DEMO_DISCOVERY_D
   } satisfies DiscoveryFeedResponse;
 }
 
-function buildDemoDecisionMetadata() {
-  const feed = buildDemoDiscoveryFeed(null, DEMO_DISCOVERY_DEFAULT_LIMIT);
+function buildDemoDecisionMetadata(
+  targetProfileId: number,
+  visibleProfileIds: number[]
+) {
+  // After removing targetProfileId, these are still in the visible window
+  const remainingVisibleIds = new Set(
+    visibleProfileIds.filter((id) => id !== targetProfileId)
+  );
+  const decidedIds = new Set([
+    ...DEMO_DISCOVERY_PREFERENCES.likedProfileIds,
+    ...DEMO_DISCOVERY_PREFERENCES.passedProfileIds,
+  ]);
+  // Find the next profile that isn't already visible and isn't decided
+  const replacementProfile =
+    DEMO_DISCOVERY_PROFILES.find(
+      (p) => !decidedIds.has(p.id) && !remainingVisibleIds.has(p.id)
+    ) ?? null;
+  const unseenCount = DEMO_DISCOVERY_PROFILES.filter(
+    (p) => !decidedIds.has(p.id)
+  ).length;
+  const now = new Date().toISOString();
   return {
-    queueVersion: feed.queueVersion ?? null,
-    policyVersion: feed.policyVersion,
-    replacementProfile: null,
-    nextCursor: feed.nextCursor,
-    hasMore: feed.hasMore,
-    supply: feed.supply,
+    queueVersion: DEMO_DISCOVERY_QUEUE_VERSION,
+    policyVersion: "demo_policy_v1",
+    replacementProfile,
+    nextCursor: null,
+    hasMore: false,
+    supply: {
+      eligibleCount: DEMO_DISCOVERY_PROFILES.length,
+      unseenCount,
+      decidedCount: decidedIds.size,
+      exhausted: unseenCount === 0,
+      fetchedAt: now,
+      policyVersion: "demo_policy_v1",
+      eligibleRealCount: DEMO_DISCOVERY_PROFILES.length,
+      eligibleDummyCount: 0,
+      returnedRealCount: replacementProfile ? 1 : 0,
+      returnedDummyCount: 0,
+      dominantExclusionReason: null,
+      exhaustedReason: unseenCount === 0 ? "pool_exhausted_real_and_dummy" : null,
+      refillThreshold: 1,
+    },
   };
 }
 
@@ -1237,10 +1277,19 @@ export async function likeDiscoveryProfile(
     presentedPosition?: number | null;
   }
 ): Promise<DiscoveryLikeResponse> {
+  console.log("[api] sending decision to server", {
+    action: "like",
+    targetProfileId: payload.targetProfileId,
+    isDemoToken: isDemoToken(accessToken),
+    url: `${getBaseUrl()}/api/discovery/decision`,
+  });
   if (isDemoToken(accessToken)) {
     const existing = new Set(DEMO_DISCOVERY_PREFERENCES.likedProfileIds);
     if (existing.has(payload.targetProfileId)) {
-      const decisionMeta = buildDemoDecisionMetadata();
+      const decisionMeta = buildDemoDecisionMetadata(
+      payload.targetProfileId,
+      payload.visibleProfileIds ?? []
+    );
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
         requestId: payload.requestId ?? null,
@@ -1328,7 +1377,10 @@ export async function likeDiscoveryProfile(
         : DEMO_DISCOVERY_PREFERENCES.lastNotifiedPopularModeChangeAtLikeCount;
     DEMO_DISCOVERY_QUEUE_VERSION += 1;
 
-    const decisionMeta = buildDemoDecisionMetadata();
+    const decisionMeta = buildDemoDecisionMetadata(
+      payload.targetProfileId,
+      payload.visibleProfileIds ?? []
+    );
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
       requestId: payload.requestId ?? null,
@@ -1360,10 +1412,19 @@ export async function passDiscoveryProfile(
     presentedPosition?: number | null;
   }
 ): Promise<DiscoveryLikeResponse> {
+  console.log("[api] sending decision to server", {
+    action: "like",
+    targetProfileId: payload.targetProfileId,
+    isDemoToken: isDemoToken(accessToken),
+    url: `${getBaseUrl()}/api/discovery/decision`,
+  });
   if (isDemoToken(accessToken)) {
     const existing = new Set(DEMO_DISCOVERY_PREFERENCES.passedProfileIds);
     if (existing.has(payload.targetProfileId)) {
-      const decisionMeta = buildDemoDecisionMetadata();
+      const decisionMeta = buildDemoDecisionMetadata(
+        payload.targetProfileId,
+        payload.visibleProfileIds ?? []
+      );
       return {
         ...DEMO_DISCOVERY_PREFERENCES,
         requestId: payload.requestId ?? null,
@@ -1413,7 +1474,10 @@ export async function passDiscoveryProfile(
     };
     DEMO_DISCOVERY_QUEUE_VERSION += 1;
 
-    const decisionMeta = buildDemoDecisionMetadata();
+    const decisionMeta = buildDemoDecisionMetadata(
+      payload.targetProfileId,
+      payload.visibleProfileIds ?? []
+    );
     return {
       ...DEMO_DISCOVERY_PREFERENCES,
       requestId: payload.requestId ?? null,
