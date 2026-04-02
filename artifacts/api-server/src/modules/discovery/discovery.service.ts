@@ -409,12 +409,20 @@ export class DiscoveryService {
     });
   }
 
+  private normalizeProfileId(value: string | number | null | undefined): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const normalized = typeof value === "number" ? value : Number(value);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : null;
+  }
+
   private normalizeVisibleProfileIds(profileIds: number[] | null | undefined) {
     return Array.from(
       new Set(
         (Array.isArray(profileIds) ? profileIds : [])
-          .map((value) => Number(value))
-          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => this.normalizeProfileId(value))
+          .filter((value): value is number => value !== null)
           .slice(0, DISCOVERY_POLICY_V1.visibleDeckSize)
       )
     );
@@ -1641,7 +1649,8 @@ export class DiscoveryService {
             actorProfileId,
             currentFilters,
             normalizedCursor,
-            normalizedVisibleProfileIds
+            normalizedVisibleProfileIds,
+            targetProfile.id
           );
           const queueVersion = this.computePolicyQueueVersion(
             actorProfileId,
@@ -1733,7 +1742,8 @@ export class DiscoveryService {
           actorProfileId,
           currentFilters,
           normalizedCursor,
-          normalizedVisibleProfileIds
+          normalizedVisibleProfileIds,
+          targetProfile.id
         );
         const queueVersion = this.computePolicyQueueVersion(
           actorProfileId,
