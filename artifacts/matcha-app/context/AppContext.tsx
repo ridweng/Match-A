@@ -5183,14 +5183,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       try {
-        const result = await requestDecision(accessToken, {
+        const decisionPayload: Parameters<typeof requestDecision>[1] = {
           targetProfileId: decisionContext.targetProfileId,
           categoryValues: profile.categoryValues,
           requestId: decisionContext.requestId,
-          cursor: shouldSimulateCursorStale ? "debug_cursor_stale" : null,
           visibleProfileIds: decisionContext.visibleProfileIds,
           queueVersion: decisionContext.queueVersion,
-        });
+        };
+        
+        // Only include cursor if it has a value (don't send null)
+        if (shouldSimulateCursorStale) {
+          decisionPayload.cursor = "debug_cursor_stale";
+        }
+        
+        const result = await requestDecision(accessToken, decisionPayload);
         const latencyMs = Date.now() - startedAt;
         const responseRequestId = result.requestId ?? decisionContext.requestId;
         recordDiscoveryQueueTrace({

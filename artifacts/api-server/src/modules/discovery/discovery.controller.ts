@@ -29,7 +29,7 @@ const discoveryDecisionSchema = z.object({
     studies: z.string().trim().max(120).nullable().optional(),
   }),
   requestId: z.string().trim().max(128).optional(),
-  cursor: z.string().trim().max(512).optional(),
+  cursor: z.string().trim().max(512).nullable().optional(),
   visibleProfileIds: z.array(z.coerce.number().int().positive()).max(3).optional(),
   queueVersion: z.coerce.number().int().positive().optional(),
   presentedPosition: z.coerce.number().int().positive().optional(),
