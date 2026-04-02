@@ -1146,7 +1146,8 @@ export class DiscoveryService {
     actorProfileId: number,
     filters: DiscoveryFilters,
     cursor: string | null | undefined,
-    visibleProfileIds: number[]
+    visibleProfileIds: number[],
+    targetProfileId?: number | null
   ) {
     const filtersHash = this.buildFiltersHash(filters);
     const decodedCursor = decodeDiscoveryWindowCursor(cursor);
@@ -1169,6 +1170,12 @@ export class DiscoveryService {
     const orderedCandidates = policyResult.orderedCandidates;
     const startIndex = this.getOrderedCandidateStartIndex(orderedCandidates, decodedCursor);
     const excludedIds = new Set(this.normalizeVisibleProfileIds(visibleProfileIds));
+    
+    // CRITICAL: Always exclude the target profile that was just acted upon
+    if (targetProfileId != null && Number.isFinite(targetProfileId) && targetProfileId > 0) {
+      excludedIds.add(targetProfileId);
+    }
+    
     let replacementCandidate: OrderedCandidate | null = null;
     let replacementIndex = -1;
 
@@ -1180,6 +1187,22 @@ export class DiscoveryService {
       replacementCandidate = candidate;
       replacementIndex = index;
       break;
+    }
+    
+    // INVARIANT: Replacement must never be the same as the target
+    if (
+      replacementCandidate &&
+      targetProfileId != null &&
+      replacementCandidate.profile.id === targetProfileId
+    ) {
+      this.warnDecisionEvent("replacement_invariant_violation", {
+        actorProfileId,
+        targetProfileId,
+        replacementProfileId: replacementCandidate.profile.id,
+        message: "Replacement candidate equals target profile - forcing null",
+      });
+      replacementCandidate = null;
+      replacementIndex = -1;
     }
 
     const replacementProfiles = replacementCandidate
@@ -1861,7 +1884,8 @@ export class DiscoveryService {
         actorProfileId,
         currentFilters,
         normalizedCursor,
-        normalizedVisibleProfileIds
+        normalizedVisibleProfileIds,
+        targetProfile.id
       );
       const queueVersion = this.computePolicyQueueVersion(
         actorProfileId,
