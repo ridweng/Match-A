@@ -318,10 +318,37 @@ export class DiscoveryController {
   @Post("decision")
   @ApiOperation({ summary: "Apply one queued like or pass decision" })
   async decideProfile(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
+    const requestId = this.getRequestIdHeader(req);
+    const startedAt = Date.now();
+    
     try {
       const auth = await this.authService.authenticate(this.getAuthorizationHeader(req));
       const payload = discoveryQueuedDecisionSchema.parse(body);
-      return res.json(await this.discoveryService.decideProfile(auth.user.id, payload));
+      
+      console.log("[controller] [decision] request received", {
+        requestId,
+        userId: auth.user.id,
+        action: payload.action,
+        targetProfileId: payload.targetProfileId,
+        queueVersion: payload.queueVersion,
+        hasVisibleProfileIds: Boolean(payload.visibleProfileIds?.length),
+      });
+      
+      const result = await this.discoveryService.decideProfile(auth.user.id, payload);
+      const latencyMs = Date.now() - startedAt;
+      
+      console.log("[controller] [decision] response prepared", {
+        requestId,
+        userId: auth.user.id,
+        action: payload.action,
+        targetProfileId: payload.targetProfileId,
+        latencyMs,
+        decisionApplied: result.decisionApplied,
+        decisionRejectedReason: result.decisionRejectedReason,
+        replacementProfileId: result.replacementProfile?.id ?? null,
+      });
+      
+      return res.json(result);
     } catch (error) {
       if (error instanceof ZodError) {
         return res.status(HttpStatus.BAD_REQUEST).json({

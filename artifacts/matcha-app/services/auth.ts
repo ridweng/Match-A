@@ -621,6 +621,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     typeof AbortController !== "undefined" ? new AbortController() : null;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let response: Response;
+  const requestStartedAt = Date.now();
+  const isDiscoveryDecision = path === "/api/discovery/decision";
+  
   try {
     if (options.debugContext) {
       debugDiscoveryLog(options.debugContext.event, {
@@ -629,6 +632,18 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         method: options.method || "GET",
         hasAccessToken: Boolean(options.accessToken),
         timeoutMs,
+      });
+    }
+    
+    if (isDiscoveryDecision && options.method === "POST") {
+      const payload = options.body as any;
+      console.log("[api] [request] discovery decision request", {
+        path,
+        method: options.method,
+        action: payload?.action,
+        targetProfileId: payload?.targetProfileId,
+        requestId: payload?.requestId,
+        hasAccessToken: Boolean(options.accessToken),
       });
     }
     const fetchPromise = fetch(`${getBaseUrl()}${path}`, {
@@ -687,6 +702,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
+  const latencyMs = Date.now() - requestStartedAt;
+  
   if (!response.ok) {
     console.log("[api] request error response", {
       path,
@@ -695,6 +712,21 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       message: data.message,
       body: JSON.stringify(data).slice(0, 300),
     });
+    
+    if (isDiscoveryDecision) {
+      const payload = options.body as any;
+      console.log("[api] [response] discovery decision failed", {
+        path,
+        status: response.status,
+        latencyMs,
+        action: payload?.action,
+        targetProfileId: payload?.targetProfileId,
+        requestId: payload?.requestId,
+        error: data.error,
+        message: data.message,
+      });
+    }
+    
     debugWarn("[api] request failed", {
       ...(options.debugContext?.payload || {}),
       path,
@@ -704,6 +736,22 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     });
     throw new ApiError(data.error || "REQUEST_FAILED", data.message || data.error);
   }
+  
+  if (isDiscoveryDecision) {
+    const payload = options.body as any;
+    console.log("[api] [response] discovery decision success", {
+      path,
+      status: response.status,
+      latencyMs,
+      action: payload?.action,
+      targetProfileId: payload?.targetProfileId,
+      requestId: payload?.requestId,
+      decisionApplied: data.decisionApplied,
+      decisionRejectedReason: data.decisionRejectedReason,
+      replacementProfileId: data.replacementProfile?.id ?? null,
+    });
+  }
+  
   return data as T;
 }
 
@@ -1413,7 +1461,7 @@ export async function passDiscoveryProfile(
   }
 ): Promise<DiscoveryLikeResponse> {
   console.log("[api] sending decision to server", {
-    action: "like",
+    action: "pass",
     targetProfileId: payload.targetProfileId,
     isDemoToken: isDemoToken(accessToken),
     url: `${getBaseUrl()}/api/discovery/decision`,
