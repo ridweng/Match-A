@@ -47,6 +47,7 @@ import {
 } from "@/constants/profile-options";
 import {
   buildDiscoveryQueueSlot,
+  hasValidDiscoveryWindowCache,
   useApp,
   type DiscoveryQueueSlot,
 } from "@/context/AppContext";
@@ -778,17 +779,23 @@ export default function DiscoverScreen() {
     })();
   }, [pathname, refreshProfileLocation]);
 
+  // Authoritative 3-Card Window Rule:
+  // MUST call GET /window if we don't have exactly 3 valid, distinct cards cached.
+  // MAY skip GET /window ONLY if we have exactly 3 valid, distinct cards.
   useEffect(() => {
     if (!pathname.endsWith("/discover") || !hasAccessToken) {
       return;
     }
-    if (discoveryFeed.profiles.length === 0) {
+    
+    const hasValidCache = hasValidDiscoveryWindowCache(discoveryQueueRuntime);
+    
+    if (!hasValidCache) {
       setIsQueueLoading(true);
       void refreshDiscoveryCandidates().finally(() => {
         setIsQueueLoading(false);
       });
     }
-  }, [pathname, hasAccessToken]);
+  }, [pathname, hasAccessToken, discoveryQueueRuntime]);
 
   const retryLocationPromptFlow = useCallback(
     async (origin: "prompt_button" | "app_foreground") => {

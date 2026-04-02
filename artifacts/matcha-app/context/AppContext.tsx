@@ -1001,6 +1001,39 @@ function normalizeOnboardingStep(step: number | null | undefined) {
   return 1;
 }
 
+/**
+ * Check if we have a valid authoritative 3-card discovery window cached.
+ * If false, the app MUST call GET /window to get authoritative data.
+ * 
+ * Rule: Only skip GET /window if we have exactly 3 valid, distinct cards in memory.
+ */
+export function hasValidDiscoveryWindowCache(
+  queueRuntime: DiscoveryQueueRuntime
+): boolean {
+  const items = queueRuntime.queue.items;
+  
+  // Must have exactly 3 cards
+  if (!Array.isArray(items) || items.length !== 3) {
+    return false;
+  }
+  
+  // All items must have valid IDs and profiles
+  const ids = new Set<number>();
+  for (const item of items) {
+    if (!item || !item.profile || !item.id) {
+      return false;
+    }
+    
+    // Check for duplicates
+    if (ids.has(item.id)) {
+      return false;
+    }
+    ids.add(item.id);
+  }
+  
+  return true;
+}
+
 function resolvePostAuthRedirectRoute(input: {
   needsProfileCompletion: boolean;
   hasCompletedOnboarding: boolean;
