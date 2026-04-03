@@ -2836,13 +2836,15 @@ export default function DiscoverScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
-          <View style={styles.headerIconWrap}>
-            <ExpoImage
-              source={DISCOVERY_HEADER_ICON}
-              style={styles.headerIcon}
-              contentFit="contain"
-            />
-          </View>
+          {isOffline ? (
+            <View style={styles.headerIconWrap}>
+              <ExpoImage
+                source={DISCOVERY_HEADER_ICON}
+                style={styles.headerIcon}
+                contentFit="contain"
+              />
+            </View>
+          ) : null}
           <Pressable
             onPress={openFilters}
             disabled={isOffline}
