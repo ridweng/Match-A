@@ -2695,6 +2695,9 @@ export default function DiscoverScreen() {
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
+          if (!canAct) {
+            return false;
+          }
           const horizontalIntent =
             Math.abs(gesture.dx) > 12 &&
             Math.abs(gesture.dx) > Math.abs(gesture.dy);
@@ -2811,6 +2814,7 @@ export default function DiscoverScreen() {
         },
       }),
     [
+      canAct,
       getTraceSnapshot,
       isInfoVisible,
       resetPosition,
@@ -3377,14 +3381,19 @@ export default function DiscoverScreen() {
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
-                !canAct && styles.emptyCardButtonDisabled,
+                !canAct && styles.actionBtnDisabled,
+                isOffline && styles.actionBtnOffline,
                 {
-                  opacity: pressed ? 0.7 : 1,
+                  opacity: pressed && canAct ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
                 },
               ]}
             >
-              <Feather name="x" size={26} color={Colors.dislike} />
+              <Feather
+                name="x"
+                size={26}
+                color={canAct ? Colors.dislike : Colors.textMuted}
+              />
             </Pressable>
 
             <Pressable
@@ -3410,14 +3419,19 @@ export default function DiscoverScreen() {
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
-                !canAct && styles.emptyCardButtonDisabled,
+                !canAct && styles.actionBtnDisabled,
+                isOffline && styles.actionBtnOffline,
                 {
-                  opacity: pressed ? 0.7 : 1,
+                  opacity: pressed && canAct ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
                 },
               ]}
             >
-              <Feather name="heart" size={26} color={Colors.like} />
+              <Feather
+                name="heart"
+                size={26}
+                color={canAct ? Colors.like : Colors.textMuted}
+              />
             </Pressable>
           </View>
 
@@ -4793,6 +4807,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
+  },
+  actionBtnDisabled: {
+    backgroundColor: Colors.surface,
+    borderColor: Colors.border,
+  },
+  actionBtnOffline: {
+    opacity: 0.55,
   },
   dislikeBtn: {
     backgroundColor: Colors.backgroundCard,
