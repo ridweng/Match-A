@@ -110,6 +110,18 @@ type DiscoveryWindowOptions = {
   requestId?: string | null;
 };
 
+type DiscoveryDecisionPayload = {
+  targetProfilePublicId?: string;
+  targetProfileId?: number;
+  categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
+  requestId?: string | null;
+  cursor?: string | null;
+  visibleProfilePublicIds?: string[];
+  visibleProfileIds?: number[];
+  queueVersion?: number | null;
+  presentedPosition?: number | null;
+};
+
 type ActorStateRow = {
   queue_version: number | null;
   stream_version: number | null;
@@ -311,6 +323,139 @@ export class DiscoveryService {
       [profileId]
     );
     return result.rows[0] || null;
+  }
+
+  private async resolveTargetProfile(
+    client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+    payload: Pick<DiscoveryDecisionPayload, "targetProfilePublicId" | "targetProfileId">,
+    requestId?: string | null
+  ) {
+    const normalizedPublicId = String(payload.targetProfilePublicId || "").trim() || null;
+    const normalizedNumericId = this.normalizeProfileId(payload.targetProfileId);
+
+    this.logger.log(
+      `[discovery-identity] ${JSON.stringify({
+        event: "resolution_attempt",
+        requestId: requestId || null,
+        hasPublicId: Boolean(normalizedPublicId),
+        hasNumericId: normalizedNumericId !== null,
+        preferredMethod: normalizedPublicId ? "public_id" : "numeric_id",
+      })}`
+    );
+
+    if (normalizedPublicId) {
+      const result = await client.query<{ id: number; public_id: string }>(
+        `SELECT id, public_id
+         FROM core.profiles
+         WHERE public_id = $1
+         LIMIT 1`,
+        [normalizedPublicId]
+      );
+
+      const resolved = result.rows[0] || null;
+      if (!resolved) {
+        this.logger.warn(
+          `[discovery-identity] ${JSON.stringify({
+            event: "public_id_not_found",
+            requestId: requestId || null,
+            targetProfilePublicId: normalizedPublicId,
+          })}`
+        );
+        return null;
+      }
+
+      if (normalizedNumericId !== null && resolved.id !== normalizedNumericId) {
+        this.logger.error(
+          `[identity-drift] ${JSON.stringify({
+            requestId: requestId || null,
+            providedNumericId: normalizedNumericId,
+            resolvedNumericId: resolved.id,
+            targetProfilePublicId: resolved.public_id,
+          })}`
+        );
+      }
+
+      this.logger.log(
+        `[discovery-identity] ${JSON.stringify({
+          event: "resolved_by_public_id",
+          requestId: requestId || null,
+          targetProfileId: resolved.id,
+          targetProfilePublicId: resolved.public_id,
+        })}`
+      );
+
+      return resolved;
+    }
+
+    if (normalizedNumericId !== null) {
+      const resolved = await this.findTargetProfileById(client, normalizedNumericId);
+      if (!resolved) {
+        this.logger.warn(
+          `[discovery-identity] ${JSON.stringify({
+            event: "numeric_id_not_found",
+            requestId: requestId || null,
+            targetProfileId: normalizedNumericId,
+          })}`
+        );
+        return null;
+      }
+
+      this.logger.log(
+        `[discovery-identity] ${JSON.stringify({
+          event: "resolved_by_numeric_id",
+          requestId: requestId || null,
+          targetProfileId: resolved.id,
+          targetProfilePublicId: resolved.public_id,
+          deprecated: true,
+        })}`
+      );
+
+      return resolved;
+    }
+
+    this.logger.error(
+      `[discovery-identity] ${JSON.stringify({
+        event: "missing_target_identity",
+        requestId: requestId || null,
+      })}`
+    );
+
+    return null;
+  }
+
+  private async resolveVisibleProfileIds(
+    client: { query: <T = any>(queryText: string, values?: unknown[]) => Promise<{ rows: T[] }> },
+    payload: Pick<DiscoveryDecisionPayload, "visibleProfileIds" | "visibleProfilePublicIds">
+  ) {
+    const normalizedPublicIds = Array.from(
+      new Set(
+        (Array.isArray(payload.visibleProfilePublicIds) ? payload.visibleProfilePublicIds : [])
+          .map((value) => String(value || "").trim())
+          .filter((value) => value.length > 0)
+          .slice(0, DISCOVERY_POLICY_V1.visibleDeckSize)
+      )
+    );
+
+    if (!normalizedPublicIds.length) {
+      return this.normalizeVisibleProfileIds(payload.visibleProfileIds);
+    }
+
+    const result = await client.query<{ id: number; public_id: string }>(
+      `SELECT id, public_id
+       FROM core.profiles
+       WHERE public_id = ANY($1::text[])`,
+      [normalizedPublicIds]
+    );
+
+    const idByPublicId = new Map(
+      result.rows.map((row) => [String(row.public_id).trim(), Number(row.id)] as const)
+    );
+
+    return normalizedPublicIds
+      .map((publicId) => idByPublicId.get(publicId) ?? null)
+      .filter(
+        (value): value is number => value !== null && Number.isInteger(value) && value > 0
+      );
   }
 
   private computeAge(dateOfBirth: string | null) {
@@ -1475,45 +1620,22 @@ export class DiscoveryService {
 
   async likeProfile(
     userId: number,
-    payload: {
-      targetProfileId: number;
-      categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
-      requestId?: string | null;
-      cursor?: string | null;
-      visibleProfileIds?: number[];
-      queueVersion?: number | null;
-      presentedPosition?: number | null;
-    }
+    payload: DiscoveryDecisionPayload
   ) {
     return this.recordProfileDecision(userId, "like", payload);
   }
 
   async passProfile(
     userId: number,
-    payload: {
-      targetProfileId: number;
-      categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
-      requestId?: string | null;
-      cursor?: string | null;
-      visibleProfileIds?: number[];
-      queueVersion?: number | null;
-      presentedPosition?: number | null;
-    }
+    payload: DiscoveryDecisionPayload
   ) {
     return this.recordProfileDecision(userId, "pass", payload);
   }
 
   async decideProfile(
     userId: number,
-    payload: {
+    payload: DiscoveryDecisionPayload & {
       action: "like" | "pass";
-      targetProfileId: number;
-      categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
-      requestId?: string | null;
-      cursor?: string | null;
-      visibleProfileIds?: number[];
-      queueVersion?: number | null;
-      presentedPosition?: number | null;
     }
   ) {
     return this.recordProfileDecision(userId, payload.action, payload);
@@ -1522,15 +1644,7 @@ export class DiscoveryService {
   private async recordProfileDecision(
     userId: number,
     interactionType: "like" | "pass",
-    payload: {
-      targetProfileId: number;
-      categoryValues: Partial<Record<PopularAttributeCategory, string | null>>;
-      requestId?: string | null;
-      cursor?: string | null;
-      visibleProfileIds?: number[];
-      queueVersion?: number | null;
-      presentedPosition?: number | null;
-    }
+    payload: DiscoveryDecisionPayload
   ) {
     const actorProfileId = await this.findActorProfileId(userId);
     const client = await pool.connect();
@@ -1544,15 +1658,15 @@ export class DiscoveryService {
       const normalizedCategoryValues = normalizePopularAttributeInput(payload.categoryValues);
       const normalizedRequestId = String(payload.requestId || "").trim() || null;
       const normalizedCursor = String(payload.cursor || "").trim() || null;
-      const normalizedVisibleProfileIds = this.normalizeVisibleProfileIds(
-        payload.visibleProfileIds
-      );
-      const targetProfileId = Number(payload.targetProfileId);
+      const normalizedVisibleProfileIds = await this.resolveVisibleProfileIds(client, payload);
+      const providedTargetProfileId = this.normalizeProfileId(payload.targetProfileId);
+      const providedTargetProfilePublicId =
+        String(payload.targetProfilePublicId || "").trim() || null;
       const requestedQueueVersion =
         Number.isFinite(Number(payload.queueVersion)) && Number(payload.queueVersion) > 0
           ? Number(payload.queueVersion)
           : null;
-      const targetProfile = await this.findTargetProfileById(client, targetProfileId);
+      const targetProfile = await this.resolveTargetProfile(client, payload, normalizedRequestId);
       const currentFilters = await this.getStoredFiltersForActor(client, actorProfileId);
       const previousTotals = {
         totalLikes: previous.threshold?.totalLikes ?? previous.totalLikesCount ?? 0,
@@ -1564,7 +1678,8 @@ export class DiscoveryService {
         requestId: normalizedRequestId,
         userId,
         actorProfileId,
-        targetProfileId,
+        targetProfileId: providedTargetProfileId,
+        targetProfilePublicId: providedTargetProfilePublicId,
         interactionType,
         queueVersion: requestedQueueVersion,
         previousTotals,
@@ -1577,19 +1692,33 @@ export class DiscoveryService {
         visibleQueue: normalizedVisibleProfileIds,
         activeProfileId: normalizedVisibleProfileIds[0] ?? null,
         action: interactionType,
-        targetProfileId,
+        targetProfileId: providedTargetProfileId,
       });
 
-      if (!targetProfile?.id || targetProfile.id === actorProfileId) {
-        this.warnDecisionEvent("invalid_target", {
+      if (!targetProfile) {
+        this.warnDecisionEvent("invalid_target_not_found", {
           requestId: normalizedRequestId,
           userId,
           actorProfileId,
-          targetProfileId,
+          targetProfileId: providedTargetProfileId,
+          targetProfilePublicId: providedTargetProfilePublicId,
           interactionType,
           durationMs: Date.now() - startedAt,
         });
         throw new Error("DISCOVERY_TARGET_NOT_FOUND");
+      }
+
+      if (targetProfile.id === actorProfileId) {
+        this.warnDecisionEvent("invalid_target_is_self", {
+          requestId: normalizedRequestId,
+          userId,
+          actorProfileId,
+          targetProfileId: targetProfile.id,
+          targetProfilePublicId: targetProfile.public_id,
+          interactionType,
+          durationMs: Date.now() - startedAt,
+        });
+        throw new Error("DISCOVERY_CANNOT_DECIDE_ON_SELF");
       }
 
       const cursorInvalidationReason = this.getCursorInvalidationReason({
@@ -1712,6 +1841,7 @@ export class DiscoveryService {
             decisionApplied: false,
             decisionState: interactionType,
             targetProfileId: targetProfile.id,
+            targetProfilePublicId: targetProfile.public_id,
             decisionRejectedReason: "duplicate_request_id",
             changedCategories: [],
             shouldShowDiscoveryUpdate: false,
@@ -1803,6 +1933,7 @@ export class DiscoveryService {
           decisionApplied: false,
           decisionState: interactionType,
           targetProfileId: targetProfile.id,
+          targetProfilePublicId: targetProfile.public_id,
           decisionRejectedReason: "same_state_existing_decision",
           changedCategories: [],
           shouldShowDiscoveryUpdate: false,
@@ -1862,18 +1993,18 @@ export class DiscoveryService {
            SET status = 'consumed', updated_at = NOW()
            WHERE actor_profile_id = $1
              AND queue_version = $2
-             AND target_profile_id = $3
+             AND target_profile_public_id = $3
              AND status = 'reserved'`,
-          [actorProfileId, requestedQueueVersion, targetProfile.id]
+          [actorProfileId, requestedQueueVersion, targetProfile.public_id]
         );
       } else {
         await client.query(
           `UPDATE discovery.actor_queue
            SET status = 'consumed', updated_at = NOW()
            WHERE actor_profile_id = $1
-             AND target_profile_id = $2
+             AND target_profile_public_id = $2
              AND status = 'reserved'`,
-          [actorProfileId, targetProfile.id]
+          [actorProfileId, targetProfile.public_id]
         );
       }
       const goalsUnlock = await this.goalsService.syncGoalsUnlockState(
@@ -1985,6 +2116,7 @@ export class DiscoveryService {
         decisionApplied: true,
         decisionState: interactionType,
         targetProfileId: targetProfile.id,
+        targetProfilePublicId: targetProfile.public_id,
         decisionRejectedReason: null,
         changedCategories,
         shouldShowDiscoveryUpdate,
@@ -2006,7 +2138,8 @@ export class DiscoveryService {
         requestId: String(payload.requestId || "").trim() || null,
         userId,
         actorProfileId,
-        targetProfileId: Number(payload.targetProfileId),
+        targetProfileId: this.normalizeProfileId(payload.targetProfileId),
+        targetProfilePublicId: String(payload.targetProfilePublicId || "").trim() || null,
         interactionType,
         durationMs: Date.now() - startedAt,
         error: message,

@@ -314,11 +314,13 @@ export type DiscoveryFeedResponse = {
 
 export type DiscoveryDecisionRequestPayload = {
   targetProfileId: number;
+  targetProfilePublicId?: string;
   action: "like" | "pass";
   categoryValues?: PopularAttributeInputByCategory | null;
   requestId?: string;
   cursor?: string | null;
   visibleProfileIds?: number[];
+  visibleProfilePublicIds?: string[];
   queueVersion?: number | null;
   presentedPosition?: number | null;
 };
@@ -335,6 +337,7 @@ export type DiscoveryLikeResponse = DiscoveryPreferencesResponse & {
   decisionApplied: boolean;
   decisionState: "like" | "pass";
   targetProfileId: number;
+  targetProfilePublicId?: string;
   changedCategories: PopularAttributeChange[];
   shouldShowDiscoveryUpdate: boolean;
   queueVersion?: number | null;
@@ -1308,6 +1311,7 @@ export async function submitDiscoveryDecision(
         requestId: payload.requestId ?? null,
         action: payload.action,
         targetProfileId: payload.targetProfileId,
+        targetProfilePublicId: payload.targetProfilePublicId ?? null,
       },
     },
   });
@@ -1315,19 +1319,12 @@ export async function submitDiscoveryDecision(
 
 export async function likeDiscoveryProfile(
   accessToken: string,
-  payload: {
-    targetProfileId: number;
-    categoryValues?: PopularAttributeInputByCategory | null;
-    requestId?: string;
-    cursor?: string | null;
-    visibleProfileIds?: number[];
-    queueVersion?: number | null;
-    presentedPosition?: number | null;
-  }
+  payload: Omit<DiscoveryDecisionRequestPayload, "action">
 ): Promise<DiscoveryLikeResponse> {
   console.log("[api] sending decision to server", {
     action: "like",
     targetProfileId: payload.targetProfileId,
+    targetProfilePublicId: payload.targetProfilePublicId ?? null,
     isDemoToken: isDemoToken(accessToken),
     url: `${getBaseUrl()}/api/discovery/decision`,
   });
@@ -1344,6 +1341,10 @@ export async function likeDiscoveryProfile(
         decisionApplied: false,
         decisionState: "like",
         targetProfileId: payload.targetProfileId,
+        targetProfilePublicId:
+          payload.targetProfilePublicId ??
+          DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(payload.targetProfileId) ??
+          undefined,
         decisionRejectedReason: "same_state_existing_decision",
         changedCategories: [],
         shouldShowDiscoveryUpdate: false,
@@ -1435,6 +1436,10 @@ export async function likeDiscoveryProfile(
       decisionApplied: true,
       decisionState: "like",
       targetProfileId: payload.targetProfileId,
+      targetProfilePublicId:
+        payload.targetProfilePublicId ??
+        DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(payload.targetProfileId) ??
+        undefined,
       decisionRejectedReason: null,
       changedCategories,
       shouldShowDiscoveryUpdate,
@@ -1450,19 +1455,12 @@ export async function likeDiscoveryProfile(
 
 export async function passDiscoveryProfile(
   accessToken: string,
-  payload: {
-    targetProfileId: number;
-    categoryValues?: PopularAttributeInputByCategory | null;
-    requestId?: string;
-    cursor?: string | null;
-    visibleProfileIds?: number[];
-    queueVersion?: number | null;
-    presentedPosition?: number | null;
-  }
+  payload: Omit<DiscoveryDecisionRequestPayload, "action">
 ): Promise<DiscoveryLikeResponse> {
   console.log("[api] sending decision to server", {
     action: "pass",
     targetProfileId: payload.targetProfileId,
+    targetProfilePublicId: payload.targetProfilePublicId ?? null,
     isDemoToken: isDemoToken(accessToken),
     url: `${getBaseUrl()}/api/discovery/decision`,
   });
@@ -1479,6 +1477,10 @@ export async function passDiscoveryProfile(
         decisionApplied: false,
         decisionState: "pass",
         targetProfileId: payload.targetProfileId,
+        targetProfilePublicId:
+          payload.targetProfilePublicId ??
+          DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(payload.targetProfileId) ??
+          undefined,
         decisionRejectedReason: "same_state_existing_decision",
         changedCategories: [],
         shouldShowDiscoveryUpdate: false,
@@ -1532,6 +1534,10 @@ export async function passDiscoveryProfile(
       decisionApplied: true,
       decisionState: "pass",
       targetProfileId: payload.targetProfileId,
+      targetProfilePublicId:
+        payload.targetProfilePublicId ??
+        DEMO_DISCOVERY_PROFILE_KEY_BY_ID.get(payload.targetProfileId) ??
+        undefined,
       decisionRejectedReason: null,
       changedCategories: [],
       shouldShowDiscoveryUpdate: false,

@@ -649,11 +649,11 @@ type AppContextType = {
     updates: Partial<DiscoveryViewPreferences>
   ) => Promise<void>;
   likeProfile: (
-    profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+    profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
     options?: DiscoveryDecisionOptions
   ) => Promise<DiscoveryLikeResponse | null>;
   passProfile: (
-    profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+    profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
     options?: DiscoveryDecisionOptions
   ) => Promise<DiscoveryLikeResponse | null>;
   refreshDiscoveryCandidates: () => Promise<boolean>;
@@ -1058,6 +1058,30 @@ function createDiscoveryDecisionRequestId(
 
 function normalizeDiscoveryQueueVersion(value: number | null | undefined) {
   return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
+}
+
+function normalizeDiscoveryPublicId(value: string | null | undefined) {
+  const normalized = String(value || "").trim();
+  return normalized.length ? normalized : null;
+}
+
+function resolveVisibleProfilePublicIds(
+  profiles: DiscoveryFeedProfileResponse[],
+  visibleProfileIds: number[]
+) {
+  const publicIdByNumericId = new Map<number, string>();
+
+  profiles.forEach((profile) => {
+    const normalizedId = normalizeDiscoveryProfileId(profile.id);
+    const normalizedPublicId = normalizeDiscoveryPublicId(profile.publicId);
+    if (normalizedId !== null && normalizedPublicId) {
+      publicIdByNumericId.set(normalizedId, normalizedPublicId);
+    }
+  });
+
+  return visibleProfileIds
+    .map((profileId) => publicIdByNumericId.get(profileId) ?? null)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
 function validateDiscoveryDecisionContext(
@@ -4940,7 +4964,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (
       action: DiscoveryDecisionAction,
       requestDecision: DiscoveryDecisionRequester,
-      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => {
       console.log("[decision] submitDiscoveryDecision called", {
@@ -5130,6 +5154,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return null;
       }
       const decisionContext = validatedDecisionContext.value;
+      const targetProfilePublicId =
+        normalizeDiscoveryPublicId(profile.publicId) ??
+        normalizeDiscoveryPublicId(
+          discoveryFeedRef.current.profiles.find(
+            (candidate) =>
+              normalizeDiscoveryProfileId(candidate.id) === decisionContext.targetProfileId
+          )?.publicId
+        );
+      const visibleProfilePublicIds = resolveVisibleProfilePublicIds(
+        discoveryFeedRef.current.profiles,
+        decisionContext.visibleProfileIds
+      );
       const shouldSimulateCursorStale =
         __DEV__ && simulateNextDiscoveryCursorStaleRef.current;
       if (shouldSimulateCursorStale) {
@@ -5251,7 +5287,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         hasPendingDecision: Boolean(discoveryPendingDecisionRef.current),
         cursorPresent: shouldSimulateCursorStale,
         hasCategoryValues: Boolean(profile.categoryValues),
-        presentedPosition: null,
+          presentedPosition: 1,
         canAct: true,
         source: "decision",
       });
@@ -5280,10 +5316,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         const decisionPayload: Parameters<typeof requestDecision>[1] = {
           targetProfileId: decisionContext.targetProfileId,
+          ...(targetProfilePublicId
+            ? {
+                targetProfilePublicId,
+              }
+            : {}),
           categoryValues: profile.categoryValues,
           requestId: decisionContext.requestId,
           visibleProfileIds: decisionContext.visibleProfileIds,
+          ...(visibleProfilePublicIds.length
+            ? {
+                visibleProfilePublicIds,
+              }
+            : {}),
           queueVersion: decisionContext.queueVersion,
+          presentedPosition: 1,
         };
         
         // Only include cursor if it has a value (don't send null)
@@ -5642,7 +5689,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const likeProfile = useCallback(
     async (
-      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => submitDiscoveryDecision("like", likeDiscoveryProfile, profile, options),
     [submitDiscoveryDecision]
@@ -5650,7 +5697,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const passProfile = useCallback(
     async (
-      profile: Pick<DiscoveryFeedProfileResponse, "id" | "categoryValues">,
+      profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => submitDiscoveryDecision("pass", passDiscoveryProfile, profile, options),
     [submitDiscoveryDecision]
@@ -5727,11 +5774,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const refreshDiscoveryCandidates = useCallback(async () => {
     if (!accessToken) {
+      debugDiscoveryWarn("authoritative_window_skipped", {
+        reason: "no_access_token",
+      });
       return false;
     }
 
     try {
-      await refreshDiscoveryFeedState(accessToken);
+      debugDiscoveryLog("authoritative_window_fetch", {
+        reason: "refresh_candidates",
+        hasAccessToken: Boolean(accessToken),
+        isOnline: isOnlineRef.current,
+      });
+      await refreshDiscoveryFeedState(accessToken, {
+        reason: "refresh_candidates",
+      });
       return true;
     } catch {
       return false;
