@@ -6,8 +6,10 @@ export const runtimeConfig = {
   appName: env.APP_NAME,
   port: env.APP_PORT,
   nodeEnv: env.APP_ENV,
+  logLevel: env.APP_LOG_LEVEL,
   sessionSecret: env.AUTH_SESSION_SECRET,
   baseUrl: env.API_BASE_URL,
+  adminBaseUrl: env.ADMIN_BASE_URL || "",
   frontendBaseUrl: env.FRONTEND_BASE_URL,
   frontendRedirectUri: env.AUTH_FRONTEND_REDIRECT_URI,
   minimumAge: env.AUTH_MINIMUM_AGE,
@@ -21,6 +23,7 @@ export const runtimeConfig = {
     enabled: env.ADMIN_DASHBOARD_ENABLED,
     username: env.ADMIN_BASIC_AUTH_USERNAME,
     password: env.ADMIN_BASIC_AUTH_PASSWORD,
+    baseUrl: env.ADMIN_BASE_URL || "",
   },
   email: {
     enabled: env.SMTP_ENABLED,

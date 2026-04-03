@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import type { Request, Response } from "express";
 import type { OpenAPIObject } from "@nestjs/swagger";
+import type { LogLevel } from "@nestjs/common";
 import { loadApiEnv } from "./config/env";
 
 function isAdminAuthorized(authHeader: string | undefined, username: string, password: string) {
@@ -11,6 +12,58 @@ function isAdminAuthorized(authHeader: string | undefined, username: string, pas
   const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
   const [providedUser, providedPassword] = decoded.split(":");
   return providedUser === username && providedPassword === password;
+}
+
+type RuntimeLogLevel = "error" | "warn" | "log" | "debug" | "verbose";
+
+function resolveNestLoggerLevels(logLevel: RuntimeLogLevel): LogLevel[] {
+  switch (logLevel) {
+    case "error":
+      return ["error"];
+    case "warn":
+      return ["error", "warn"];
+    case "log":
+      return ["error", "warn", "log"];
+    case "debug":
+      return ["error", "warn", "log", "debug"];
+    case "verbose":
+      return ["error", "warn", "log", "debug", "verbose"];
+    default:
+      return ["error", "warn"];
+  }
+}
+
+function muteNoisyConsoleOutputForProduction(nodeEnv: string) {
+  if (nodeEnv !== "production") {
+    return;
+  }
+
+  console.log = () => undefined;
+  console.debug = () => undefined;
+}
+
+function normalizeHostValue(value: string | null | undefined) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const normalizedUrl = /^https?:\/\//.test(raw) ? raw : `https://${raw}`;
+    return new URL(normalizedUrl).host.split(":")[0] || null;
+  } catch {
+    return raw.split(":")[0] || null;
+  }
+}
+
+function getRequestHost(req: Request) {
+  const forwardedHostHeader =
+    typeof req.headers["x-forwarded-host"] === "string"
+      ? req.headers["x-forwarded-host"].split(",")[0]?.trim()
+      : undefined;
+  const hostHeader =
+    typeof req.headers.host === "string" ? req.headers.host.trim() : undefined;
+  return normalizeHostValue(forwardedHostHeader || hostHeader || req.hostname);
 }
 
 async function bootstrap() {
@@ -31,13 +84,37 @@ async function bootstrap() {
     ]);
 
   await ensureInstalledDatabase();
+  muteNoisyConsoleOutputForProduction(runtimeConfig.nodeEnv);
 
   const app = await NestFactory.create(AppModule, {
     cors: true,
+    logger: resolveNestLoggerLevels(runtimeConfig.logLevel),
   });
   app.setGlobalPrefix("api");
   const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set("trust proxy", 1);
   const openApiDocument: OpenAPIObject = createOpenApiDocument(app);
+  const apiHost = normalizeHostValue(runtimeConfig.baseUrl);
+  const adminHost = normalizeHostValue(runtimeConfig.admin.baseUrl || runtimeConfig.adminBaseUrl);
+  const adminHostRestricted = Boolean(adminHost && adminHost !== apiHost);
+  const requireAdminHost = (req: Request, res: Response, next: () => void) => {
+    if (!adminHostRestricted) {
+      next();
+      return;
+    }
+
+    if (getRequestHost(req) !== adminHost) {
+      res.status(404).send("Not found");
+      return;
+    }
+
+    next();
+  };
+
+  expressApp.use(
+    ["/dashboard", "/api/admin", "/api/docs", "/api/reference", "/api/openapi.json"],
+    requireAdminHost
+  );
 
   expressApp.use("/api/docs", (req: Request, res: Response, next: () => void) => {
     if (!runtimeConfig.admin.enabled) {
@@ -62,7 +139,11 @@ async function bootstrap() {
 
   setupSwaggerUi(app, openApiDocument);
 
-  expressApp.get("/", (_req: Request, res: Response) => {
+  expressApp.get("/", (req: Request, res: Response) => {
+    if (adminHostRestricted && getRequestHost(req) !== adminHost) {
+      return res.redirect("/api");
+    }
+
     res.type("html").send(`<!doctype html>
 <html lang="en">
   <head>
@@ -208,7 +289,7 @@ async function bootstrap() {
     }
   );
   await app.listen(runtimeConfig.port);
-  console.log(`[api-server] listening on ${runtimeConfig.port}`);
+  console.info(`[api-server] listening on ${runtimeConfig.port}`);
 }
 
 bootstrap().catch((error) => {

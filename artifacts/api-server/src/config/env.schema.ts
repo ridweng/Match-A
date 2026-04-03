@@ -25,8 +25,12 @@ const envSchema = z
   .object({
     APP_NAME: z.string().trim().min(1).default("Matcha"),
     APP_ENV: z.enum(["development", "test", "production"]).default("development"),
+    APP_LOG_LEVEL: z
+      .enum(["error", "warn", "log", "debug", "verbose"])
+      .default("debug"),
     APP_PORT: integerLikeSchema.default(8082),
     API_BASE_URL: z.string().trim().url().default("http://127.0.0.1:8082"),
+    ADMIN_BASE_URL: z.string().trim().url().optional(),
     FRONTEND_BASE_URL: z.string().trim().default("http://localhost:8080"),
     AUTH_FRONTEND_REDIRECT_URI: z
       .string()
@@ -90,6 +94,7 @@ const envSchema = z
 export type ApiEnv = z.infer<typeof envSchema>;
 
 function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const appEnv = env.APP_ENV ?? env.NODE_ENV ?? "development";
   const appPort = env.APP_PORT ?? env.PORT ?? "8082";
   const apiBaseUrl =
     env.API_BASE_URL ?? env.AUTH_BASE_URL ?? `http://127.0.0.1:${appPort}`;
@@ -97,9 +102,12 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
 
   return {
     APP_NAME: env.APP_NAME ?? "Matcha",
-    APP_ENV: env.APP_ENV ?? env.NODE_ENV ?? "development",
+    APP_ENV: appEnv,
+    APP_LOG_LEVEL:
+      env.APP_LOG_LEVEL ?? (appEnv === "production" ? "warn" : "debug"),
     APP_PORT: appPort,
     API_BASE_URL: apiBaseUrl,
+    ADMIN_BASE_URL: env.ADMIN_BASE_URL ?? "",
     FRONTEND_BASE_URL: frontendBaseUrl,
     AUTH_FRONTEND_REDIRECT_URI:
       env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",

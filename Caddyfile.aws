@@ -1,0 +1,46 @@
+{
+  email {$ACME_EMAIL}
+  admin off
+}
+
+{$LANDING_HOSTNAME} {
+  encode zstd gzip
+  root * /srv/landing
+
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    X-Robots-Tag "index, follow"
+  }
+
+  file_server
+}
+
+{$API_HOSTNAME} {
+  encode zstd gzip
+
+  @adminOnly {
+    path /dashboard /api/admin* /api/docs* /api/reference /api/openapi.json
+  }
+
+  handle @adminOnly {
+    respond 404
+  }
+
+  handle {
+    reverse_proxy api:8082
+  }
+}
+
+{$ADMIN_HOSTNAME} {
+  encode zstd gzip
+
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+    X-Robots-Tag "noindex, nofollow, noarchive"
+  }
+
+  reverse_proxy api:8082
+}

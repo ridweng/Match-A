@@ -18,14 +18,10 @@
       "bundleIdentifier": "com.xylo.matcha",
       "infoPlist": {
         "NSFaceIDUsageDescription": "MatchA uses Face ID to unlock your account quickly and securely.",
-        "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile.",
-        "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
-        }
+        "NSLocationWhenInUseUsageDescription": "MatchA uses your location to show your current city on your profile."
       }
     },
     "android": {
-      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0F1A14"
@@ -39,7 +35,6 @@
     },
     "plugins": [
       "expo-router",
-      "./plugins/withAndroidCleartext",
       "expo-font",
       "expo-local-authentication",
       [

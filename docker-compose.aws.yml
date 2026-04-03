@@ -11,34 +11,30 @@ services:
       - "5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
-  mailpit:
-    image: axllent/mailpit:v1.20
-    restart: unless-stopped
-    ports:
-      - "8025:8025"
-    expose:
-      - "1025"
-      - "8025"
-
-  api:
+  api-migrate:
     build:
       context: .
       dockerfile: artifacts/api-server/Dockerfile
+      target: builder
     depends_on:
-      - postgres
-      - mailpit
-    ports:
-      - "8082:8082"
-    volumes:
-      - ./data/media:/app/artifacts/api-server/storage/media
-    restart: unless-stopped
+      postgres:
+        condition: service_healthy
+    restart: "no"
     environment:
       APP_NAME: Matcha
       APP_ENV: production
       NODE_ENV: production
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-warn}
       APP_PORT: 8082
-      API_BASE_URL: ${API_BASE_URL}
+      API_BASE_URL: https://${API_HOSTNAME}
+      ADMIN_BASE_URL: https://${ADMIN_HOSTNAME}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
       AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI}
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
@@ -48,22 +44,107 @@ services:
       AUTH_EMAIL_VERIFICATION_TTL_MINUTES: 1440
       AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
       DATABASE_URL: ${DATABASE_URL}
-      SMTP_ENABLED: "true"
-      EMAIL_LOG_ONLY: "false"
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
-      SMTP_SECURE: "false"
-      SMTP_USER: ""
-      SMTP_PASS: ""
-      SMTP_FROM_EMAIL: no-reply@matcha.local
-      SMTP_FROM_NAME: Matcha
-      SMTP_CONNECTION_TIMEOUT_MS: 10000
-      SMTP_SOCKET_TIMEOUT_MS: 20000
-      SMTP_VERIFY_ON_STARTUP: "false"
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      EMAIL_LOG_ONLY: ${EMAIL_LOG_ONLY:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@matcha.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Matcha}
+      SMTP_CONNECTION_TIMEOUT_MS: ${SMTP_CONNECTION_TIMEOUT_MS:-10000}
+      SMTP_SOCKET_TIMEOUT_MS: ${SMTP_SOCKET_TIMEOUT_MS:-20000}
+      SMTP_VERIFY_ON_STARTUP: ${SMTP_VERIFY_ON_STARTUP:-false}
       ADMIN_DASHBOARD_ENABLED: "true"
       ADMIN_BASIC_AUTH_USERNAME: ${ADMIN_BASIC_AUTH_USERNAME}
       ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_BASIC_AUTH_PASSWORD}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
+      FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      APPLE_SERVICE_ID: ${APPLE_SERVICE_ID:-}
     command: >
-      sh -lc "pnpm db:migrate &&
-      pnpm db:seed &&
-      node artifacts/api-server/dist/index.cjs"
+      sh -lc "pnpm --dir lib/db migrate"
+
+  api:
+    build:
+      context: .
+      dockerfile: artifacts/api-server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api-migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8082"
+    volumes:
+      - ./data/media:/app/artifacts/api-server/storage/media
+    restart: unless-stopped
+    environment:
+      APP_NAME: Matcha
+      APP_ENV: production
+      NODE_ENV: production
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-warn}
+      APP_PORT: 8082
+      API_BASE_URL: https://${API_HOSTNAME}
+      ADMIN_BASE_URL: https://${ADMIN_HOSTNAME}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
+      AUTH_ACCESS_TTL_MINUTES: 60
+      AUTH_REFRESH_TTL_DAYS: 30
+      AUTH_PASSWORD_RESET_TTL_MINUTES: 60
+      AUTH_EMAIL_VERIFICATION_TTL_MINUTES: 1440
+      AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
+      DATABASE_URL: ${DATABASE_URL}
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      EMAIL_LOG_ONLY: ${EMAIL_LOG_ONLY:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@matcha.local}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Matcha}
+      SMTP_CONNECTION_TIMEOUT_MS: ${SMTP_CONNECTION_TIMEOUT_MS:-10000}
+      SMTP_SOCKET_TIMEOUT_MS: ${SMTP_SOCKET_TIMEOUT_MS:-20000}
+      SMTP_VERIFY_ON_STARTUP: ${SMTP_VERIFY_ON_STARTUP:-false}
+      ADMIN_DASHBOARD_ENABLED: "true"
+      ADMIN_BASIC_AUTH_USERNAME: ${ADMIN_BASIC_AUTH_USERNAME}
+      ADMIN_BASIC_AUTH_PASSWORD: ${ADMIN_BASIC_AUTH_PASSWORD}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      FACEBOOK_CLIENT_ID: ${FACEBOOK_CLIENT_ID:-}
+      FACEBOOK_CLIENT_SECRET: ${FACEBOOK_CLIENT_SECRET:-}
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      APPLE_KEY_ID: ${APPLE_KEY_ID:-}
+      APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
+      APPLE_SERVICE_ID: ${APPLE_SERVICE_ID:-}
+
+  caddy:
+    image: caddy:2.8-alpine
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      LANDING_HOSTNAME: ${LANDING_HOSTNAME}
+      API_HOSTNAME: ${API_HOSTNAME}
+      ADMIN_HOSTNAME: ${ADMIN_HOSTNAME}
+    volumes:
+      - ./Caddyfile.aws:/etc/caddy/Caddyfile:ro
+      - ./ops/landing:/srv/landing:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
