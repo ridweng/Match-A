@@ -1,7 +1,7 @@
 module.exports = function (api) {
-  api.cache(true);
-  const isProduction =
-    api.env("production") || process.env.NODE_ENV === "production";
+  const nodeEnv = process.env.NODE_ENV || "development";
+  api.cache.using(() => nodeEnv);
+  const isProduction = nodeEnv === "production";
 
   return {
     presets: [["babel-preset-expo", { unstable_transformImportMeta: true }]],
