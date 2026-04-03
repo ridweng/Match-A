@@ -18,6 +18,7 @@ type ProfilePhotoRow = {
   sort_order: number;
   is_primary: boolean;
   updated_at: string | Date;
+  public_url: string | null;
   mime_type: string;
   status: "pending" | "ready" | "deleted";
 };
@@ -57,6 +58,27 @@ export class MediaService {
     return `${runtimeConfig.baseUrl}/api/media/public/${mediaAssetId}`;
   }
 
+  private resolvePublicUrl(mediaAssetId: number, publicUrl: string | null) {
+    const trimmed = String(publicUrl || "").trim();
+    if (!trimmed) {
+      return this.buildPublicUrl(mediaAssetId);
+    }
+
+    if (trimmed.startsWith("/api/media/public/")) {
+      return this.buildPublicUrl(mediaAssetId);
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith("/api/media/public/")) {
+        return this.buildPublicUrl(mediaAssetId);
+      }
+      return parsed.toString();
+    } catch {
+      return this.buildPublicUrl(mediaAssetId);
+    }
+  }
+
   private async findProfileIdForUser(userId: number) {
     const result = await pool.query<{ id: number }>(
       `SELECT id
@@ -85,6 +107,7 @@ export class MediaService {
          pi.sort_order,
          pi.is_primary,
          ma.updated_at,
+         ma.public_url,
          ma.mime_type,
          ma.status
        FROM media.profile_images pi
@@ -101,7 +124,7 @@ export class MediaService {
         sortOrder: Number(row.sort_order),
         isPrimary: Boolean(row.is_primary),
         updatedAt: new Date(row.updated_at).toISOString(),
-        remoteUrl: this.buildPublicUrl(Number(row.media_asset_id)),
+        remoteUrl: this.resolvePublicUrl(Number(row.media_asset_id), row.public_url),
         mimeType: row.mime_type,
         status: row.status === "pending" ? "pending" : "ready",
       })),

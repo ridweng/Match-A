@@ -69,6 +69,7 @@ type DiscoveryFeedImageRow = {
   profile_image_id: number;
   sort_order: number;
   media_asset_id: number;
+  public_url: string | null;
 };
 
 type DiscoveryFeedLanguageRow = {
@@ -234,6 +235,27 @@ class DiscoveryCursorError extends Error {
 export class DiscoveryService {
   private buildPublicMediaUrl(mediaAssetId: number) {
     return `${runtimeConfig.baseUrl}/api/media/public/${mediaAssetId}`;
+  }
+
+  private resolvePublicMediaUrl(mediaAssetId: number, publicUrl: string | null) {
+    const trimmed = String(publicUrl || "").trim();
+    if (!trimmed) {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
+
+    if (trimmed.startsWith("/api/media/public/")) {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith("/api/media/public/")) {
+        return this.buildPublicMediaUrl(mediaAssetId);
+      }
+      return parsed.toString();
+    } catch {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
   }
 
   private readonly logger = new Logger(DiscoveryService.name);
@@ -1036,7 +1058,8 @@ export class DiscoveryService {
            pi.profile_id,
            pi.id AS profile_image_id,
            pi.sort_order,
-           ma.id AS media_asset_id
+           ma.id AS media_asset_id,
+           ma.public_url
          FROM media.profile_images pi
          JOIN media.media_assets ma ON ma.id = pi.media_asset_id
          WHERE pi.profile_id = ANY($1::bigint[])
@@ -1077,7 +1100,10 @@ export class DiscoveryService {
     const imagesByProfile = new Map<number, string[]>();
     const debugPhotosByProfile = new Map<number, DiscoveryDebugPhoto[]>();
     for (const row of imagesResult.rows) {
-      const resolvedUrl = this.buildPublicMediaUrl(Number(row.media_asset_id));
+      const resolvedUrl = this.resolvePublicMediaUrl(
+        Number(row.media_asset_id),
+        row.public_url
+      );
       if (!resolvedUrl) {
         continue;
       }
