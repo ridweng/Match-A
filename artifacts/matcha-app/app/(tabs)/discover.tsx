@@ -91,6 +91,9 @@ const SWIPE_FEEDBACK_BUTTON_DURATION = 210;
 const SWIPE_FEEDBACK_COMMIT_HOLD_DURATION = 0;
 const SWIPE_FEEDBACK_RESET_DURATION = 180;
 const INFO_SWIPE_THRESHOLD = 82;
+const INSIGHT_SHEET_DISMISS_THRESHOLD = 96;
+const INSIGHT_SHEET_DISMISS_VELOCITY = 1.05;
+const INSIGHT_SHEET_RESET_DURATION = 180;
 const IS_WEB = Platform.OS === "web";
 // Deck shows 3, but we keep a 4th "tail" entry around so the third card can
 // instantly promote without waiting for network/image downloads.
@@ -732,6 +735,8 @@ export default function DiscoverScreen() {
   const swipeFeedbackX = useRef(new Animated.Value(0)).current;
   const flipAnim = useRef(new Animated.Value(0)).current;
   const deckProgress = useRef(new Animated.Value(0)).current;
+  const insightSheetTranslateY = useRef(new Animated.Value(0)).current;
+  const insightSheetClosingRef = useRef(false);
   const backScrollRef = useRef<ScrollView | null>(null);
 
   const trace = useCallback(
@@ -747,6 +752,89 @@ export default function DiscoverScreen() {
       });
     },
     [traceFocused]
+  );
+
+  const dismissInsightSheet = useCallback(
+    (animated = true) => {
+      if (insightSheetClosingRef.current) {
+        return;
+      }
+
+      const finalize = () => {
+        insightSheetClosingRef.current = false;
+        insightSheetTranslateY.setValue(0);
+        setShowInsight(false);
+      };
+
+      if (!animated) {
+        finalize();
+        return;
+      }
+
+      insightSheetClosingRef.current = true;
+      Animated.timing(insightSheetTranslateY, {
+        toValue: Math.max(220, height * 0.32),
+        duration: 190,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished) {
+          insightSheetClosingRef.current = false;
+          return;
+        }
+        finalize();
+      });
+    },
+    [height, insightSheetTranslateY]
+  );
+
+  useEffect(() => {
+    if (showInsight) {
+      insightSheetClosingRef.current = false;
+      insightSheetTranslateY.setValue(0);
+    }
+  }, [insightSheetTranslateY, showInsight]);
+
+  const insightSheetPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dy) > Math.abs(gestureState.dx) &&
+          gestureState.dy > 6,
+        onPanResponderGrant: () => {
+          insightSheetTranslateY.stopAnimation();
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (gestureState.dy <= 0) {
+            insightSheetTranslateY.setValue(0);
+            return;
+          }
+          insightSheetTranslateY.setValue(gestureState.dy);
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          if (
+            gestureState.dy > INSIGHT_SHEET_DISMISS_THRESHOLD ||
+            gestureState.vy > INSIGHT_SHEET_DISMISS_VELOCITY
+          ) {
+            dismissInsightSheet();
+            return;
+          }
+
+          Animated.timing(insightSheetTranslateY, {
+            toValue: 0,
+            duration: INSIGHT_SHEET_RESET_DURATION,
+            useNativeDriver: true,
+          }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.timing(insightSheetTranslateY, {
+            toValue: 0,
+            duration: INSIGHT_SHEET_RESET_DURATION,
+            useNativeDriver: true,
+          }).start();
+        },
+      }),
+    [dismissInsightSheet, insightSheetTranslateY]
   );
 
   const dismissLocationPrompt = useCallback(() => {
@@ -1945,6 +2033,18 @@ export default function DiscoverScreen() {
       setFrontCachedProfileId(null);
       setFrontCachedImages([]);
       setFrontImageLoading(Boolean(nextFront?.coverImage ?? nextFront?.images?.[0]));
+      const nextFrontProfile = nextFront?.profile ?? null;
+      const nextFrontCoverImage = nextFront?.coverImage ?? nextFrontProfile?.images?.[0] ?? null;
+      if (nextFrontProfile && nextFrontCoverImage) {
+        // The cover was already rendered by the second card slot, so no load needed
+        setFrontCachedProfileId(nextFrontProfile.id);
+        setFrontCachedImages(nextFrontProfile.images);
+        setFrontImageLoading(false);
+      } else {
+        setFrontCachedProfileId(null);
+        setFrontCachedImages([]);
+        setFrontImageLoading(false);
+      }
 
       trace("promotion_committed", {
         requestId: options.requestId,
@@ -2722,24 +2822,6 @@ export default function DiscoverScreen() {
         </View>
       </View>
 
-      {popularUpdateBanner ? (
-        <View style={styles.popularUpdateWrap}>
-          <View style={styles.popularUpdateCard}>
-            <View style={styles.popularUpdateIcon}>
-              <Feather name="trending-up" size={15} color={Colors.primaryLight} />
-            </View>
-            <View style={styles.popularUpdateBody}>
-              <Text style={styles.popularUpdateTitle}>
-                {popularUpdateBanner.title}
-              </Text>
-              <Text style={styles.popularUpdateText}>
-                {popularUpdateBanner.body}
-              </Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
-
       {isOffline && hasDeckProfiles ? (
         <View style={styles.offlineBannerWrap}>
           <View style={styles.offlineBanner}>
@@ -2863,6 +2945,51 @@ export default function DiscoverScreen() {
                       }}
                     />
                   ) : null}
+                  {/* ← ADD THIS: metadata overlay on second card */}
+                  <LinearGradient
+                    colors={["transparent", "rgba(15,26,20,0.98)"]}
+                    style={styles.cardGradient}
+                    pointerEvents="none"
+                  >
+                    {secondProfile.pronouns ? (
+                      <Text style={styles.cardPronouns}>
+                        {getPronounLabel(secondProfile.pronouns, language)}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.cardName}>{secondProfile.name}</Text>
+                    {secondProfile.genderIdentity ? (
+                      <Text style={styles.cardIdentity}>
+                        {getGenderIdentityLabel(secondProfile.genderIdentity, t)}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.cardAgeSign}>
+                      {(() => {
+                        const z = getZodiacSignLabel(
+                          getZodiacSignFromIsoDate(secondProfile.dateOfBirth ?? ""), t
+                        );
+                        return z ? `${secondProfile.age} · ${z}` : String(secondProfile.age);
+                      })()}
+                    </Text>
+                    <View style={styles.cardRow}>
+                      <Feather name="map-pin" size={13} color={Colors.primaryLight} />
+                      <Text style={styles.cardLocation}>{secondProfile.location}</Text>
+                      <Text style={styles.cardDot}>·</Text>
+                      <Text style={styles.cardOccupation}>
+                        {t(secondProfile.occupation.es, secondProfile.occupation.en)}
+                      </Text>
+                    </View>
+                    <View style={styles.interestsRow}>
+                      {secondProfile.attributes.interests.slice(0, 3).map((interest) => (
+                        <View
+                          key={`second-${secondProfile.id}-${interest}`}
+                          style={styles.interestChip}
+                        >
+                          <Text style={styles.interestChipText}>{interest}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </LinearGradient>
+                  {/* ← END ADD */}
                 </>
               ) : null}
             </Animated.View>
@@ -2968,7 +3095,10 @@ export default function DiscoverScreen() {
                   />
                 </View>
 
-                <Animated.View style={[styles.likeOverlay, { opacity: likeOpacity }]}>
+                <Animated.View
+                  pointerEvents="none"
+                  style={[styles.likeOverlay, { opacity: likeOpacity }]}
+                >
                   <LinearGradient
                     colors={["transparent", Colors.likeOverlay]}
                     style={StyleSheet.absoluteFillObject}
@@ -2991,6 +3121,7 @@ export default function DiscoverScreen() {
                 </Animated.View>
 
                 <Animated.View
+                  pointerEvents="none"
                   style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}
                 >
                   <LinearGradient
@@ -3706,37 +3837,54 @@ export default function DiscoverScreen() {
       <Modal
         visible={showInsight}
         transparent
-        animationType="slide"
-        onRequestClose={() => setShowInsight(false)}
+        animationType="fade"
+        onRequestClose={() => dismissInsightSheet(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIconWrap}>
-                <Feather name="zap" size={22} color={Colors.primaryLight} />
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => dismissInsightSheet()}
+          />
+          <Animated.View
+            style={[
+              styles.modalSheet,
+              {
+                paddingBottom: Math.max(insets.bottom + 18, 36),
+                transform: [{ translateY: insightSheetTranslateY }],
+              },
+            ]}
+          >
+            <View
+              style={styles.modalDragHeader}
+              {...insightSheetPanResponder.panHandlers}
+            >
+              <View style={styles.modalHandle} />
+              <View style={styles.modalHeader}>
+                <View style={styles.modalIconWrap}>
+                  <Feather name="zap" size={22} color={Colors.primaryLight} />
+                </View>
+                <Text style={styles.modalTitle}>
+                  {t("Insight de mejora", "Improvement Insight")}
+                </Text>
+                <Text style={styles.modalSub}>
+                  {t(
+                    `Basado en ${lastLikedProfile?.name ?? ""}, estas metas pueden aumentar tu atractivo`,
+                    `Based on ${lastLikedProfile?.name ?? ""}, these goals may boost your appeal`
+                  )}
+                </Text>
               </View>
-              <Text style={styles.modalTitle}>
-                {t("Insight de mejora", "Improvement Insight")}
-              </Text>
-              <Text style={styles.modalSub}>
-                {t(
-                  `Basado en ${lastLikedProfile?.name ?? ""}, estas metas pueden aumentar tu atractivo`,
-                  `Based on ${lastLikedProfile?.name ?? ""}, these goals may boost your appeal`
-                )}
-              </Text>
             </View>
 
             <ScrollView
-              style={{ maxHeight: 260 }}
+              style={styles.insightScroll}
+              contentContainerStyle={styles.insightScrollContent}
               showsVerticalScrollIndicator={false}
             >
               {relatedGoals.map((item: any, index: number) => (
                 <View key={index} style={styles.insightItem}>
                   <View style={styles.insightItemLeft}>
                     <Feather name="target" size={16} color={Colors.primaryLight} />
-                    <View style={{ flex: 1 }}>
+                    <View style={styles.insightItemContent}>
                       <Text style={styles.insightGoalTitle}>
                         {t(item.goal.titleEs, item.goal.titleEn)}
                       </Text>
@@ -3755,14 +3903,14 @@ export default function DiscoverScreen() {
             </ScrollView>
 
             <Pressable
-              onPress={() => setShowInsight(false)}
+              onPress={() => dismissInsightSheet()}
               style={styles.modalClose}
             >
               <Text style={styles.modalCloseText}>
                 {t("Continuar explorando", "Keep exploring")}
               </Text>
             </Pressable>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -4749,13 +4897,21 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   modalSheet: {
+    width: "100%",
     backgroundColor: Colors.backgroundSecondary,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    padding: 24,
-    paddingBottom: 40,
+    paddingTop: 14,
+    paddingHorizontal: 24,
     borderWidth: 1,
     borderColor: Colors.border,
+    alignSelf: "stretch",
+  },
+  modalDragHeader: {
+    alignItems: "center",
+    width: "100%",
+    paddingTop: 2,
+    paddingBottom: 6,
   },
   modalHandle: {
     width: 40,
@@ -4763,12 +4919,13 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.border,
     borderRadius: 2,
     alignSelf: "center",
-    marginBottom: 20,
+    marginBottom: 16,
   },
   modalHeader: {
     alignItems: "center",
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 18,
+    width: "100%",
   },
   modalIconWrap: {
     width: 48,
@@ -4786,6 +4943,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: Colors.text,
     letterSpacing: -0.5,
+    textAlign: "center",
   },
   modalSub: {
     fontFamily: "Inter_400Regular",
@@ -4793,6 +4951,13 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textAlign: "center",
     lineHeight: 18,
+    maxWidth: 300,
+  },
+  insightScroll: {
+    maxHeight: 280,
+  },
+  insightScrollContent: {
+    paddingBottom: 6,
   },
   insightItem: {
     flexDirection: "row",
@@ -4808,6 +4973,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 10,
     flex: 1,
+  },
+  insightItemContent: {
+    flex: 1,
+    alignSelf: "stretch",
   },
   insightGoalTitle: {
     fontFamily: "Inter_600SemiBold",
