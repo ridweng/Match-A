@@ -25,9 +25,11 @@ import {
   type DiscoveryFeedProfileResponse,
   type DiscoveryLikeResponse,
   type DiscoveryPreferencesResponse,
+  type ServerHealthCheckResult,
   type ViewerBootstrapResponse,
   type ProviderAvailability,
   type AuthProvider,
+  checkServerHealth,
   checkVerificationStatus as authCheckVerificationStatus,
   completeGoal as completeGoalRequest,
   DEFAULT_REQUEST_TIMEOUT_MS,
@@ -180,6 +182,7 @@ type LocationSyncResult = {
   code?: string | null;
   message?: string | null;
 };
+type ServerHealthStatus = "unknown" | "checking" | "healthy" | "unhealthy";
 
 type BiometricResult = { ok: boolean; code?: string };
 type AccessGateState =
@@ -203,6 +206,8 @@ type DiscoveryViewPreferences = {
 const MIN_LOCK_INTERRUPTION_MS = 1500;
 const PROMPT_REENTRY_COOLDOWN_MS = 1000;
 const DISCOVERY_DECISION_QUEUE_VERSION_REQUIRED = false;
+const SERVER_HEALTH_POLL_INTERVAL_MS = 15_000;
+const SERVER_HEALTH_TIMEOUT_MS = 10_000;
 
 const GOAL_CATEGORIES: GoalCategory[] = [
   "physical",
@@ -560,6 +565,9 @@ type AppContextType = {
   authError: string | null;
   hasAccessToken: boolean;
   isOnline: boolean;
+  serverHealthStatus: ServerHealthStatus;
+  lastServerHealthAt: string | null;
+  lastServerHealthFailureReason: string | null;
   authFormPrefill: AuthFormPrefill | null;
   pendingVerificationEmail: string | null;
   verificationStatus: VerificationStatus;
@@ -1572,8 +1580,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(true);
-  const isOnlineRef = useRef(true);
+  const [deviceOnline, setDeviceOnlineState] = useState(false);
+  const deviceOnlineRef = useRef(false);
+  const [serverHealthStatus, setServerHealthStatusState] =
+    useState<ServerHealthStatus>("unknown");
+  const serverHealthStatusRef = useRef<ServerHealthStatus>("unknown");
+  const [lastServerHealthAt, setLastServerHealthAt] = useState<string | null>(null);
+  const [lastServerHealthFailureReason, setLastServerHealthFailureReason] =
+    useState<string | null>(null);
+  const serverHealthCheckInFlightRef = useRef(false);
+  const serverHealthPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previousEffectiveOnlineRef = useRef(false);
+  const [isOnline, setIsOnline] = useState(false);
+  const isOnlineRef = useRef(false);
   const [settingsSaveState, setSettingsSaveState] =
     useState<ProfileFieldSaveState>("idle");
   const [authFormPrefill, setAuthFormPrefill] = useState<AuthFormPrefill | null>(null);
@@ -1630,6 +1649,60 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const requestQueueReplay = useCallback(() => {
     void replayMutationQueueRef.current();
   }, []);
+  const updateEffectiveOnline = useCallback(
+    (nextDeviceOnline: boolean, nextServerHealthStatus: ServerHealthStatus) => {
+      const nextEffectiveOnline =
+        nextDeviceOnline && nextServerHealthStatus === "healthy";
+      isOnlineRef.current = nextEffectiveOnline;
+      setIsOnline((current) =>
+        current === nextEffectiveOnline ? current : nextEffectiveOnline
+      );
+    },
+    []
+  );
+  const setDeviceOnline = useCallback(
+    (next: boolean) => {
+      deviceOnlineRef.current = next;
+      setDeviceOnlineState((current) => (current === next ? current : next));
+      updateEffectiveOnline(next, serverHealthStatusRef.current);
+    },
+    [updateEffectiveOnline]
+  );
+  const commitServerHealthStatus = useCallback(
+    (
+      nextStatus: ServerHealthStatus,
+      options?: {
+        checkedAt?: string | null;
+        failureReason?: string | null;
+        result?: ServerHealthCheckResult | null;
+        reason?: string | null;
+      }
+    ) => {
+      const previousStatus = serverHealthStatusRef.current;
+      serverHealthStatusRef.current = nextStatus;
+      setServerHealthStatusState((current) =>
+        current === nextStatus ? current : nextStatus
+      );
+      if (options?.checkedAt !== undefined) {
+        setLastServerHealthAt(options.checkedAt ?? null);
+      }
+      if (options?.failureReason !== undefined) {
+        setLastServerHealthFailureReason(options.failureReason ?? null);
+      }
+      updateEffectiveOnline(deviceOnlineRef.current, nextStatus);
+      if (previousStatus !== nextStatus) {
+        debugLog("[reachability] server_health_status_changed", {
+          previousStatus,
+          nextStatus,
+          checkedAt: options?.checkedAt ?? null,
+          failureReason: options?.failureReason ?? null,
+          reason: options?.reason ?? null,
+          statusCode: options?.result?.status ?? null,
+        });
+      }
+    },
+    [updateEffectiveOnline]
+  );
   const setAccessState = useCallback((next: AccessGateState) => {
     accessStateRef.current = next;
     setAccessStateState(next);
@@ -3209,28 +3282,132 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBootstrapComplete,
   ]);
 
+  const runServerHealthCheck = useCallback(
+    async (
+      reason: "initial" | "poll" | "foreground" | "device_online"
+    ): Promise<boolean | null> => {
+      if (!deviceOnlineRef.current || serverHealthCheckInFlightRef.current) {
+        return null;
+      }
+
+      serverHealthCheckInFlightRef.current = true;
+      const shouldMarkChecking = serverHealthStatusRef.current !== "healthy";
+
+      if (shouldMarkChecking) {
+        commitServerHealthStatus("checking", {
+          reason,
+        });
+      }
+
+      debugLog("[reachability] server_health_check_started", {
+        reason,
+        timeoutMs: SERVER_HEALTH_TIMEOUT_MS,
+      });
+
+      try {
+        const result = await checkServerHealth({
+          timeoutMs: SERVER_HEALTH_TIMEOUT_MS,
+        });
+
+        if (result.healthy) {
+          debugLog("[reachability] server_health_check_succeeded", {
+            reason,
+            checkedAt: result.checkedAt,
+            status: result.status ?? null,
+          });
+          commitServerHealthStatus("healthy", {
+            checkedAt: result.checkedAt,
+            failureReason: null,
+            result,
+            reason,
+          });
+          return true;
+        }
+
+        debugWarn("[reachability] server_health_check_failed", {
+          reason,
+          checkedAt: result.checkedAt,
+          status: result.status ?? null,
+          code: result.code ?? null,
+        });
+        commitServerHealthStatus("unhealthy", {
+          checkedAt: result.checkedAt,
+          failureReason: result.code ?? "UNHEALTHY",
+          result,
+          reason,
+        });
+        return false;
+      } finally {
+        serverHealthCheckInFlightRef.current = false;
+      }
+    },
+    [commitServerHealthStatus]
+  );
+
   useEffect(() => {
     void NetInfo.fetch().then((state) => {
       const nextOnline = state.isConnected !== false && state.isInternetReachable !== false;
-      isOnlineRef.current = nextOnline;
-      setIsOnline(nextOnline);
+      setDeviceOnline(nextOnline);
+      if (!nextOnline) {
+        commitServerHealthStatus("unknown", {
+          failureReason: "DEVICE_OFFLINE",
+          reason: "device_offline",
+        });
+      }
     });
-  }, []);
+  }, [commitServerHealthStatus, setDeviceOnline]);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const nextOnline = state.isConnected !== false && state.isInternetReachable !== false;
-      isOnlineRef.current = nextOnline;
-      setIsOnline(nextOnline);
-      if (state.isConnected && state.isInternetReachable !== false) {
-        requestQueueReplay();
+      const wasDeviceOnline = deviceOnlineRef.current;
+      setDeviceOnline(nextOnline);
+      if (!nextOnline) {
+        commitServerHealthStatus("unknown", {
+          failureReason: "DEVICE_OFFLINE",
+          reason: "device_offline",
+        });
+        return;
+      }
+      if (!wasDeviceOnline) {
+        void runServerHealthCheck("device_online");
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [requestQueueReplay]);
+  }, [commitServerHealthStatus, runServerHealthCheck, setDeviceOnline]);
+
+  useEffect(() => {
+    if (serverHealthPollIntervalRef.current) {
+      clearInterval(serverHealthPollIntervalRef.current);
+      serverHealthPollIntervalRef.current = null;
+    }
+
+    if (!deviceOnline || lastAppState !== "active") {
+      return;
+    }
+
+    void runServerHealthCheck("initial");
+    serverHealthPollIntervalRef.current = setInterval(() => {
+      void runServerHealthCheck("poll");
+    }, SERVER_HEALTH_POLL_INTERVAL_MS);
+
+    return () => {
+      if (serverHealthPollIntervalRef.current) {
+        clearInterval(serverHealthPollIntervalRef.current);
+        serverHealthPollIntervalRef.current = null;
+      }
+    };
+  }, [deviceOnline, lastAppState, runServerHealthCheck]);
+
+  useEffect(() => {
+    if (!previousEffectiveOnlineRef.current && isOnline) {
+      requestQueueReplay();
+    }
+    previousEffectiveOnlineRef.current = isOnline;
+  }, [isOnline, requestQueueReplay]);
 
   const saveSettings = useCallback(
     async (input: {
@@ -3717,7 +3894,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const replayMutationQueue = useCallback(async () => {
     const currentUserId = userRef.current?.id;
-    if (!currentUserId || !accessToken || isQueueReplayingRef.current) {
+    if (
+      !currentUserId ||
+      !accessToken ||
+      !isOnlineRef.current ||
+      isQueueReplayingRef.current
+    ) {
       return;
     }
 
@@ -6258,6 +6440,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         authError,
         hasAccessToken: Boolean(accessToken),
         isOnline,
+        serverHealthStatus,
+        lastServerHealthAt,
+        lastServerHealthFailureReason,
         authFormPrefill,
         pendingVerificationEmail,
         verificationStatus,

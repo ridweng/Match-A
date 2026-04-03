@@ -517,8 +517,8 @@ export default function ProfileScreen() {
             <Feather name="wifi-off" size={14} color={Colors.info} />
             <Text style={styles.offlineBannerText}>
               {t(
-                "Sin conexión. Puedes revisar tu perfil, pero guardar cambios está desactivado.",
-                "You are offline. You can review your profile, but saving changes is disabled."
+                "Sin conexión o sin respuesta del servidor. Puedes revisar tu perfil, pero guardar cambios está desactivado.",
+                "You are offline or the server is unavailable. You can review your profile, but saving changes is disabled."
               )}
             </Text>
           </View>

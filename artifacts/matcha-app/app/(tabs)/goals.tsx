@@ -785,8 +785,8 @@ export default function GoalsScreen() {
             <Feather name="wifi-off" size={14} color={Colors.info} />
             <Text style={styles.offlineBannerText}>
               {t(
-                "Sin conexión. Puedes revisar tus metas, pero completar o reordenar tareas está desactivado.",
-                "You are offline. You can review your goals, but completing or reordering tasks is disabled."
+                "Sin conexión o sin respuesta del servidor. Puedes revisar tus metas, pero completar o reordenar tareas está desactivado.",
+                "You are offline or the server is unavailable. You can review your goals, but completing or reordering tasks is disabled."
               )}
             </Text>
           </View>

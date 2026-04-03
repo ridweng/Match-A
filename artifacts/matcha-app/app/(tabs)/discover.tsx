@@ -2833,12 +2833,12 @@ export default function DiscoverScreen() {
               <Text style={styles.offlineBannerText}>
                 {lastSyncLabel
                   ? t(
-                      `Seguimos con perfiles guardados. Última sincronización: ${lastSyncLabel}`,
-                      `Still using cached profiles. Last sync: ${lastSyncLabel}`
+                      `Seguimos con perfiles guardados porque no hay conexión o el servidor no responde. Última sincronización: ${lastSyncLabel}`,
+                      `Still using cached profiles because the device is offline or the server is unavailable. Last sync: ${lastSyncLabel}`
                     )
                   : t(
-                      "Seguimos con perfiles guardados hasta que vuelva la conexión.",
-                      "Still using cached profiles until the connection returns."
+                      "Seguimos con perfiles guardados hasta que vuelva la conexión o el servidor responda.",
+                      "Still using cached profiles until the connection returns or the server responds again."
                     )}
               </Text>
             </View>
@@ -3435,19 +3435,19 @@ export default function DiscoverScreen() {
             </View>
             <Text style={styles.emptyCardTitle}>
               {t(
-                "Sin conexión para cargar más perfiles",
-                "You are offline and we cannot load more profiles"
+                "No podemos cargar más perfiles ahora",
+                "We cannot load more profiles right now"
               )}
             </Text>
             <Text style={styles.emptyCardCopy}>
               {lastSyncLabel
                 ? t(
-                    `Vuelve a conectarte o reintenta. Última sincronización: ${lastSyncLabel}.`,
-                    `Reconnect or retry. Last sync: ${lastSyncLabel}.`
+                    `Vuelve a conectarte o reintenta cuando el servidor responda. Última sincronización: ${lastSyncLabel}.`,
+                    `Reconnect or retry when the server responds again. Last sync: ${lastSyncLabel}.`
                   )
                 : t(
-                    "Vuelve a conectarte o reintenta para seguir descubriendo.",
-                    "Reconnect or retry to keep discovering."
+                    "Vuelve a conectarte o reintenta cuando MatchA vuelva a estar disponible.",
+                    "Reconnect or retry when MatchA is reachable again."
                   )}
             </Text>
             <Pressable

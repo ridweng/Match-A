@@ -715,8 +715,8 @@ export default function SettingsScreen() {
           <Feather name="wifi-off" size={14} color={colors.info} />
           <Text style={s.offlineBannerText}>
             {t(
-              "Sin conexión. Los cambios de ajustes se reactivarán cuando vuelvas a estar online.",
-              "You are offline. Settings changes will be available again once you are back online."
+              "Sin conexión o sin respuesta del servidor. Los cambios de ajustes se reactivarán cuando MatchA vuelva a estar disponible.",
+              "You are offline or the server is unavailable. Settings changes will be available again once MatchA is reachable."
             )}
           </Text>
         </View>

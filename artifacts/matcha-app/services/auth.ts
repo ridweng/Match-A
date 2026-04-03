@@ -372,6 +372,13 @@ export type ProfileMediaListResponse = {
   photos: ProfileMediaItemResponse[];
 };
 
+export type ServerHealthCheckResult = {
+  healthy: boolean;
+  status?: number;
+  code?: string | null;
+  checkedAt: string;
+};
+
 const DEMO_EMAIL = "test@gmail.com";
 const DEMO_PASSWORD = "test";
 const DEMO_ACCESS_TOKEN = "demo-access-token";
@@ -515,6 +522,7 @@ type RequestOptions = {
 type ProtectedRequestOptions = Pick<RequestOptions, "headers">;
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+export const SERVER_HEALTH_TIMEOUT_MS = 10_000;
 const MEDIA_UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
 
 class ApiError extends Error {
@@ -782,6 +790,89 @@ export async function fetchProviderAvailability(): Promise<ProviderAvailability>
       facebook: false,
       apple: false,
     };
+  }
+}
+
+export async function checkServerHealth(options?: {
+  timeoutMs?: number;
+}): Promise<ServerHealthCheckResult> {
+  const timeoutMs = options?.timeoutMs ?? SERVER_HEALTH_TIMEOUT_MS;
+  const checkedAt = new Date().toISOString();
+  const controller =
+    typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+  debugLog("[api] server health check started", {
+    timeoutMs,
+    checkedAt,
+    path: "/api/healthz/ready",
+  });
+
+  try {
+    const fetchPromise = fetch(`${getBaseUrl()}/api/healthz/ready`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+
+    const timeoutPromise = new Promise<Response>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        controller?.abort();
+        reject(new Error(`Server health check timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
+
+    if (!response.ok) {
+      debugWarn("[api] server health check failed", {
+        status: response.status,
+        checkedAt,
+        path: "/api/healthz/ready",
+      });
+      return {
+        healthy: false,
+        status: response.status,
+        code: `HTTP_${response.status}`,
+        checkedAt,
+      };
+    }
+
+    debugLog("[api] server health check succeeded", {
+      status: response.status,
+      checkedAt,
+      path: "/api/healthz/ready",
+    });
+    return {
+      healthy: true,
+      status: response.status,
+      code: null,
+      checkedAt,
+    };
+  } catch (error: any) {
+    const isTimeoutError =
+      error?.name === "AbortError" ||
+      (typeof error?.message === "string" &&
+        error.message.includes("timed out"));
+    const code = isTimeoutError ? "TIMEOUT" : "NETWORK_REQUEST_FAILED";
+
+    debugWarn("[api] server health check failed", {
+      code,
+      checkedAt,
+      message: error?.message || "UNKNOWN_ERROR",
+      path: "/api/healthz/ready",
+    });
+    return {
+      healthy: false,
+      code,
+      checkedAt,
+    };
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
 
