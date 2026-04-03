@@ -101,6 +101,7 @@ const DISCOVERY_PAGE_SIZE = 3;
 const DISCOVERY_QUEUE_CACHE_SIZE = 3;
 const DISCOVERY_TRACE_PREFIX = "[discover]";
 const DISCOVERY_ISOLATION_MODE: null | "A" | "B" | "C" | "D" = null;
+const DISCOVERY_HEADER_ICON = require("../../assets/images/icon.png");
 const DISCOVERY_TRACE_EVENTS = new Set([
   "gesture_accepted",
   "gesture_threshold_crossed",
@@ -2831,6 +2832,13 @@ export default function DiscoverScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
+          <View style={styles.headerIconWrap}>
+            <ExpoImage
+              source={DISCOVERY_HEADER_ICON}
+              style={styles.headerIcon}
+              contentFit="contain"
+            />
+          </View>
           <Pressable
             onPress={openFilters}
             disabled={isOffline}
@@ -2849,30 +2857,6 @@ export default function DiscoverScreen() {
           </Pressable>
         </View>
       </View>
-
-      {isOffline && hasDeckProfiles ? (
-        <View style={styles.offlineBannerWrap}>
-          <View style={styles.offlineBanner}>
-            <Feather name="wifi-off" size={14} color={Colors.info} />
-            <View style={styles.offlineBannerBody}>
-              <Text style={styles.offlineBannerTitle}>
-                {t("Modo sin conexión", "Offline mode")}
-              </Text>
-              <Text style={styles.offlineBannerText}>
-                {lastSyncLabel
-                  ? t(
-                      `Seguimos con perfiles guardados porque no hay conexión o el servidor no responde. Última sincronización: ${lastSyncLabel}`,
-                      `Still using cached profiles because the device is offline or the server is unavailable. Last sync: ${lastSyncLabel}`
-                    )
-                  : t(
-                      "Seguimos con perfiles guardados hasta que vuelva la conexión o el servidor responda.",
-                      "Still using cached profiles until the connection returns or the server responds again."
-                    )}
-              </Text>
-            </View>
-          </View>
-        </View>
-      ) : null}
 
       {hasDeckProfiles && frontProfile ? (
         <>
@@ -3971,41 +3955,26 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 8,
+  },
+  headerIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,26,20,0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.2)",
+  },
+  headerIcon: {
+    width: 22,
+    height: 22,
   },
   popularUpdateWrap: {
     paddingHorizontal: 20,
     paddingBottom: 10,
-  },
-  offlineBannerWrap: {
-    paddingHorizontal: 20,
-    paddingBottom: 10,
-  },
-  offlineBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    backgroundColor: "rgba(90,169,255,0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(90,169,255,0.18)",
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  offlineBannerBody: {
-    flex: 1,
-    gap: 2,
-  },
-  offlineBannerTitle: {
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 13,
-    color: Colors.text,
-  },
-  offlineBannerText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 12,
-    lineHeight: 17,
-    color: Colors.textSecondary,
   },
   popularUpdateCard: {
     flexDirection: "row",
