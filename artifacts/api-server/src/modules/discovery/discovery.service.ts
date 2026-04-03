@@ -343,7 +343,7 @@ export class DiscoveryService {
     );
 
     if (normalizedPublicId) {
-      const result = await client.query<{ id: number; public_id: string }>(
+      const result = await client.query<{ id: number | string; public_id: string }>(
         `SELECT id, public_id
          FROM core.profiles
          WHERE public_id = $1
@@ -363,12 +363,13 @@ export class DiscoveryService {
         return null;
       }
 
-      if (normalizedNumericId !== null && resolved.id !== normalizedNumericId) {
+      const resolvedNumericId = this.normalizeProfileId(resolved.id);
+      if (normalizedNumericId !== null && resolvedNumericId !== normalizedNumericId) {
         this.logger.error(
           `[identity-drift] ${JSON.stringify({
             requestId: requestId || null,
             providedNumericId: normalizedNumericId,
-            resolvedNumericId: resolved.id,
+            resolvedNumericId,
             targetProfilePublicId: resolved.public_id,
           })}`
         );
@@ -378,12 +379,12 @@ export class DiscoveryService {
         `[discovery-identity] ${JSON.stringify({
           event: "resolved_by_public_id",
           requestId: requestId || null,
-          targetProfileId: resolved.id,
+          targetProfileId: resolvedNumericId,
           targetProfilePublicId: resolved.public_id,
         })}`
       );
 
-      return resolved;
+      return resolvedNumericId === null ? null : { ...resolved, id: resolvedNumericId };
     }
 
     if (normalizedNumericId !== null) {
@@ -1134,7 +1135,9 @@ export class DiscoveryService {
       const images = imagesByProfile.get(profile.id);
       const isDummyProfile = Boolean(profile.synthetic_group);
       const candidateBucket: DiscoveryCandidateBucket =
-        profile.kind === "user" ? "real" : "dummy";
+        profile.kind === "user" || (isDummyProfile && Boolean(images && images.length > 0))
+          ? "real"
+          : "dummy";
       const resolvedImages =
         images && images.length > 0
           ? images
@@ -1249,8 +1252,9 @@ export class DiscoveryService {
 
     hydrated.forEach((profile) => {
       if (
-        profile.debugMedia.candidateBucket === "dummy" &&
-        profile.debugMedia.mediaSource === "real_media"
+        profile.debugMedia.hasDummyMetadata &&
+        profile.debugMedia.hasReadyMedia &&
+        profile.debugMedia.candidateBucket !== "real"
       ) {
         this.logger.warn(
           `[queue_bucket_hydration_mismatch] ${JSON.stringify({
