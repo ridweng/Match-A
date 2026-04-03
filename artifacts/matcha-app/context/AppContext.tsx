@@ -703,7 +703,7 @@ const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
 const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
 const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
 const DISCOVERY_QUEUE_TRACE_BUFFER_LIMIT = 50;
-const DISCOVERY_QUEUE_CACHE_SIZE = 4;
+const DISCOVERY_QUEUE_CACHE_SIZE = 3;
 const DISABLE_PERSISTED_DISCOVERY_QUEUE_RESTORE = __DEV__;
 
 function createLocationSyncRequestId(prefix = "location_sync") {
@@ -1498,6 +1498,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const totalLikesCountRef = useRef(0);
   const [lastServerSyncAt, setLastServerSyncAt] = useState<string | null>(null);
   const [sessionOfflineFallback, setSessionOfflineFallback] = useState(false);
+  const sessionRecoveryInFlightRef = useRef(false);
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const profileRef = useRef<UserProfile>(DEFAULT_PROFILE);
   const confirmedProfileRef = useRef<UserProfile>(DEFAULT_PROFILE);
@@ -3408,6 +3409,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     previousEffectiveOnlineRef.current = isOnline;
   }, [isOnline, requestQueueReplay]);
+
+  useEffect(() => {
+    if (
+      !isOnline ||
+      !sessionOfflineFallback ||
+      authStatus !== "authenticated" ||
+      accessTokenRef.current ||
+      sessionRecoveryInFlightRef.current
+    ) {
+      return;
+    }
+
+    sessionRecoveryInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        const storedRefreshToken =
+          refreshTokenRef.current ||
+          (await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY));
+
+        if (!storedRefreshToken) {
+          debugWarn("[auth] session recovery skipped", {
+            reason: "missing_refresh_token",
+          });
+          return;
+        }
+
+        debugLog("[auth] session recovery started", {
+          reason: "effective_online_restored",
+        });
+
+        const refreshedSession = await refreshSessionSingleFlight(storedRefreshToken);
+        await applySession(refreshedSession, {
+          restoreOnboardingDraft: true,
+        });
+
+        debugLog("[auth] session recovery succeeded", {
+          userId: refreshedSession.user.id,
+          reason: "effective_online_restored",
+        });
+      } catch (error: any) {
+        debugWarn("[auth] session recovery failed", {
+          reason: "effective_online_restored",
+          error:
+            error instanceof ApiError
+              ? error.code
+              : error?.message || "UNKNOWN_ERROR",
+        });
+      } finally {
+        sessionRecoveryInFlightRef.current = false;
+      }
+    })();
+  }, [authStatus, applySession, isOnline, refreshSessionSingleFlight, sessionOfflineFallback]);
 
   const saveSettings = useCallback(
     async (input: {
@@ -6143,7 +6197,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!accessToken) {
-        return true;
+        debugDiscoveryWarn("filters_update_skipped_missing_access_token", {
+          requestId,
+          nextFilters,
+          sessionOfflineFallback,
+          authStatus,
+        });
+        setAuthError("SESSION_NOT_READY");
+        return false;
       }
 
       try {
@@ -6200,9 +6261,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [
       accessToken,
+      authStatus,
       persistDiscoveryFiltersForUser,
       persistViewerBootstrapCache,
       refreshDiscoveryFeedState,
+      sessionOfflineFallback,
       user?.id,
     ]
   );

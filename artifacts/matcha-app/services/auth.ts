@@ -1360,13 +1360,29 @@ export async function refreshDiscoveryFeed(
     return buildDemoDiscoveryFeed(null, limit);
   }
 
-  return request<DiscoveryFeedResponse>(
-    `/api/discovery/window${limit ? `?size=${encodeURIComponent(String(limit))}` : ""}`,
-    {
-      accessToken,
-      headers: options.headers,
-    }
-  );
+  const windowPath = `/api/discovery/window${
+    limit ? `?size=${encodeURIComponent(String(limit))}` : ""
+  }`;
+  console.log("[api] requesting discovery window", {
+    path: windowPath,
+    limit: limit ?? null,
+    requestId: options.headers?.["X-Matcha-Request-Id"] ?? null,
+  });
+
+  const response = await request<DiscoveryFeedResponse>(windowPath, {
+    accessToken,
+    headers: options.headers,
+  });
+
+  console.log("[api] discovery window loaded", {
+    path: windowPath,
+    queueVersion: response.queueVersion ?? null,
+    policyVersion: response.policyVersion ?? null,
+    profileCount: Array.isArray(response.profiles) ? response.profiles.length : 0,
+    nextCursor: response.nextCursor ?? null,
+  });
+
+  return response;
 }
 
 export async function getNextDiscoveryFeedWindow(

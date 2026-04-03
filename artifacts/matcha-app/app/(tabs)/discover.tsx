@@ -98,7 +98,7 @@ const IS_WEB = Platform.OS === "web";
 // Deck shows 3, but we keep a 4th "tail" entry around so the third card can
 // instantly promote without waiting for network/image downloads.
 const DISCOVERY_PAGE_SIZE = 3;
-const DISCOVERY_QUEUE_CACHE_SIZE = 4;
+const DISCOVERY_QUEUE_CACHE_SIZE = 3;
 const DISCOVERY_TRACE_PREFIX = "[discover]";
 const DISCOVERY_ISOLATION_MODE: null | "A" | "B" | "C" | "D" = null;
 const DISCOVERY_TRACE_EVENTS = new Set([
@@ -704,7 +704,6 @@ export default function DiscoverScreen() {
   const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(activeFilters);
   const [isDeckAnimating, setIsDeckAnimating] = useState(false);
   const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
-  const [, setPreloadRevision] = useState(0);
   const [deck, setDeck] = useState<DeckState>(() => buildDeckState([], 0));
   const [frontCachedImages, setFrontCachedImages] = useState<string[]>([]);
   const [frontCachedProfileId, setFrontCachedProfileId] = useState<number | null>(null);
@@ -1855,26 +1854,34 @@ export default function DiscoverScreen() {
       }
       setDeck((currentDeck) => {
         const currentFront = getDeckSlotByRole(currentDeck, "front");
-        const currentSecond = getDeckSlotByRole(currentDeck, "second");
         let nextDeck = currentDeck;
+        let changed = false;
 
         if (currentFront.entry) {
-          nextDeck = updateDeckSlot(nextDeck, currentFront.shellId, (slot) => ({
-            ...slot,
-            primaryReady: isPrimaryImageReady(slot.entry),
-          }));
+          const nextPrimaryReady = isPrimaryImageReady(currentFront.entry);
+          if (currentFront.primaryReady !== nextPrimaryReady) {
+            changed = true;
+            nextDeck = updateDeckSlot(nextDeck, currentFront.shellId, (slot) => ({
+              ...slot,
+              primaryReady: nextPrimaryReady,
+            }));
+          }
         }
 
-        if (currentSecond.entry) {
-          nextDeck = updateDeckSlot(nextDeck, currentSecond.shellId, (slot) => ({
-            ...slot,
-            primaryReady: isPrimaryImageReady(slot.entry),
-          }));
+        const latestSecond = getDeckSlotByRole(nextDeck, "second");
+        if (latestSecond.entry) {
+          const nextPrimaryReady = isPrimaryImageReady(latestSecond.entry);
+          if (latestSecond.primaryReady !== nextPrimaryReady) {
+            changed = true;
+            nextDeck = updateDeckSlot(nextDeck, latestSecond.shellId, (slot) => ({
+              ...slot,
+              primaryReady: nextPrimaryReady,
+            }));
+          }
         }
 
-        return nextDeck;
+        return changed ? nextDeck : currentDeck;
       });
-      setPreloadRevision((value) => value + 1);
     });
   }, [
     filteredEntries,
@@ -2252,16 +2259,37 @@ export default function DiscoverScreen() {
 
   const handleRetryDiscovery = useCallback(() => {
     if (isOffline) {
+      console.log("[discover] reload blocked while offline", {
+        activeFilters,
+      });
       return;
     }
 
-    void refreshDiscoveryCandidates().then((ok) => {
-      if (!ok) {
-        return;
+    setIsQueueLoading(true);
+    void (async () => {
+      try {
+        console.log("[discover] reload pressed", {
+          action: "reload_window_with_active_filters",
+          activeFilters,
+        });
+        const ok = await saveDiscoveryFilters({
+          ...activeFilters,
+          selectedGenders: [...activeFilters.selectedGenders],
+        });
+        console.log("[discover] reload finished", {
+          action: "reload_window_with_active_filters",
+          activeFilters,
+          ok,
+        });
+        if (!ok) {
+          return;
+        }
+        resetCardState();
+      } finally {
+        setIsQueueLoading(false);
       }
-      resetCardState();
-    });
-  }, [isOffline, refreshDiscoveryCandidates, resetCardState]);
+    })();
+  }, [activeFilters, isOffline, resetCardState, saveDiscoveryFilters]);
 
   const handleResetSeenProfiles = useCallback(() => {
     void refreshDiscoveryCandidates().then((ok) => {

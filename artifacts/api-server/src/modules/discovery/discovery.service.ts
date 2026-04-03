@@ -733,7 +733,9 @@ export class DiscoveryService {
     for (let index = 0; index < raw.length; index += 1) {
       hash = (hash * 33 + raw.charCodeAt(index)) >>> 0;
     }
-    return Math.max(1, hash);
+    // `discovery.actor_queue.queue_version` is stored as a signed Postgres integer,
+    // so keep the runtime queue lineage inside the positive int32 range.
+    return Math.max(1, hash & 0x7fffffff);
   }
 
   private evaluatePolicyFailureReason(
