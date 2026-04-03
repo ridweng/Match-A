@@ -88,11 +88,14 @@ const SWIPE_OUT_DURATION = 280;
 const SWIPE_THRESHOLD = 80;
 const SWIPE_FEEDBACK_DISTANCE = 150;
 const SWIPE_FEEDBACK_BUTTON_DURATION = 210;
-const SWIPE_FEEDBACK_COMMIT_HOLD_DURATION = 110;
+const SWIPE_FEEDBACK_COMMIT_HOLD_DURATION = 0;
 const SWIPE_FEEDBACK_RESET_DURATION = 180;
 const INFO_SWIPE_THRESHOLD = 82;
 const IS_WEB = Platform.OS === "web";
+// Deck shows 3, but we keep a 4th "tail" entry around so the third card can
+// instantly promote without waiting for network/image downloads.
 const DISCOVERY_PAGE_SIZE = 3;
+const DISCOVERY_QUEUE_CACHE_SIZE = 4;
 const DISCOVERY_TRACE_PREFIX = "[discover]";
 const DISCOVERY_ISOLATION_MODE: null | "A" | "B" | "C" | "D" = null;
 const DISCOVERY_TRACE_EVENTS = new Set([
@@ -1035,7 +1038,7 @@ export default function DiscoverScreen() {
   const secondProfile = secondEntry?.profile ?? null;
   const thirdProfile = thirdEntry?.profile ?? null;
   const logicalQueueIds = useMemo(
-    () => getDiscoveryQueueIds(queueItems.slice(0, 3)),
+    () => getDiscoveryQueueIds(queueItems.slice(0, DISCOVERY_QUEUE_CACHE_SIZE)),
     [queueItems]
   );
   const renderedQueueIds = useMemo(
@@ -1607,7 +1610,7 @@ export default function DiscoverScreen() {
     );
     const nextLoadedCount = Math.min(
       sourceEntries.length,
-      Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
+      Math.max(DISCOVERY_QUEUE_CACHE_SIZE, loadedCount, nextStartIndex + DISCOVERY_QUEUE_CACHE_SIZE)
     );
     trace("deck_rebuild_start", {
       sourceProfilesLength: sourceEntries.length,
@@ -1662,7 +1665,7 @@ export default function DiscoverScreen() {
     );
     const nextLoadedCount = Math.min(
       sourceEntries.length,
-      Math.max(DISCOVERY_PAGE_SIZE, loadedCount, nextStartIndex + 3)
+      Math.max(DISCOVERY_QUEUE_CACHE_SIZE, loadedCount, nextStartIndex + DISCOVERY_QUEUE_CACHE_SIZE)
     );
     trace("deck_rebuild_deferred_commit", {
       sourceProfilesLength: sourceEntries.length,
@@ -1922,7 +1925,7 @@ export default function DiscoverScreen() {
         replacementProfileId: number | null;
       }
     ) => {
-      const trimmedEntries = nextEntries.slice(0, DISCOVERY_PAGE_SIZE);
+      const trimmedEntries = nextEntries.slice(0, DISCOVERY_QUEUE_CACHE_SIZE);
       const nextDeck = buildDeckState(trimmedEntries, 0);
       const nextFront = getDeckSlotByRole(nextDeck, "front").entry;
       const nextSecond = getDeckSlotByRole(nextDeck, "second").entry;
@@ -1938,7 +1941,7 @@ export default function DiscoverScreen() {
 
       deckRef.current = nextDeck;
       setDeck(nextDeck);
-      setLoadedCount(Math.max(DISCOVERY_PAGE_SIZE, trimmedEntries.length));
+      setLoadedCount(Math.max(DISCOVERY_QUEUE_CACHE_SIZE, trimmedEntries.length));
       setFrontCachedProfileId(null);
       setFrontCachedImages([]);
       setFrontImageLoading(Boolean(nextFront?.coverImage ?? nextFront?.images?.[0]));
@@ -2400,7 +2403,9 @@ export default function DiscoverScreen() {
         action,
         targetProfileId: logicalActiveProfileId,
         expectedHeadId: logicalActiveProfileId,
-        visibleProfileIds: logicalQueueIds,
+        // Only send the *visible* deck to the server (backend schema maxes at 3).
+        // We may keep an extra cached tail entry locally for instant promotion.
+        visibleProfileIds: logicalQueueIds.slice(0, DISCOVERY_PAGE_SIZE),
         queueVersion,
         policyVersion: discoveryFeed.policyVersion ?? null,
         renderedFrontId,
@@ -2419,103 +2424,66 @@ export default function DiscoverScreen() {
           direction,
           targetProfileId: decisionContext.targetProfileId,
           screenSessionId: screenSessionIdRef.current,
-          pendingDecisionProfileId: decisionContext.targetProfileId,
         });
         trace("swipe_animation_end", {
           swipeDirection: direction,
           frontId: profile.id,
         });
+
+        // ─── Optimistic deck promotion ───────────────────────────────────────────
+        // The next entries are already in memory from the 4-card cache.
+        // Remove the swiped card immediately — no API wait needed.
+        const optimisticEntries = sourceEntries.filter(
+          (e) => !discoveryIdsEqual(e.id, decisionContext.targetProfileId)
+        );
+        promoteDeckAfterDecision(optimisticEntries, {
+          requestId,
+          targetProfileId: decisionContext.targetProfileId,
+          replacementProfileId: null, // replacement arrives via API later
+        });
+
+        if (direction === "right") {
+          setLastLikedProfile(profile);
+        }
+
+        recordDiscoverySwipe(direction, {
+          requestId,
+          targetProfileId: decisionContext.targetProfileId,
+        });
+
+        // ─── Background API call ─────────────────────────────────────────────────
+        // Result is not needed to advance the deck — it just adds the replacement
+        // 4th slot when AppContext updates discoveryFeed and sourceEntries changes.
         void (async () => {
-          let expectedResultQueue: Array<string | number> | null = null;
           const result = await requestDecision(profile, {
             requestId,
             renderedFrontId,
             tapSource: origin,
             decisionContext,
           });
+
           if (!result) {
             debugDiscoveryWarn("swipe_reset_after_no_response", {
               requestId,
               direction,
               targetProfileId: decisionContext.targetProfileId,
             });
-            resetCardState();
             return;
           }
-          const shouldAdvanceQueue =
-            result.decisionApplied ||
-            ((result.decisionRejectedReason === "same_state_existing_decision" ||
-              result.decisionRejectedReason === "duplicate_request_id") &&
-              Boolean(result.replacementProfile));
-          if (!shouldAdvanceQueue) {
-            if (result.decisionRejectedReason === "cursor_stale") {
-              setIsQueueLoading(true);
-              debugDiscoveryWarn("swipe_hard_refresh_after_stale", {
-                requestId,
-                direction,
-                targetProfileId: decisionContext.targetProfileId,
-                queueVersion: result.queueVersion ?? null,
-              });
-              resetCardState();
-              return;
-            }
-            debugDiscoveryLog("swipe_reset_after_noop", {
+
+          if (result.decisionRejectedReason === "cursor_stale") {
+            setIsQueueLoading(true);
+            debugDiscoveryWarn("swipe_hard_refresh_after_stale", {
               requestId,
               direction,
               targetProfileId: decisionContext.targetProfileId,
-              decisionRejectedReason: result.decisionRejectedReason ?? null,
             });
-            resetCardState();
             return;
           }
-          try {
-            const replacementEntry = result.replacementProfile
-              ? buildDiscoveryQueueSlot(result.replacementProfile, "metadata")
-              : null;
-            const promotedEntries = applyDecisionToQueue(
-              sourceEntries.slice(0, 3),
-              decisionContext.targetProfileId,
-              replacementEntry
-            );
-            expectedResultQueue = getDiscoveryQueueIds(
-              promotedEntries
-            );
-            expectedRenderQueueRef.current = {
-              requestId,
-              resultQueue: expectedResultQueue,
-            };
-            promoteDeckAfterDecision(promotedEntries, {
-              requestId,
-              targetProfileId: result.targetProfileId,
-              replacementProfileId: result.replacementProfile?.id ?? null,
-            });
-          } catch (error: any) {
-            const message = error?.message || "UNKNOWN_QUEUE_MUTATION_ERROR";
-            setQueueInvariantViolation(message);
-            logQueueTrace({
-              event: "queue_invariant_violation",
-              requestId,
-              action: direction === "right" ? "like" : "pass",
-              targetProfileId: result.targetProfileId,
-              replacementProfileId: result.replacementProfile?.id ?? null,
-              note: message,
-              source: "decision",
-            });
-          }
 
-          recordDiscoverySwipe(direction, {
-            requestId,
-            targetProfileId: decisionContext.targetProfileId,
-          });
-          if (direction === "right") {
-            setLastLikedProfile(profile);
-          }
-          debugDiscoveryLog("swipe_applied", {
-            requestId,
-            direction,
-            targetProfileId: decisionContext.targetProfileId,
-          });
-
+          // When AppContext commits the updated feed (with replacementProfile),
+          // sourceEntries will change, the deck rebuild effect fires,
+          // and the 4th slot is silently filled without any visible jank.
           if (
             direction === "right" &&
             result.shouldShowDiscoveryUpdate &&
@@ -2529,6 +2497,13 @@ export default function DiscoverScreen() {
             });
             setShowInsight(true);
           }
+
+          debugDiscoveryLog("swipe_applied", {
+            requestId,
+            direction,
+            targetProfileId: decisionContext.targetProfileId,
+            decisionApplied: result.decisionApplied,
+          });
         })();
       };
 
@@ -2562,7 +2537,6 @@ export default function DiscoverScreen() {
       resetPosition,
       resetCardState,
       setQueueInvariantViolation,
-      settleCardVisualState,
       secondReady,
       secondProfile?.id,
       sourceEntries,

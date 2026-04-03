@@ -695,6 +695,7 @@ const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
 const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
 const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
 const DISCOVERY_QUEUE_TRACE_BUFFER_LIMIT = 50;
+const DISCOVERY_QUEUE_CACHE_SIZE = 4;
 const DISABLE_PERSISTED_DISCOVERY_QUEUE_RESTORE = __DEV__;
 
 function createLocationSyncRequestId(prefix = "location_sync") {
@@ -962,7 +963,7 @@ function createEmptyDiscoveryFeed(): DiscoveryFeedState {
 function normalizeDiscoveryFeed(feed: DiscoveryFeedResponse): DiscoveryFeedResponse {
   const profiles = Array.isArray(feed.profiles)
     ? feed.profiles
-        .slice(0, 3)
+        .slice(0, DISCOVERY_QUEUE_CACHE_SIZE)
         .map((profile) => {
           const normalizedProfileId = normalizeDiscoveryProfileId(profile.id);
           return normalizedProfileId === null ? profile : { ...profile, id: normalizedProfileId };
@@ -972,7 +973,7 @@ function normalizeDiscoveryFeed(feed: DiscoveryFeedResponse): DiscoveryFeedRespo
     ...feed,
     profiles,
     windowSize: profiles.length,
-    reserveCount: Math.min(3, profiles.length),
+    reserveCount: Math.min(DISCOVERY_QUEUE_CACHE_SIZE, profiles.length),
   };
 }
 
@@ -1006,21 +1007,23 @@ function normalizeOnboardingStep(step: number | null | undefined) {
  * Check if we have a valid authoritative 3-card discovery window cached.
  * If false, the app MUST call GET /window to get authoritative data.
  * 
- * Rule: Only skip GET /window if we have exactly 3 valid, distinct cards in memory.
+ * Rule: Only skip GET /window if we have at least the 3 visible deck cards cached
+ * (a 4th tail entry may be present for instant promotion).
  */
 export function hasValidDiscoveryWindowCache(
   queueRuntime: DiscoveryQueueRuntime
 ): boolean {
   const items = queueRuntime.queue.items;
   
-  // Must have exactly 3 cards
-  if (!Array.isArray(items) || items.length !== 3) {
+  // Must have at least 3 cards cached (the deck is always 3 visible slots).
+  // We may keep a 4th "tail" entry around for instant promotion.
+  if (!Array.isArray(items) || items.length < 3) {
     return false;
   }
   
-  // All items must have valid IDs and profiles
+  // All *visible* items must have valid IDs and profiles
   const ids = new Set<number>();
-  for (const item of items) {
+  for (const item of items.slice(0, 3)) {
     if (!item || !item.profile || !item.id) {
       return false;
     }
@@ -1295,9 +1298,9 @@ export function buildDiscoveryQueueSlot(
 export function buildDiscoveryQueueSlots(
   profiles: readonly DiscoveryFeedProfileResponse[]
 ): DiscoveryQueueSlot[] {
-  const phases: DiscoveryQueueSlotPhase[] = ["full", "cover", "metadata"];
+  const phases: DiscoveryQueueSlotPhase[] = ["full", "cover", "metadata", "metadata"];
   return profiles
-    .slice(0, 3)
+    .slice(0, DISCOVERY_QUEUE_CACHE_SIZE)
     .map((profile, index) =>
       buildDiscoveryQueueSlot(profile, phases[index] ?? "metadata")
     );
@@ -1326,10 +1329,14 @@ function pruneDiscoveryFeedWindow(
   const nextProfiles = applyDecisionToQueue(
     feed.profiles,
     input.targetProfileId,
-    normalizedReplacementProfile
+    normalizedReplacementProfile,
+    {
+      maxLength: DISCOVERY_QUEUE_CACHE_SIZE,
+    }
   );
   assertDiscoveryQueueInvariants(nextProfiles, {
     targetProfileId: input.targetProfileId,
+    maxLength: DISCOVERY_QUEUE_CACHE_SIZE,
   });
 
   return {
@@ -1341,10 +1348,10 @@ function pruneDiscoveryFeedWindow(
     policyVersion: input.policyVersion || feed.policyVersion,
     generatedAt: new Date().toISOString(),
     windowSize: nextProfiles.length,
-    reserveCount: Math.min(3, nextProfiles.length),
+    reserveCount: Math.min(DISCOVERY_QUEUE_CACHE_SIZE, nextProfiles.length),
     queueInvalidated: false,
     queueInvalidationReason: null,
-    profiles: nextProfiles.slice(0, 3),
+    profiles: nextProfiles.slice(0, DISCOVERY_QUEUE_CACHE_SIZE),
     nextCursor: input.nextCursor,
     hasMore: input.hasMore,
     supply: input.supply,
@@ -4799,7 +4806,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : undefined;
       let refreshedFeed: DiscoveryFeedResponse;
       try {
-        refreshedFeed = await refreshDiscoveryFeed(token, undefined, {
+        refreshedFeed = await refreshDiscoveryFeed(token, DISCOVERY_QUEUE_CACHE_SIZE, {
           headers: requestHeaders,
         });
       } catch (error) {
@@ -4826,7 +4833,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               });
               refreshedFeed = await refreshDiscoveryFeed(
                 refreshedSession.accessToken,
-                undefined,
+                DISCOVERY_QUEUE_CACHE_SIZE,
                 {
                   headers: requestHeaders,
                 }
@@ -4962,7 +4969,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 : { ...profile, id: normalizedProfileId };
             })
             .filter((profile) => !knownIds.has(profile.id)),
-        ],
+        ].slice(0, DISCOVERY_QUEUE_CACHE_SIZE),
         nextCursor: fetchedFeed.nextCursor,
         hasMore: fetchedFeed.hasMore,
         supply: fetchedFeed.supply,

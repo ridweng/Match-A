@@ -68,13 +68,15 @@ export function assertDiscoveryQueueInvariants(
   options?: {
     targetProfileId?: string | number | null;
     expectedHeadId?: string | number | null;
+    maxLength?: number;
   }
 ) {
   const ids = requireQueueIds(queue);
   const expectedHeadId = normalizeDiscoveryProfileId(options?.expectedHeadId);
   const targetProfileId = normalizeDiscoveryProfileId(options?.targetProfileId);
+  const maxLength = Math.max(1, options?.maxLength ?? 4);
 
-  if (ids.length > 3) {
+  if (ids.length > maxLength) {
     throw new Error(`Queue length invariant violated: ${ids.length}`);
   }
 
@@ -105,10 +107,14 @@ export function assertDiscoveryQueueInvariants(
 export function applyDecisionToQueue<T extends DiscoveryQueueProfile>(
   queue: readonly T[],
   targetProfileId: string | number,
-  replacement?: T | null
+  replacement?: T | null,
+  options?: {
+    maxLength?: number;
+  }
 ): T[] {
   const head = queue[0];
   const normalizedTargetProfileId = normalizeDiscoveryProfileId(targetProfileId);
+  const maxLength = Math.max(1, options?.maxLength ?? 4);
 
   if (normalizedTargetProfileId === null) {
     throw new Error(`Queue target id is invalid: ${targetProfileId}`);
@@ -151,9 +157,10 @@ export function applyDecisionToQueue<T extends DiscoveryQueueProfile>(
     next.push(withNormalizedProfileId(replacement, normalizedReplacementId));
   }
 
-  const result = next.slice(0, 3);
+  const result = next.slice(0, maxLength);
   assertDiscoveryQueueInvariants(result, {
     targetProfileId: normalizedTargetProfileId,
+    maxLength,
   });
   return result;
 }

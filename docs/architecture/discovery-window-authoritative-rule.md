@@ -15,8 +15,8 @@
 4. **Tab return from Goals/Profile/Settings** (unless valid cache exists)
 
 ### Only Exception:
-**Skip GET /window** if the app already has an **internal 3-card cache** where:
-- `discoveryQueueRuntime.queue.items.length === 3`
+**Skip GET /window** if the app already has an **internal 3-card visible cache** where:
+- `discoveryQueueRuntime.queue.items.length >= 3` (the app may keep a 4th tail entry cached for instant promotion)
 - All 3 items have valid profile data
 - Items are distinct (no duplicates)
 
@@ -36,14 +36,15 @@ function hasValidDiscoveryWindowCache(
 ): boolean {
   const items = queueRuntime.queue.items;
   
-  // Must have exactly 3 cards
-  if (!Array.isArray(items) || items.length !== 3) {
+  // Must have at least 3 cards cached
+  // (the deck is always 3 visible slots; a 4th tail entry may be cached).
+  if (!Array.isArray(items) || items.length < 3) {
     return false;
   }
   
   // All items must have valid IDs and profiles
   const ids = new Set<number>();
-  for (const item of items) {
+  for (const item of items.slice(0, 3)) {
     if (!item || !item.profile || !item.id) {
       return false;
     }

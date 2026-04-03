@@ -76,7 +76,7 @@ const discoveryFeedQuerySchema = z.object({
 });
 
 const discoveryWindowQuerySchema = z.object({
-  size: z.coerce.number().int().min(1).max(3).optional(),
+  size: z.coerce.number().int().min(1).max(4).optional(),
   cursor: z.string().trim().max(512).optional(),
 });
 

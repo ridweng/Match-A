@@ -52,7 +52,7 @@ export const DISCOVERY_POLICY_V1 = {
   visibleDeckSize: 3,
   replacementBatchSize: 1,
   refillThreshold: 1,
-  windowMaxSize: 3,
+  windowMaxSize: 4,
   bucketPriority: ["real", "dummy"] as const,
   dominantReasonOrder: [
     "already_decided",
