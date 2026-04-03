@@ -4,11 +4,12 @@ ENV PATH="$PNPM_HOME:$PATH"
 RUN corepack enable
 
 FROM base AS builder
+ENV CI=true
 WORKDIR /app
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --dir artifacts/api-server build
-RUN pnpm prune --prod
+RUN pnpm prune --prod --config.confirmModulesPurge=false
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
