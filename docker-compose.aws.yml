@@ -142,6 +142,7 @@ services:
     volumes:
       - ./Caddyfile.aws:/etc/caddy/Caddyfile:ro
       - ./ops/landing:/srv/landing:ro
+      - ./artifacts/matcha-app/assets/images:/srv/app-assets:ro
       - caddy_data:/data
       - caddy_config:/config
 
