@@ -1183,13 +1183,14 @@ export default function DiscoverScreen() {
   const hasDeckProfiles = Boolean(frontProfile);
   const showQueueLoading =
     (isQueueLoading || discoveryQueueRuntime.status === "hard_refreshing") && !hasDeckProfiles;
-  const canAct =
+  const canInteract =
     !isOffline &&
-    !isQueueLoading &&
-    discoveryQueueRuntime.status === "idle" &&
-    !hasPendingDecision &&
     Boolean(frontProfile) &&
     discoveryIdsEqual(logicalActiveProfileId, frontProfile?.id ?? null);
+  const canSubmitImmediately =
+    !isQueueLoading &&
+    discoveryQueueRuntime.status !== "hard_refreshing" &&
+    !hasPendingDecision;
   const logQueueTrace = useCallback(
     (
       payload: Omit<
@@ -1210,11 +1211,11 @@ export default function DiscoverScreen() {
         visibleQueue: logicalQueueIds,
         renderedQueue: renderedQueueIds,
         activeProfileId: renderedQueueIds[0] ?? null,
-        canAct,
+        canAct: canInteract,
       });
     },
     [
-      canAct,
+      canInteract,
       discoveryFeed.policyVersion,
       discoveryFeed.queueVersion,
       logicalQueueIds,
@@ -1459,7 +1460,7 @@ export default function DiscoverScreen() {
   }, [deck]);
 
   useEffect(() => {
-    if (hasPendingDecision || isDeckAnimating || isQueueLoading) {
+    if (isDeckAnimating || isQueueLoading) {
       return;
     }
 
@@ -1482,7 +1483,6 @@ export default function DiscoverScreen() {
 
     setQueueInvariantViolation(null);
   }, [
-    hasPendingDecision,
     isDeckAnimating,
     isQueueLoading,
     logicalQueueIds,
@@ -1492,7 +1492,7 @@ export default function DiscoverScreen() {
 
   useEffect(() => {
     const expected = expectedRenderQueueRef.current;
-    if (!expected || hasPendingDecision || isDeckAnimating || isQueueLoading) {
+    if (!expected || isDeckAnimating || isQueueLoading) {
       return;
     }
 
@@ -1524,7 +1524,6 @@ export default function DiscoverScreen() {
     expectedRenderQueueRef.current = null;
   }, [
     discoveryQueueRuntime.lastReplacementProfileId,
-    hasPendingDecision,
     isDeckAnimating,
     isQueueLoading,
     logQueueTrace,
@@ -1532,7 +1531,7 @@ export default function DiscoverScreen() {
   ]);
 
   useEffect(() => {
-    if (!isQueueLoading || hasPendingDecision) {
+    if (!isQueueLoading) {
       return;
     }
 
@@ -1542,7 +1541,6 @@ export default function DiscoverScreen() {
   }, [
     discoveryFeed.generatedAt,
     discoveryFeed.supply?.fetchedAt,
-    hasPendingDecision,
     isQueueLoading,
   ]);
 
@@ -2420,25 +2418,6 @@ export default function DiscoverScreen() {
         });
         return false;
       }
-      if (hasPendingDecision) {
-        logQueueTrace({
-          event: "queue_action_blocked",
-          requestId: discoveryQueueRuntime.lastRequestId,
-          action,
-          targetProfileId,
-          logicalHeadId: logicalActiveProfileId,
-          renderedFrontId,
-          decisionRejectedReason: "pending_decision",
-          hasAccessToken,
-          authStatus,
-          isOffline,
-          isDeckAnimating,
-          hasPendingDecision: true,
-          note: "Action blocked: pending decision already in flight",
-          source: "render",
-        });
-        return false;
-      }
       if (isOffline) {
         logQueueTrace({
           event: "queue_action_blocked",
@@ -2458,11 +2437,11 @@ export default function DiscoverScreen() {
         });
         return false;
       }
-      if (!canAct) {
+      if (!canInteract) {
         const isRenderHeadMismatch = !discoveryIdsEqual(logicalActiveProfileId, frontProfile.id);
         const message = isRenderHeadMismatch
           ? `Action blocked: logical head ${logicalActiveProfileId ?? "none"} does not match rendered front ${renderedFrontId ?? "none"}`
-          : "Action blocked: queue runtime reported canAct=false";
+          : "Action blocked: discovery interaction prerequisites are not satisfied";
         if (__DEV__ && isRenderHeadMismatch) {
           setQueueInvariantViolation(message);
         }
@@ -2646,7 +2625,8 @@ export default function DiscoverScreen() {
     [
       animateButtonSwipeFeedback,
       buildPopularUpdateMessage,
-      canAct,
+      canInteract,
+      canSubmitImmediately,
       discoveryFeed.policyVersion,
       discoveryFeed.queueVersion,
       discoveryQueueRuntime.lastRequestId,
@@ -2676,18 +2656,18 @@ export default function DiscoverScreen() {
 
   const swipeRight = useCallback(
     (origin: SwipeCommitOrigin = "button") => {
-      console.log("[swipe] swipeRight called", { canAct, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
+      console.log("[swipe] swipeRight called", { canInteract, canSubmitImmediately, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
       return commitDiscoverySwipe("right", origin);
     },
-    [commitDiscoverySwipe, canAct, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
+    [commitDiscoverySwipe, canInteract, canSubmitImmediately, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
   );
 
   const swipeLeft = useCallback(
     (origin: SwipeCommitOrigin = "button") => {
-      console.log("[swipe] swipeLeft called", { canAct, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
+      console.log("[swipe] swipeLeft called", { canInteract, canSubmitImmediately, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, status: discoveryQueueRuntime.status });
       return commitDiscoverySwipe("left", origin);
     },
-    [commitDiscoverySwipe, canAct, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
+    [commitDiscoverySwipe, canInteract, canSubmitImmediately, frontProfile?.id, logicalActiveProfileId, isDeckAnimating, hasPendingDecision, isQueueLoading, discoveryQueueRuntime.status],
   );
 
   const panResponder = useMemo(
@@ -2695,7 +2675,7 @@ export default function DiscoverScreen() {
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (!canAct) {
+          if (!canInteract) {
             return false;
           }
           const horizontalIntent =
@@ -2814,7 +2794,7 @@ export default function DiscoverScreen() {
         },
       }),
     [
-      canAct,
+      canInteract,
       getTraceSnapshot,
       isInfoVisible,
       resetPosition,
@@ -3378,15 +3358,15 @@ export default function DiscoverScreen() {
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
             <Pressable
               onPress={() => swipeLeft("button")}
-              disabled={!canAct}
+              disabled={!canInteract}
               testID="discover-pass-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
-                !canAct && styles.actionBtnDisabled,
+                !canInteract && styles.actionBtnDisabled,
                 isOffline && styles.actionBtnOffline,
                 {
-                  opacity: pressed && canAct ? 0.7 : 1,
+                  opacity: pressed && canInteract ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
                 },
               ]}
@@ -3394,7 +3374,7 @@ export default function DiscoverScreen() {
               <Feather
                 name="x"
                 size={26}
-                color={canAct ? Colors.dislike : Colors.textMuted}
+                color={canInteract ? Colors.dislike : Colors.textMuted}
               />
             </Pressable>
 
@@ -3416,15 +3396,15 @@ export default function DiscoverScreen() {
 
             <Pressable
               onPress={() => swipeRight("button")}
-              disabled={!canAct}
+              disabled={!canInteract}
               testID="discover-like-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
-                !canAct && styles.actionBtnDisabled,
+                !canInteract && styles.actionBtnDisabled,
                 isOffline && styles.actionBtnOffline,
                 {
-                  opacity: pressed && canAct ? 0.7 : 1,
+                  opacity: pressed && canInteract ? 0.7 : 1,
                   transform: [{ scale: pressed ? 0.93 : 1 }],
                 },
               ]}
@@ -3432,7 +3412,7 @@ export default function DiscoverScreen() {
               <Feather
                 name="heart"
                 size={26}
-                color={canAct ? Colors.like : Colors.textMuted}
+                color={canInteract ? Colors.like : Colors.textMuted}
               />
             </Pressable>
           </View>

@@ -69,7 +69,6 @@ type DiscoveryFeedImageRow = {
   profile_image_id: number;
   sort_order: number;
   media_asset_id: number;
-  public_url: string | null;
 };
 
 type DiscoveryFeedLanguageRow = {
@@ -1036,8 +1035,7 @@ export class DiscoveryService {
            pi.profile_id,
            pi.id AS profile_image_id,
            pi.sort_order,
-           ma.id AS media_asset_id,
-           ma.public_url
+           ma.id AS media_asset_id
          FROM media.profile_images pi
          JOIN media.media_assets ma ON ma.id = pi.media_asset_id
          WHERE pi.profile_id = ANY($1::bigint[])
@@ -1078,7 +1076,7 @@ export class DiscoveryService {
     const imagesByProfile = new Map<number, string[]>();
     const debugPhotosByProfile = new Map<number, DiscoveryDebugPhoto[]>();
     for (const row of imagesResult.rows) {
-      const resolvedUrl = row.public_url || this.buildPublicMediaUrl(Number(row.media_asset_id));
+      const resolvedUrl = this.buildPublicMediaUrl(Number(row.media_asset_id));
       if (!resolvedUrl) {
         continue;
       }

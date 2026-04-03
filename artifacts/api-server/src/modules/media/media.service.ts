@@ -18,7 +18,6 @@ type ProfilePhotoRow = {
   sort_order: number;
   is_primary: boolean;
   updated_at: string | Date;
-  public_url: string | null;
   mime_type: string;
   status: "pending" | "ready" | "deleted";
 };
@@ -86,7 +85,6 @@ export class MediaService {
          pi.sort_order,
          pi.is_primary,
          ma.updated_at,
-         ma.public_url,
          ma.mime_type,
          ma.status
        FROM media.profile_images pi
@@ -103,7 +101,7 @@ export class MediaService {
         sortOrder: Number(row.sort_order),
         isPrimary: Boolean(row.is_primary),
         updatedAt: new Date(row.updated_at).toISOString(),
-        remoteUrl: row.public_url || this.buildPublicUrl(Number(row.media_asset_id)),
+        remoteUrl: this.buildPublicUrl(Number(row.media_asset_id)),
         mimeType: row.mime_type,
         status: row.status === "pending" ? "pending" : "ready",
       })),
