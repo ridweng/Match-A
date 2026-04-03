@@ -165,6 +165,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -212,6 +213,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -251,6 +253,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -281,6 +284,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -318,6 +322,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -382,6 +387,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||
@@ -419,6 +425,7 @@ export class DiscoveryController {
           });
         }
         if (
+          error.message === "INVALID_SESSION" ||
           error.message === "UNAUTHORIZED" ||
           error.message === "SESSION_NOT_FOUND" ||
           error.message === "ACCESS_TOKEN_EXPIRED" ||

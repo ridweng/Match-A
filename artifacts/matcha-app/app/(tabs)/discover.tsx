@@ -1913,6 +1913,59 @@ export default function DiscoverScreen() {
     backScrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [deckProgress, flipAnim, position, swipeFeedbackX]);
 
+  const promoteDeckAfterDecision = useCallback(
+    (
+      nextEntries: DiscoverEntry[],
+      options: {
+        requestId: string;
+        targetProfileId: number;
+        replacementProfileId: number | null;
+      }
+    ) => {
+      const trimmedEntries = nextEntries.slice(0, DISCOVERY_PAGE_SIZE);
+      const nextDeck = buildDeckState(trimmedEntries, 0);
+      const nextFront = getDeckSlotByRole(nextDeck, "front").entry;
+      const nextSecond = getDeckSlotByRole(nextDeck, "second").entry;
+      const nextThird = getDeckSlotByRole(nextDeck, "third").entry;
+
+      trace("advance_deck_before", {
+        requestId: options.requestId,
+        targetProfileId: options.targetProfileId,
+        replacementProfileId: options.replacementProfileId,
+        previousFrontId: getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null,
+        nextQueue: getDiscoveryQueueIds(trimmedEntries),
+      });
+
+      deckRef.current = nextDeck;
+      setDeck(nextDeck);
+      setLoadedCount(Math.max(DISCOVERY_PAGE_SIZE, trimmedEntries.length));
+      setFrontCachedProfileId(null);
+      setFrontCachedImages([]);
+      setFrontImageLoading(Boolean(nextFront?.coverImage ?? nextFront?.images?.[0]));
+
+      trace("promotion_committed", {
+        requestId: options.requestId,
+        targetProfileId: options.targetProfileId,
+        replacementProfileId: options.replacementProfileId,
+        frontId: nextFront?.id ?? null,
+        secondId: nextSecond?.id ?? null,
+        thirdId: nextThird?.id ?? null,
+      });
+
+      settleCardVisualState();
+
+      trace("advance_deck_after", {
+        requestId: options.requestId,
+        targetProfileId: options.targetProfileId,
+        replacementProfileId: options.replacementProfileId,
+        frontId: nextFront?.id ?? null,
+        secondId: nextSecond?.id ?? null,
+        thirdId: nextThird?.id ?? null,
+      });
+    },
+    [settleCardVisualState, trace]
+  );
+
   const markSlotReady = useCallback((slotName: DeckSlotName, profileId: number) => {
     trace("slot_ready_mark", {
       slotName,
@@ -2416,19 +2469,26 @@ export default function DiscoverScreen() {
             return;
           }
           try {
+            const replacementEntry = result.replacementProfile
+              ? buildDiscoveryQueueSlot(result.replacementProfile, "metadata")
+              : null;
+            const promotedEntries = applyDecisionToQueue(
+              sourceEntries.slice(0, 3),
+              decisionContext.targetProfileId,
+              replacementEntry
+            );
             expectedResultQueue = getDiscoveryQueueIds(
-              applyDecisionToQueue(
-                sourceEntries.slice(0, 3),
-                decisionContext.targetProfileId,
-                result.replacementProfile
-                  ? buildDiscoveryQueueSlot(result.replacementProfile, "metadata")
-                  : null
-              )
+              promotedEntries
             );
             expectedRenderQueueRef.current = {
               requestId,
               resultQueue: expectedResultQueue,
             };
+            promoteDeckAfterDecision(promotedEntries, {
+              requestId,
+              targetProfileId: result.targetProfileId,
+              replacementProfileId: result.replacementProfile?.id ?? null,
+            });
           } catch (error: any) {
             const message = error?.message || "UNKNOWN_QUEUE_MUTATION_ERROR";
             setQueueInvariantViolation(message);
@@ -2468,8 +2528,6 @@ export default function DiscoverScreen() {
               body: message.body,
             });
             setShowInsight(true);
-
-            settleCardVisualState();
           }
         })();
       };
@@ -2508,6 +2566,7 @@ export default function DiscoverScreen() {
       secondReady,
       secondProfile?.id,
       sourceEntries,
+      promoteDeckAfterDecision,
       trace,
     ]
   );

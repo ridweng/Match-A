@@ -34,7 +34,7 @@ const envSchema = z
       .default("matcha:///auth-callback"),
     AUTH_SESSION_SECRET: z.string().trim().min(1).default("matcha-dev-secret"),
     AUTH_MINIMUM_AGE: integerLikeSchema.default(18),
-    AUTH_ACCESS_TTL_MINUTES: integerLikeSchema.default(15),
+    AUTH_ACCESS_TTL_MINUTES: integerLikeSchema.default(43200),
     AUTH_REFRESH_TTL_DAYS: integerLikeSchema.default(30),
     AUTH_PASSWORD_RESET_TTL_MINUTES: integerLikeSchema.default(60),
     AUTH_EMAIL_VERIFICATION_TTL_MINUTES: integerLikeSchema.default(1440),
@@ -105,7 +105,7 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
       env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",
     AUTH_SESSION_SECRET: env.AUTH_SESSION_SECRET ?? "matcha-dev-secret",
     AUTH_MINIMUM_AGE: env.AUTH_MINIMUM_AGE ?? "18",
-    AUTH_ACCESS_TTL_MINUTES: env.AUTH_ACCESS_TTL_MINUTES ?? "15",
+    AUTH_ACCESS_TTL_MINUTES: env.AUTH_ACCESS_TTL_MINUTES ?? "43200",
     AUTH_REFRESH_TTL_DAYS: env.AUTH_REFRESH_TTL_DAYS ?? "30",
     AUTH_PASSWORD_RESET_TTL_MINUTES:
       env.AUTH_PASSWORD_RESET_TTL_MINUTES ?? "60",

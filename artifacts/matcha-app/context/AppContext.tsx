@@ -17,6 +17,7 @@ import { AppState, Keyboard, Platform, type AppStateStatus } from "react-native"
 
 import {
   acknowledgeGoalsUnlockSeen as acknowledgeGoalsUnlockSeenRequest,
+  type AuthSessionResponse,
   type AuthCallbackPayload,
   type AuthUser,
   type DiscoveryFilters,
@@ -1408,6 +1409,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const accessTokenRef = useRef<string | null>(null);
   const [, setRefreshToken] = useState<string | null>(null);
   const refreshTokenRef = useRef<string | null>(null);
+  const sessionRefreshPromiseRef = useRef<Promise<AuthSessionResponse> | null>(null);
   const [language, setLanguageState] = useState<"es" | "en">("es");
   const languageRef = useRef<"es" | "en">("es");
   const [heightUnit, setHeightUnitState] = useState<HeightUnit>("metric");
@@ -2587,6 +2589,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ]);
   }, []);
 
+  const refreshSessionSingleFlight = useCallback(async (refreshToken: string) => {
+    if (sessionRefreshPromiseRef.current) {
+      return sessionRefreshPromiseRef.current;
+    }
+
+    const request = refreshSession(refreshToken);
+    const wrapped = request.finally(() => {
+      if (sessionRefreshPromiseRef.current === wrapped) {
+        sessionRefreshPromiseRef.current = null;
+      }
+    });
+
+    sessionRefreshPromiseRef.current = wrapped;
+    return wrapped;
+  }, []);
+
   const setSignInPrefill = useCallback((email: string | null | undefined) => {
     if (!email) return;
     setAuthFormPrefill({
@@ -2598,7 +2616,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const applySession = useCallback(
     async (session: {
       accessToken: string;
-      refreshToken: string;
+      refreshToken: string | null;
       user: AuthUser;
       needsProfileCompletion: boolean;
       hasCompletedOnboarding: boolean;
@@ -2628,10 +2646,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSessionOfflineFallback(false);
       await Promise.all([
         AsyncStorage.setItem(LAST_AUTH_USER_ID_STORAGE_KEY, String(normalizedSessionUser.id)),
-        AsyncStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY),
+        AsyncStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, session.accessToken),
         AsyncStorage.removeItem("profile"),
         AsyncStorage.removeItem("goals"),
-        SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, session.refreshToken),
+        session.refreshToken
+          ? SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, session.refreshToken)
+          : SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY),
       ]);
 
       let bootstrap: ViewerBootstrapCache;
@@ -2747,7 +2767,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const hydrateSessionFromTokens = useCallback(
-    async (tokens: { accessToken: string; refreshToken: string }) => {
+    async (tokens: { accessToken: string; refreshToken: string | null }) => {
       const me = await getMe(tokens.accessToken);
       await applySession({
         accessToken: tokens.accessToken,
@@ -4772,15 +4792,85 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const previousFeed = discoveryFeedRef.current;
-      const feed = normalizeDiscoveryFeed(
-        await refreshDiscoveryFeed(token, undefined, {
-          headers: options?.requestId
-            ? {
-                "X-Matcha-Request-Id": options.requestId,
+      const requestHeaders = options?.requestId
+        ? {
+            "X-Matcha-Request-Id": options.requestId,
+          }
+        : undefined;
+      let refreshedFeed: DiscoveryFeedResponse;
+      try {
+        refreshedFeed = await refreshDiscoveryFeed(token, undefined, {
+          headers: requestHeaders,
+        });
+      } catch (error) {
+        const isAuthRefreshFailure =
+          error instanceof ApiError &&
+          [
+            "INVALID_SESSION",
+            "UNAUTHORIZED",
+            "SESSION_NOT_FOUND",
+            "ACCESS_TOKEN_EXPIRED",
+            "INVALID_ACCESS_TOKEN",
+          ].includes(error.code);
+
+        if (isAuthRefreshFailure) {
+          const storedRefreshToken =
+            refreshTokenRef.current ||
+            (await SecureStore.getItemAsync(REFRESH_TOKEN_STORAGE_KEY));
+
+          if (storedRefreshToken) {
+            try {
+              const refreshedSession = await refreshSessionSingleFlight(storedRefreshToken);
+              await applySession(refreshedSession, {
+                restoreOnboardingDraft: true,
+              });
+              refreshedFeed = await refreshDiscoveryFeed(
+                refreshedSession.accessToken,
+                undefined,
+                {
+                  headers: requestHeaders,
+                }
+              );
+            } catch (refreshError: any) {
+              debugDiscoveryWarn("feed_refresh_session_retry_failed", {
+                requestId: options?.requestId || null,
+                reason: options?.reason || "manual",
+                errorCode:
+                  refreshError instanceof ApiError
+                    ? refreshError.code
+                    : refreshError?.code || error.code,
+              });
+
+              if (previousFeed.profiles.length > 0) {
+                debugDiscoveryWarn("feed_refresh_preserved_existing_queue", {
+                  requestId: options?.requestId || null,
+                  reason: options?.reason || "manual",
+                  errorCode:
+                    refreshError instanceof ApiError
+                      ? refreshError.code
+                      : refreshError?.code || error.code,
+                  preservedVisibleQueue: getDiscoveryQueueIds(previousFeed.profiles.slice(0, 3)),
+                });
+                return previousFeed;
               }
-            : undefined,
-        })
-      );
+
+              throw refreshError;
+            }
+          } else if (previousFeed.profiles.length > 0) {
+            debugDiscoveryWarn("feed_refresh_preserved_existing_queue", {
+              requestId: options?.requestId || null,
+              reason: options?.reason || "manual",
+              errorCode: error.code,
+              preservedVisibleQueue: getDiscoveryQueueIds(previousFeed.profiles.slice(0, 3)),
+            });
+            return previousFeed;
+          }
+        }
+
+        throw error;
+      }
+
+      const feed = normalizeDiscoveryFeed(refreshedFeed);
       const statusOverride =
         options?.reason === "cursor_stale"
           ? deriveDiscoveryQueueStatus(feed)
