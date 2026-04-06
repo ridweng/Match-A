@@ -702,23 +702,6 @@ export default function OnboardingScreen() {
           placeholder={t("Selecciona una opción", "Select an option")}
           getOptionLabel={(value) => getPersonalityLabel(value, t)}
         />
-
-        {__DEV__ ? (
-          <View style={styles.debugCard} testID="onboarding-photo-debug">
-            <Text style={styles.debugTitle}>
-              {t("Inspector de onboarding", "Onboarding inspector")}
-            </Text>
-            <Text style={styles.debugLine} testID="onboarding-primary-photo-match">
-              {`primaryMatchStatus=${primaryPhotoMatchKind ? "ok" : "mismatch"} primaryMatch=${primaryPhotoMatchKind || "none"}`}
-            </Text>
-            <Text style={styles.debugLine} testID="onboarding-primary-photo-debug">
-              {`onboardingPrimary profileImageId=${onboardingMainPhoto?.profileImageId ?? "null"} mediaAssetId=${onboardingMainPhoto?.mediaAssetId ?? "null"} sortOrder=${onboardingMainPhoto?.sortOrder ?? "null"} source=${getProfilePhotoSource(onboardingMainPhoto)}`}
-            </Text>
-            <Text style={styles.debugLine} testID="onboarding-canonical-photo-debug">
-              {`profilePrimary profileImageId=${canonicalMainPhoto?.profileImageId ?? "null"} mediaAssetId=${canonicalMainPhoto?.mediaAssetId ?? "null"} sortOrder=${canonicalMainPhoto?.sortOrder ?? "null"} source=${getProfilePhotoSource(canonicalMainPhoto)}`}
-            </Text>
-          </View>
-        ) : null}
       </View>
 
       {formError || authError ? (

@@ -60,10 +60,6 @@ import {
   warmDiscoveryProfileImages,
 } from "@/utils/discoveryPreload";
 import {
-  cacheDiscoveryFrontCardImages,
-  clearDiscoveryFrontCardCache,
-} from "@/utils/discoveryFrontCardCache";
-import {
   applyDecisionToQueue,
   assertDiscoveryQueueInvariants,
   discoveryIdsEqual,
@@ -116,6 +112,23 @@ const DISCOVERY_TRACE_EVENTS = new Set([
   "state_change_during_animation",
 ]);
 
+type SlotId = "slotA" | "slotB" | "slotC";
+type SlotPhase = "full" | "cover" | "metadata";
+type SlotContent = {
+  profileId: number;
+  publicId: string;
+  profile: DiscoverProfile;
+  phase: SlotPhase;
+  images: string[];
+  coverImageUri: string | null;
+};
+type StableDeck = {
+  front: SlotId; second: SlotId; third: SlotId;
+  slotA: SlotContent | null;
+  slotB: SlotContent | null;
+  slotC: SlotContent | null;
+};
+
 type SwipeState = "idle" | "like" | "dislike";
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
 type AgeBounds = {
@@ -127,22 +140,7 @@ type PopularUpdateBanner = {
   title: string;
   body: string;
 };
-type DeckSlotName = "front" | "second" | "third";
 type DiscoverEntry = DiscoveryQueueSlot;
-type DeckShellId = "shellA" | "shellB" | "shellC";
-type DeckSlotState = {
-  shellId: DeckShellId;
-  entry: DiscoverEntry | null;
-  index: number | null;
-  primaryReady: boolean;
-  extraPhotosReady: boolean;
-};
-type DeckState = {
-  shells: Record<DeckShellId, DeckSlotState>;
-  order: Record<DeckSlotName, DeckShellId>;
-  frontIndex: number;
-  queueCursor: number;
-};
 type SwipeDirection = "left" | "right";
 type SwipeCommitOrigin = "gesture" | "button";
 type TraceLayout = {
@@ -289,175 +287,84 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function createDeckSlot(
-  shellId: DeckShellId,
-  entry: DiscoverEntry | null,
-  index: number | null,
-  primaryReady = false,
-  extraPhotosReady = false
-): DeckSlotState {
+function makeSlotContent(
+  profile: DiscoverProfile,
+  phase: SlotPhase
+): SlotContent {
+  const coverImageUri = profile.images[0] ?? null;
+  const images =
+    phase === "full"
+      ? profile.images
+      : phase === "cover" && coverImageUri
+        ? [coverImageUri]
+        : [];
   return {
-    shellId,
-    entry,
-    index,
-    primaryReady: entry ? primaryReady : true,
-    extraPhotosReady: entry ? extraPhotosReady : true,
+    profileId: profile.id,
+    publicId: (profile as any).publicId ?? String(profile.id),
+    profile,
+    phase,
+    images,
+    coverImageUri,
   };
 }
 
-function getDeckSlotByRole(deck: DeckState, role: DeckSlotName) {
-  return deck.shells[deck.order[role]];
-}
-
-function updateDeckSlot(
-  deck: DeckState,
-  shellId: DeckShellId,
-  updater: (slot: DeckSlotState) => DeckSlotState
-): DeckState {
-  const current = deck.shells[shellId];
-  const next = updater(current);
-  if (next === current) {
-    return deck;
-  }
-
+function buildStableDeck(entries: DiscoverEntry[]): StableDeck {
   return {
-    ...deck,
-    shells: {
-      ...deck.shells,
-      [shellId]: next,
-    },
+    front: "slotA",
+    second: "slotB",
+    third: "slotC",
+    slotA: entries[0] ? makeSlotContent(entries[0].profile, "full") : null,
+    slotB: entries[1] ? makeSlotContent(entries[1].profile, "cover") : null,
+    slotC: entries[2] ? makeSlotContent(entries[2].profile, "metadata") : null,
   };
 }
 
-function getSlotProfile(entry: DiscoverEntry | null) {
-  return entry?.profile ?? null;
-}
-
-function isPrimaryImageReady(entry: DiscoverEntry | null) {
-  const profile = getSlotProfile(entry);
-  return profile ? isDiscoveryProfileWarm(profile, 1) : true;
-}
-
-function areFrontExtrasReady(entry: DiscoverEntry | null) {
-  const profile = getSlotProfile(entry);
-  if (!profile || profile.images.length <= 1) {
-    return true;
-  }
-
-  return isDiscoveryProfileWarm(profile, profile.images.length - 1, 1);
-}
-
-function getNextDistinctIndex(
-  entries: DiscoverEntry[],
-  startIndex: number,
-  excludedIds: Set<number>
-) {
-  if (!entries.length || excludedIds.size >= entries.length || startIndex >= entries.length) {
-    return null;
-  }
-
-  for (
-    let candidateIndex = Math.max(0, startIndex);
-    candidateIndex < entries.length;
-    candidateIndex += 1
-  ) {
-    const candidate = entries[candidateIndex];
-    if (candidate && !excludedIds.has(candidate.id)) {
-      return candidateIndex;
-    }
-  }
-
-  return null;
-}
-
-function buildDeckState(entries: DiscoverEntry[], startIndex = 0): DeckState {
-  if (!entries.length) {
-    return {
-      shells: {
-        shellA: createDeckSlot("shellA", null, null, true, true),
-        shellB: createDeckSlot("shellB", null, null, true, true),
-        shellC: createDeckSlot("shellC", null, null, true, true),
-      },
-      order: {
-        front: "shellA",
-        second: "shellB",
-        third: "shellC",
-      },
-      frontIndex: 0,
-      queueCursor: 0,
-    };
-  }
-
-  const safeStart = Math.max(0, startIndex);
-  if (safeStart >= entries.length) {
-    return {
-      shells: {
-        shellA: createDeckSlot("shellA", null, null, true, true),
-        shellB: createDeckSlot("shellB", null, null, true, true),
-        shellC: createDeckSlot("shellC", null, null, true, true),
-      },
-      order: {
-        front: "shellA",
-        second: "shellB",
-        third: "shellC",
-      },
-      frontIndex: safeStart,
-      queueCursor: safeStart,
-    };
-  }
-  const front = entries[safeStart] ?? null;
-  const secondIndex = getNextDistinctIndex(
-    entries,
-    safeStart + 1,
-    new Set(front ? [front.id] : [])
-  );
-  const second = secondIndex == null ? null : entries[secondIndex] ?? null;
-  const thirdIndex = getNextDistinctIndex(
-    entries,
-    (secondIndex ?? safeStart) + 1,
-    new Set([front?.id, second?.id].filter((value): value is number => typeof value === "number"))
-  );
-  const third = thirdIndex == null ? null : entries[thirdIndex] ?? null;
-  const lastAssignedIndex = thirdIndex ?? secondIndex ?? safeStart;
-
+// Rotates roles. The Animated.View keys never change.
+// The recycled front slot gets the replacement profile.
+function rotateStableDeck(
+  current: StableDeck,
+  replacementProfile: DiscoverProfile | null
+): StableDeck {
+  const recycled = current.front; // this slot gets new content
   return {
-    shells: {
-      shellA: createDeckSlot(
-        "shellA",
-        front,
-        safeStart,
-        isPrimaryImageReady(front),
-        areFrontExtrasReady(front)
-      ),
-      shellB: createDeckSlot(
-        "shellB",
-        second,
-        secondIndex,
-        isPrimaryImageReady(second),
-        false
-      ),
-      shellC: createDeckSlot("shellC", third, thirdIndex, true, false),
-    },
-    order: {
-      front: "shellA",
-      second: "shellB",
-      third: "shellC",
-    },
-    frontIndex: safeStart,
-    queueCursor: lastAssignedIndex + 1,
+    front: current.second,
+    second: current.third,
+    third: recycled,
+    slotA: current.slotA,
+    slotB: current.slotB,
+    slotC: current.slotC,
+    // Overwrite only the recycled slot
+    [recycled]: replacementProfile
+      ? makeSlotContent(replacementProfile, "metadata")
+      : null,
   };
 }
 
-function getAnchoredDeckStartIndex(
-  entries: DiscoverEntry[],
-  currentFrontProfileId: number | null
-) {
-  if (!entries.length || !currentFrontProfileId) {
-    return 0;
-  }
+function getSlotContent(
+  stableDeck: StableDeck,
+  role: "front" | "second" | "third"
+): SlotContent | null {
+  return stableDeck[stableDeck[role]];
+}
 
-  const nextIndex = entries.findIndex((entry) => entry.id === currentFrontProfileId);
-  return nextIndex >= 0 ? nextIndex : 0;
+// When the second slot promotes to front, upgrade its phase to "full"
+function upgradeSlotToFull(stableDeck: StableDeck, slotId: SlotId): StableDeck {
+  const current = stableDeck[slotId];
+  if (!current || current.phase === "full") return stableDeck;
+  return {
+    ...stableDeck,
+    [slotId]: makeSlotContent(current.profile, "full"),
+  };
+}
+
+// When the third slot promotes to second, upgrade its phase to "cover"
+function upgradeSlotToCover(stableDeck: StableDeck, slotId: SlotId): StableDeck {
+  const current = stableDeck[slotId];
+  if (!current || current.phase !== "metadata") return stableDeck;
+  return {
+    ...stableDeck,
+    [slotId]: makeSlotContent(current.profile, "cover"),
+  };
 }
 
 function normalizeSelectedGenders(values: BaseGender[]) {
@@ -704,11 +611,9 @@ export default function DiscoverScreen() {
   const [isFilterVisible, setIsFilterVisible] = useState(false);
   const [draftFilters, setDraftFilters] = useState<DiscoveryFilters>(activeFilters);
   const [isDeckAnimating, setIsDeckAnimating] = useState(false);
-  const [loadedCount, setLoadedCount] = useState(DISCOVERY_PAGE_SIZE);
-  const [deck, setDeck] = useState<DeckState>(() => buildDeckState([], 0));
-  const [frontCachedImages, setFrontCachedImages] = useState<string[]>([]);
-  const [frontCachedProfileId, setFrontCachedProfileId] = useState<number | null>(null);
-  const [frontImageLoading, setFrontImageLoading] = useState(false);
+  const [stableDeck, setStableDeck] = useState<StableDeck>(() => buildStableDeck([]));
+  const stableDeckRef = useRef<StableDeck>(stableDeck);
+  const swipingRef = useRef(false);
   const [locationPromptVisible, setLocationPromptVisible] = useState(false);
   const [locationPromptReason, setLocationPromptReason] = useState<
     "permission_denied" | "services_disabled" | "sync_failed" | null
@@ -717,7 +622,6 @@ export default function DiscoverScreen() {
   const [isQueueLoading, setIsQueueLoading] = useState(false);
   const [queueInvariantViolation, setQueueInvariantViolation] = useState<string | null>(null);
   const pendingLocationSettingsReturnRef = useRef(false);
-  const deckRef = useRef<DeckState>(deck);
   const screenSessionIdRef = useRef(createTraceId("discover"));
   const swipeSessionIdRef = useRef<string | null>(null);
   const swipeDirectionRef = useRef<SwipeDirection | null>(null);
@@ -926,12 +830,6 @@ export default function DiscoverScreen() {
           status: result.status,
           nextLocation: result.nextLocation ?? null,
         });
-        if (user?.id) {
-          await clearDiscoveryFrontCardCache(user.id).catch(() => {});
-        }
-        setFrontCachedImages([]);
-        setFrontCachedProfileId(null);
-        setFrontImageLoading(false);
         setLocationPromptVisible(false);
         setLocationPromptReason(null);
         setIsLocationPromptBusy(false);
@@ -1113,18 +1011,24 @@ export default function DiscoverScreen() {
   const hasMoreServerProfiles = Boolean(discoveryFeed.hasMore);
   const hasFilterMatches = sourceEntries.length > 0;
   const hasCatalogMatches = eligibleCount > 0;
-  const frontSlot = getDeckSlotByRole(deck, "front");
-  const secondSlot = getDeckSlotByRole(deck, "second");
-  const thirdSlot = getDeckSlotByRole(deck, "third");
-  const frontShellId = deck.order.front;
-  const secondShellId = deck.order.second;
-  const thirdShellId = deck.order.third;
-  const frontEntry = frontSlot.entry;
-  const secondEntry = secondSlot.entry;
-  const thirdEntry = thirdSlot.entry;
-  const frontProfile = frontEntry?.profile ?? null;
-  const secondProfile = secondEntry?.profile ?? null;
-  const thirdProfile = thirdEntry?.profile ?? null;
+  const frontShellId = stableDeck.front;
+  const secondShellId = stableDeck.second;
+  const thirdShellId = stableDeck.third;
+  const frontContent = getSlotContent(stableDeck, "front");
+  const secondContent = getSlotContent(stableDeck, "second");
+  const thirdContent = getSlotContent(stableDeck, "third");
+  const frontEntry = frontContent
+    ? buildDiscoveryQueueSlot(frontContent.profile, frontContent.phase)
+    : null;
+  const secondEntry = secondContent
+    ? buildDiscoveryQueueSlot(secondContent.profile, secondContent.phase)
+    : null;
+  const thirdEntry = thirdContent
+    ? buildDiscoveryQueueSlot(thirdContent.profile, thirdContent.phase)
+    : null;
+  const frontProfile = frontContent?.profile ?? null;
+  const secondProfile = secondContent?.profile ?? null;
+  const thirdProfile = thirdContent?.profile ?? null;
   const logicalQueueIds = useMemo(
     () => getDiscoveryQueueIds(queueItems.slice(0, DISCOVERY_QUEUE_CACHE_SIZE)),
     [queueItems]
@@ -1138,23 +1042,21 @@ export default function DiscoverScreen() {
     [frontProfile?.id, secondProfile?.id, thirdProfile?.id]
   );
   const logicalActiveProfileId = logicalQueueIds[0] ?? null;
-  const secondReady = secondProfile ? secondSlot.primaryReady : true;
+  const secondReady =
+    !secondProfile || secondContent?.phase === "cover" || secondContent?.phase === "full";
   const hasPendingDecision = discoveryQueueRuntime.pendingDecision !== null;
   const runtimeInvariantViolation = discoveryQueueRuntime.invariantViolation;
   const effectiveQueueInvariantViolation =
     queueInvariantViolation ?? runtimeInvariantViolation ?? null;
-  const currentImages =
-    frontEntry && frontCachedProfileId === frontEntry.id && frontCachedImages.length
-      ? frontCachedImages
-      : frontEntry?.images ?? [];
+  const currentImages = frontProfile?.images ?? [];
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
   const frontCardKey = frontProfile
-    ? `front:${frontProfile.id}:${frontSlot.shellId}`
+    ? `front:${frontProfile.id}:${frontShellId}`
     : "front:empty";
   const secondCardKey = secondProfile
-    ? `second:${secondProfile.id}:${secondSlot.shellId}`
+    ? `second:${secondProfile.id}:${secondShellId}`
     : "second:empty";
   const frontImageKey = frontProfile
     ? `${frontProfile.id}:${Math.min(activePhotoIndex, Math.max(currentImages.length - 1, 0))}`
@@ -1185,8 +1087,10 @@ export default function DiscoverScreen() {
     (isQueueLoading || discoveryQueueRuntime.status === "hard_refreshing") && !hasDeckProfiles;
   const canInteract =
     !isOffline &&
+    !isQueueLoading &&
     Boolean(frontProfile) &&
     discoveryIdsEqual(logicalActiveProfileId, frontProfile?.id ?? null);
+  const apiInFlight = discoveryQueueRuntime.pendingDecision !== null;
   const canSubmitImmediately =
     !isQueueLoading &&
     discoveryQueueRuntime.status !== "hard_refreshing" &&
@@ -1280,58 +1184,6 @@ export default function DiscoverScreen() {
     traceFocused && DISCOVERY_ISOLATION_MODE === "C" && isDeckAnimating;
   const shouldUseStableSlotImageKeys = DISCOVERY_ISOLATION_MODE === "D";
 
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!user?.id || !frontProfile) {
-      setFrontCachedImages([]);
-      setFrontCachedProfileId(null);
-      setFrontImageLoading(false);
-      if (user?.id) {
-        void clearDiscoveryFrontCardCache(user.id);
-      }
-      return;
-    }
-
-    if (frontCachedProfileId === frontProfile.id && frontCachedImages.length > 0) {
-      return;
-    }
-
-    setFrontImageLoading(true);
-
-    void (async () => {
-      await clearDiscoveryFrontCardCache(user.id).catch(() => {});
-      const cached = await cacheDiscoveryFrontCardImages(
-        user.id,
-        frontProfile.id,
-        frontProfile.images
-      );
-      if (cancelled) {
-        return;
-      }
-      setFrontCachedProfileId(frontProfile.id);
-      setFrontCachedImages(cached);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    frontCachedImages.length,
-    frontCachedProfileId,
-    frontProfile,
-    user?.id,
-  ]);
-
-  useEffect(() => {
-    if (!frontProfile || !currentImage) {
-      setFrontImageLoading(false);
-      return;
-    }
-
-    setFrontImageLoading(true);
-  }, [currentImage, frontProfile?.id]);
-
   const getTraceSnapshot = useCallback(
     () => ({
       frontId: frontProfile?.id ?? null,
@@ -1341,29 +1193,30 @@ export default function DiscoverScreen() {
       secondCardKey,
       frontImageKey,
       secondImageKey,
-      frontIndex: deck.frontIndex,
-      queueCursor: deck.queueCursor,
-      loadedCount,
-      frontReady: frontSlot.primaryReady,
-      secondReady: secondSlot.primaryReady,
-      frontExtrasReady: frontSlot.extraPhotosReady,
+      visibleQueueLength: renderedQueueIds.filter((value) => value !== null).length,
+      queuedDecisionCount: discoveryQueueRuntime.queuedDecisionCount ?? 0,
+      frontReady: frontContent?.phase === "full",
+      secondReady,
+      frontExtrasReady: frontContent?.phase === "full",
       activePhotoIndex,
       isDeckAnimating,
       isInfoVisible,
     }),
     [
       activePhotoIndex,
-      deck.frontIndex,
-      deck.queueCursor,
-      frontSlot,
+      discoveryQueueRuntime.queuedDecisionCount,
+      frontContent?.phase,
       frontCardKey,
       frontImageKey,
       isDeckAnimating,
       isInfoVisible,
-      loadedCount,
-      secondSlot,
+      renderedQueueIds,
+      secondReady,
       secondCardKey,
       secondImageKey,
+      frontProfile?.id,
+      secondProfile?.id,
+      thirdProfile?.id,
     ]
   );
 
@@ -1433,12 +1286,6 @@ export default function DiscoverScreen() {
   }, [filteredEntries.length, trace]);
 
   useEffect(() => {
-    trace("loaded_count_changed", {
-      loadedCount,
-    });
-  }, [loadedCount, trace]);
-
-  useEffect(() => {
     trace("network_state_changed", {
       isOffline,
       isConnected: isOnline,
@@ -1454,10 +1301,6 @@ export default function DiscoverScreen() {
       secondImageKey,
     });
   }, [frontCardKey, secondCardKey, frontImageKey, secondImageKey, trace]);
-
-  useEffect(() => {
-    deckRef.current = deck;
-  }, [deck]);
 
   useEffect(() => {
     if (isDeckAnimating || isQueueLoading) {
@@ -1671,41 +1514,41 @@ export default function DiscoverScreen() {
     setDraftFilters(activeFilters);
   }, [activeFilters]);
 
-  React.useEffect(() => {
-    if (isDeckAnimating) {
-      deferredDeckRebuildRef.current = true;
+  useEffect(() => {
+    if (sourceEntries.length === 0) return;
+
+    const currentFrontId = getSlotContent(stableDeckRef.current, "front")?.profileId ?? null;
+    const newFrontId = sourceEntries[0]?.id ?? null;
+    const newSecondId = sourceEntries[1]?.id ?? null;
+    const currentSecondId = getSlotContent(stableDeckRef.current, "second")?.profileId ?? null;
+
+    // Visible window unchanged — only third slot (buffer) needs updating
+    if (
+      currentFrontId !== null &&
+      discoveryIdsEqual(currentFrontId, newFrontId) &&
+      discoveryIdsEqual(currentSecondId, newSecondId)
+    ) {
+      const newThirdProfile = sourceEntries[2]?.profile ?? null;
+      if (newThirdProfile) {
+        setStableDeck((d) => {
+          const recycledSlot = d.third;
+          const current = d[recycledSlot];
+          if (current?.profileId === newThirdProfile.id) return d;
+          const nextDeck = {
+            ...d,
+            [recycledSlot]: makeSlotContent(newThirdProfile, "metadata"),
+          };
+          stableDeckRef.current = nextDeck;
+          return nextDeck;
+        });
+      }
       return;
     }
 
-    trace("deck_rebuild_requested", {
-      sourceProfilesLength: sourceEntries.length,
-      loadedCount,
-      deferred: shouldDeferDeckRebuild,
-    });
-
-    if (shouldDeferDeckRebuild) {
-      deferredDeckRebuildRef.current = true;
-      return;
-    }
-
-    const currentFrontProfileId =
-      getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null;
-    const nextStartIndex = getAnchoredDeckStartIndex(
-      sourceEntries,
-      currentFrontProfileId
-    );
-    const nextLoadedCount = Math.min(
-      sourceEntries.length,
-      Math.max(DISCOVERY_QUEUE_CACHE_SIZE, loadedCount, nextStartIndex + DISCOVERY_QUEUE_CACHE_SIZE)
-    );
-    trace("deck_rebuild_start", {
-      sourceProfilesLength: sourceEntries.length,
-      nextLoadedCount,
-      nextStartIndex,
-      currentFrontProfileId,
-    });
-    setLoadedCount(nextLoadedCount);
-    setDeck(buildDeckState(sourceEntries.slice(0, nextLoadedCount), nextStartIndex));
+    // Visible window changed — full rebuild
+    const nextDeck = buildStableDeck(sourceEntries);
+    stableDeckRef.current = nextDeck;
+    setStableDeck(nextDeck);
     setActivePhotoIndex(0);
     setSwipeState("idle");
     setIsInfoVisible(false);
@@ -1714,118 +1557,7 @@ export default function DiscoverScreen() {
     swipeFeedbackX.setValue(0);
     deckProgress.setValue(0);
     flipAnim.setValue(0);
-    backScrollRef.current?.scrollTo({ y: 0, animated: false });
-    trace("deck_rebuild_end", {
-      sourceProfilesLength: sourceEntries.length,
-      nextLoadedCount,
-    });
-  }, [
-    deckProgress,
-    flipAnim,
-    isDeckAnimating,
-    loadedCount,
-    position,
-    swipeFeedbackX,
-    shouldDeferDeckRebuild,
-    sourceEntries,
-    sourceEntries.length,
-    trace,
-  ]);
-
-  React.useEffect(() => {
-    if (
-      !traceFocused ||
-      DISCOVERY_ISOLATION_MODE !== "B" ||
-      isDeckAnimating ||
-      !deferredDeckRebuildRef.current
-    ) {
-      return;
-    }
-
-    deferredDeckRebuildRef.current = false;
-    const currentFrontProfileId =
-      getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null;
-    const nextStartIndex = getAnchoredDeckStartIndex(
-      sourceEntries,
-      currentFrontProfileId
-    );
-    const nextLoadedCount = Math.min(
-      sourceEntries.length,
-      Math.max(DISCOVERY_QUEUE_CACHE_SIZE, loadedCount, nextStartIndex + DISCOVERY_QUEUE_CACHE_SIZE)
-    );
-    trace("deck_rebuild_deferred_commit", {
-      sourceProfilesLength: sourceEntries.length,
-      nextLoadedCount,
-      nextStartIndex,
-      currentFrontProfileId,
-    });
-    setLoadedCount(nextLoadedCount);
-    setDeck(buildDeckState(sourceEntries.slice(0, nextLoadedCount), nextStartIndex));
-    setActivePhotoIndex(0);
-    setSwipeState("idle");
-    setIsInfoVisible(false);
-    setIsDeckAnimating(false);
-    position.setValue({ x: 0, y: 0 });
-    swipeFeedbackX.setValue(0);
-    deckProgress.setValue(0);
-    flipAnim.setValue(0);
-    backScrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [
-    deckProgress,
-    flipAnim,
-    isDeckAnimating,
-    loadedCount,
-    position,
-    swipeFeedbackX,
-    sourceEntries,
-    sourceEntries.length,
-    trace,
-    traceFocused,
-  ]);
-
-  React.useEffect(() => {
-    trace("loaded_count_guard_check", {
-      loadedCount,
-      sourceProfilesLength: sourceEntries.length,
-      frontIndex: deck.frontIndex,
-      isOffline,
-      hasFrontProfile: Boolean(frontProfile),
-    });
-
-    if (isOffline || loadedCount >= sourceEntries.length || !frontProfile) {
-      return;
-    }
-
-    const remainingLoadedProfiles = loadedCount - (deck.frontIndex + 1);
-    if (remainingLoadedProfiles > refillThreshold) {
-      return;
-    }
-
-    setLoadedCount((current) =>
-      Math.min(sourceEntries.length, current + DISCOVERY_PAGE_SIZE)
-    );
-  }, [deck.frontIndex, frontProfile, isOffline, loadedCount, sourceEntries.length]);
-
-  React.useEffect(() => {
-    trace("loaded_count_recovery_check", {
-      loadedCount,
-      sourceProfilesLength: sourceEntries.length,
-      isOffline,
-      hasDeckProfiles,
-    });
-    if (
-      isOffline ||
-      hasDeckProfiles ||
-      loadedCount >= sourceEntries.length ||
-      !sourceEntries.length
-    ) {
-      return;
-    }
-
-    setLoadedCount((current) =>
-      Math.min(sourceEntries.length, current + DISCOVERY_PAGE_SIZE)
-    );
-  }, [hasDeckProfiles, isOffline, loadedCount, sourceEntries.length, sourceEntries]);
+  }, [sourceEntries]);
 
   React.useEffect(() => {
     if (!filteredEntries.length) {
@@ -1848,39 +1580,6 @@ export default function DiscoverScreen() {
         thirdId: thirdProfile?.id ?? null,
         skippedDuringAnimation: shouldFreezeReadinessWrites,
       });
-      if (shouldFreezeReadinessWrites) {
-        return;
-      }
-      setDeck((currentDeck) => {
-        const currentFront = getDeckSlotByRole(currentDeck, "front");
-        let nextDeck = currentDeck;
-        let changed = false;
-
-        if (currentFront.entry) {
-          const nextPrimaryReady = isPrimaryImageReady(currentFront.entry);
-          if (currentFront.primaryReady !== nextPrimaryReady) {
-            changed = true;
-            nextDeck = updateDeckSlot(nextDeck, currentFront.shellId, (slot) => ({
-              ...slot,
-              primaryReady: nextPrimaryReady,
-            }));
-          }
-        }
-
-        const latestSecond = getDeckSlotByRole(nextDeck, "second");
-        if (latestSecond.entry) {
-          const nextPrimaryReady = isPrimaryImageReady(latestSecond.entry);
-          if (latestSecond.primaryReady !== nextPrimaryReady) {
-            changed = true;
-            nextDeck = updateDeckSlot(nextDeck, latestSecond.shellId, (slot) => ({
-              ...slot,
-              primaryReady: nextPrimaryReady,
-            }));
-          }
-        }
-
-        return changed ? nextDeck : currentDeck;
-      });
     });
   }, [
     filteredEntries,
@@ -1892,7 +1591,7 @@ export default function DiscoverScreen() {
   ]);
 
   React.useEffect(() => {
-    if (!frontProfile || frontSlot.extraPhotosReady) {
+    if (!frontProfile || frontProfile.images.length <= 1) {
       return;
     }
 
@@ -1911,35 +1610,13 @@ export default function DiscoverScreen() {
         frontId: frontProfile.id,
         skippedDuringAnimation: shouldFreezeReadinessWrites || shouldSuppressVisualChurn,
       });
-      if (shouldFreezeReadinessWrites || shouldSuppressVisualChurn) {
-        return;
-      }
-
-      setDeck((currentDeck) => {
-        const currentFront = getDeckSlotByRole(currentDeck, "front");
-        if (currentFront.entry?.id !== frontProfile.id) {
-          return currentDeck;
-        }
-
-        const nextReady = areFrontExtrasReady(frontEntry);
-        if (currentFront.extraPhotosReady === nextReady) {
-          return currentDeck;
-        }
-
-        return updateDeckSlot(currentDeck, currentFront.shellId, (slot) => ({
-          ...slot,
-          extraPhotosReady: nextReady,
-        }));
-      });
     });
 
     return () => {
       cancelled = true;
     };
   }, [
-    frontEntry,
     frontProfile,
-    frontSlot.extraPhotosReady,
     shouldFreezeReadinessWrites,
     shouldSuppressVisualChurn,
     trace,
@@ -1999,6 +1676,7 @@ export default function DiscoverScreen() {
   }, [deckProgress, flipAnim, getTraceSnapshot, position, swipeFeedbackX, trace]);
 
   const settleCardVisualState = useCallback(() => {
+    swipingRef.current = false;
     setSwipeState("idle");
     setIsDeckAnimating(false);
     position.setValue({ x: 0, y: 0 });
@@ -2012,112 +1690,36 @@ export default function DiscoverScreen() {
 
   const promoteDeckAfterDecision = useCallback(
     (
-      nextEntries: DiscoverEntry[],
+      optimisticEntries: DiscoverEntry[],
       options: {
         requestId: string;
         targetProfileId: number;
         replacementProfileId: number | null;
       }
     ) => {
-      const trimmedEntries = nextEntries.slice(0, DISCOVERY_QUEUE_CACHE_SIZE);
-      const nextDeck = buildDeckState(trimmedEntries, 0);
-      const nextFront = getDeckSlotByRole(nextDeck, "front").entry;
-      const nextSecond = getDeckSlotByRole(nextDeck, "second").entry;
-      const nextThird = getDeckSlotByRole(nextDeck, "third").entry;
+      swipingRef.current = false;
+      const replacementProfile =
+        optimisticEntries.length >= 3 ? optimisticEntries[2]?.profile ?? null : null;
 
-      trace("advance_deck_before", {
-        requestId: options.requestId,
-        targetProfileId: options.targetProfileId,
-        replacementProfileId: options.replacementProfileId,
-        previousFrontId: getDeckSlotByRole(deckRef.current, "front").entry?.id ?? null,
-        nextQueue: getDiscoveryQueueIds(trimmedEntries),
+      setStableDeck((current) => {
+        let next = rotateStableDeck(current, replacementProfile);
+        next = upgradeSlotToFull(next, next.front);
+        next = upgradeSlotToCover(next, next.second);
+        stableDeckRef.current = next;
+        return next;
       });
 
-      deckRef.current = nextDeck;
-      setDeck(nextDeck);
-      setLoadedCount(Math.max(DISCOVERY_QUEUE_CACHE_SIZE, trimmedEntries.length));
-      setFrontCachedProfileId(null);
-      setFrontCachedImages([]);
-      setFrontImageLoading(Boolean(nextFront?.coverImage ?? nextFront?.images?.[0]));
-      const nextFrontProfile = nextFront?.profile ?? null;
-      const nextFrontCoverImage = nextFront?.coverImage ?? nextFrontProfile?.images?.[0] ?? null;
-      if (nextFrontProfile && nextFrontCoverImage) {
-        // The cover was already rendered by the second card slot, so no load needed
-        setFrontCachedProfileId(nextFrontProfile.id);
-        setFrontCachedImages(nextFrontProfile.images);
-        setFrontImageLoading(false);
-      } else {
-        setFrontCachedProfileId(null);
-        setFrontCachedImages([]);
-        setFrontImageLoading(false);
-      }
-
-      trace("promotion_committed", {
+      expectedRenderQueueRef.current = {
         requestId: options.requestId,
-        targetProfileId: options.targetProfileId,
-        replacementProfileId: options.replacementProfileId,
-        frontId: nextFront?.id ?? null,
-        secondId: nextSecond?.id ?? null,
-        thirdId: nextThird?.id ?? null,
-      });
-
+        resultQueue: optimisticEntries
+          .slice(0, DISCOVERY_QUEUE_CACHE_SIZE)
+          .map((entry) => entry.id),
+      };
+      setActivePhotoIndex(0);
       settleCardVisualState();
-
-      trace("advance_deck_after", {
-        requestId: options.requestId,
-        targetProfileId: options.targetProfileId,
-        replacementProfileId: options.replacementProfileId,
-        frontId: nextFront?.id ?? null,
-        secondId: nextSecond?.id ?? null,
-        thirdId: nextThird?.id ?? null,
-      });
     },
-    [settleCardVisualState, trace]
+    [settleCardVisualState]
   );
-
-  const markSlotReady = useCallback((slotName: DeckSlotName, profileId: number) => {
-    trace("slot_ready_mark", {
-      slotName,
-      profileId,
-      skippedDuringAnimation: shouldFreezeReadinessWrites,
-    });
-    if (shouldFreezeReadinessWrites) {
-      return;
-    }
-
-    setDeck((currentDeck) => {
-      const slot = getDeckSlotByRole(currentDeck, slotName);
-      if (!slot.entry || slot.entry.id !== profileId || slot.primaryReady) {
-        return currentDeck;
-      }
-
-      return updateDeckSlot(currentDeck, slot.shellId, (currentSlot) => ({
-        ...currentSlot,
-        primaryReady: true,
-      }));
-    });
-  }, [shouldFreezeReadinessWrites, trace]);
-
-  const syncFrontExtraPhotoState = useCallback((entry: DiscoverEntry | null) => {
-    if (!entry) {
-      return;
-    }
-
-    const nextReady = areFrontExtrasReady(entry);
-    setDeck((currentDeck) => {
-      const currentFront = getDeckSlotByRole(currentDeck, "front");
-      if (currentFront.entry?.id !== entry.id) {
-        return currentDeck;
-      }
-      if (currentFront.extraPhotosReady === nextReady) {
-        return currentDeck;
-      }
-      return updateDeckSlot(currentDeck, currentFront.shellId, (slot) => ({
-        ...slot,
-        extraPhotosReady: nextReady,
-      }));
-    });
-  }, []);
 
   const stepPhoto = useCallback((direction: "prev" | "next") => {
     if (shouldSuppressVisualChurn) {
@@ -2151,15 +1753,13 @@ export default function DiscoverScreen() {
     });
     if (!nextUri || isDiscoveryImageWarm(nextUri)) {
       setActivePhotoIndex(nextIndex);
-      syncFrontExtraPhotoState(frontEntry);
       return;
     }
 
     const frontProfileId = frontProfile.id;
     void warmDiscoveryProfileImages(frontProfile, 1, nextIndex).then(() => {
-      syncFrontExtraPhotoState(frontEntry);
       if (
-        getDeckSlotByRole(deckRef.current, "front").entry?.id === frontProfileId &&
+        getSlotContent(stableDeckRef.current, "front")?.profileId === frontProfileId &&
         isDiscoveryImageWarm(nextUri)
       ) {
         setActivePhotoIndex(nextIndex);
@@ -2167,11 +1767,9 @@ export default function DiscoverScreen() {
     });
   }, [
     activePhotoIndex,
-    frontEntry,
     currentImages.length,
     frontProfile,
     shouldSuppressVisualChurn,
-    syncFrontExtraPhotoState,
     trace,
   ]);
 
@@ -2258,7 +1856,7 @@ export default function DiscoverScreen() {
 
   const handleRetryDiscovery = useCallback(() => {
     if (isOffline) {
-      console.log("[discover] reload blocked while offline", {
+      console.log(`[discover] reload blocked while offline on ${process.env.EXPO_PUBLIC_AUTH_API_URL}`, {
         activeFilters,
       });
       return;
@@ -2381,6 +1979,7 @@ export default function DiscoverScreen() {
         source: "render",
       });
       if (!frontProfile) {
+        swipingRef.current = false;
         logQueueTrace({
           event: "queue_action_blocked",
           requestId: null,
@@ -2399,7 +1998,14 @@ export default function DiscoverScreen() {
         });
         return false;
       }
+      console.log("[stable-deck] rebuild effect fired", {
+        isDeckAnimating,
+        sourceEntriesLength: sourceEntries.length,
+        frontId: getSlotContent(stableDeckRef.current, "front")?.profileId ?? null,
+        triggeredDuringAnimation: isDeckAnimating,
+      });
       if (isDeckAnimating) {
+        swipingRef.current = false;
         logQueueTrace({
           event: "queue_action_blocked",
           requestId: discoveryQueueRuntime.lastRequestId,
@@ -2413,12 +2019,13 @@ export default function DiscoverScreen() {
           isOffline,
           isDeckAnimating: true,
           hasPendingDecision,
-          note: "Action blocked: deck animation in progress",
+          note: "Action blocked: stable deck animation in progress",
           source: "render",
         });
         return false;
       }
       if (isOffline) {
+        swipingRef.current = false;
         logQueueTrace({
           event: "queue_action_blocked",
           requestId: discoveryQueueRuntime.lastRequestId,
@@ -2438,6 +2045,7 @@ export default function DiscoverScreen() {
         return false;
       }
       if (!canInteract) {
+        swipingRef.current = false;
         const isRenderHeadMismatch = !discoveryIdsEqual(logicalActiveProfileId, frontProfile.id);
         const message = isRenderHeadMismatch
           ? `Action blocked: logical head ${logicalActiveProfileId ?? "none"} does not match rendered front ${renderedFrontId ?? "none"}`
@@ -2464,6 +2072,7 @@ export default function DiscoverScreen() {
         return false;
       }
       if (logicalActiveProfileId === null || renderedFrontId === null) {
+        swipingRef.current = false;
         const message = "Action blocked: tap snapshot is missing a normalized front/head id";
         setQueueInvariantViolation(message);
         logQueueTrace({
@@ -2493,6 +2102,7 @@ export default function DiscoverScreen() {
       }
 
       swipeDirectionRef.current = direction;
+      swipingRef.current = true;
       trace("swipe_animation_start", {
         swipeDirection: direction,
         frontId: frontProfile.id,
@@ -2538,7 +2148,7 @@ export default function DiscoverScreen() {
           frontId: profile.id,
         });
 
-        // ─── Optimistic deck promotion ───────────────────────────────────────────
+        // ─── Optimistic stable deck promotion ────────────────────────────────────
         // The next entries are already in memory from the 4-card cache.
         // Remove the swiped card immediately — no API wait needed.
         const optimisticEntries = sourceEntries.filter(
@@ -2560,7 +2170,8 @@ export default function DiscoverScreen() {
         });
 
         // ─── Background API call ─────────────────────────────────────────────────
-        // Result is not needed to advance the deck — it just adds the replacement
+        // Result is not needed to advance the stable deck immediately.
+        // It only adds the replacement
         // 4th slot when AppContext updates discoveryFeed and sourceEntries changes.
         void (async () => {
           const result = await requestDecision(profile, {
@@ -2590,7 +2201,7 @@ export default function DiscoverScreen() {
           }
 
           // When AppContext commits the updated feed (with replacementProfile),
-          // sourceEntries will change, the deck rebuild effect fires,
+          // sourceEntries will change, the stable deck rebuild effect fires,
           // and the 4th slot is silently filled without any visible jank.
           if (
             direction === "right" &&
@@ -2816,15 +2427,6 @@ export default function DiscoverScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
-          {isOffline ? (
-            <View style={styles.headerIconWrap}>
-              <ExpoImage
-                source={DISCOVERY_HEADER_ICON}
-                style={styles.headerIcon}
-                contentFit="contain"
-              />
-            </View>
-          ) : null}
           <Pressable
             onPress={openFilters}
             disabled={isOffline}
@@ -2904,17 +2506,14 @@ export default function DiscoverScreen() {
                   />
                   {secondImageUri ? (
                     <ExpoImage
-                      source={{ uri: secondImageUri }}
-                      recyclingKey={
-                        shouldUseStableSlotImageKeys ? "second-slot" : secondImageKey
-                      }
-                      style={[
-                        styles.cardImage,
-                        !secondSlot.primaryReady && styles.cardImagePending,
-                      ]}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                      transition={0}
+                  source={{ uri: secondImageUri }}
+                  recyclingKey={
+                    shouldUseStableSlotImageKeys ? "second-slot" : secondImageKey
+                  }
+                  style={styles.cardImage}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={0}
                       onLoadStart={() => {
                         trace("image_load_start", {
                           slot: "second",
@@ -2924,13 +2523,12 @@ export default function DiscoverScreen() {
                         });
                       }}
                       onLoadEnd={() => {
-                        trace("image_load_end", {
-                          slot: "second",
-                          profileId: secondProfile.id,
-                          imageKey: secondImageKey,
-                          uri: secondImageUri,
-                        });
-                        markSlotReady("second", secondProfile.id);
+                      trace("image_load_end", {
+                        slot: "second",
+                        profileId: secondProfile.id,
+                        imageKey: secondImageKey,
+                        uri: secondImageUri,
+                      });
                       }}
                       onError={() => {
                         trace("image_load_error", {
@@ -2939,7 +2537,6 @@ export default function DiscoverScreen() {
                           imageKey: secondImageKey,
                           uri: secondImageUri,
                         });
-                        markSlotReady("second", secondProfile.id);
                       }}
                     />
                   ) : null}
@@ -3047,7 +2644,12 @@ export default function DiscoverScreen() {
                   cachePolicy="memory-disk"
                   transition={0}
                   onLoadStart={() => {
-                    setFrontImageLoading(true);
+                    console.log("[image] front load START after promotion", {
+                      profileId: frontProfile.id,
+                      imageKey: frontImageKey,
+                      uri: currentImage?.slice(-20),
+                      isDeckAnimating,
+                    });
                     trace("image_load_start", {
                       slot: "front",
                       profileId: frontProfile.id,
@@ -3056,31 +2658,22 @@ export default function DiscoverScreen() {
                     });
                   }}
                   onLoadEnd={() => {
-                    setFrontImageLoading(false);
                     trace("image_load_end", {
                       slot: "front",
                       profileId: frontProfile.id,
                       imageKey: frontImageKey,
                       uri: currentImage,
                     });
-                    markSlotReady("front", frontProfile.id);
                   }}
                   onError={() => {
-                    setFrontImageLoading(false);
                     trace("image_load_error", {
                       slot: "front",
                       profileId: frontProfile.id,
                       imageKey: frontImageKey,
                       uri: currentImage,
                     });
-                    markSlotReady("front", frontProfile.id);
                   }}
                 />
-                {frontImageLoading ? (
-                  <View style={styles.frontCardLoadingOverlay}>
-                    <ActivityIndicator color={Colors.primaryLight} />
-                  </View>
-                ) : null}
 
                 <View style={styles.photoTapLayer} pointerEvents="box-none">
                   <Pressable
@@ -3357,18 +2950,16 @@ export default function DiscoverScreen() {
 
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
             <Pressable
-              onPress={() => swipeLeft("button")}
+              onPress={() => {
+                if (!canInteract || swipingRef.current) return; // silent guard
+                swipeLeft("button");
+              }}
               disabled={!canInteract}
               testID="discover-pass-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.dislikeBtn,
-                !canInteract && styles.actionBtnDisabled,
-                isOffline && styles.actionBtnOffline,
-                {
-                  opacity: pressed && canInteract ? 0.7 : 1,
-                  transform: [{ scale: pressed ? 0.93 : 1 }],
-                },
+                { opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.93 : 1 }] },
               ]}
             >
               <Feather
@@ -3395,18 +2986,16 @@ export default function DiscoverScreen() {
             </Pressable>
 
             <Pressable
-              onPress={() => swipeRight("button")}
+              onPress={() => {
+                if (!canInteract || swipingRef.current) return; // silent guard
+                swipeRight("button");
+              }}
               disabled={!canInteract}
               testID="discover-like-button"
               style={({ pressed }) => [
                 styles.actionBtn,
                 styles.likeBtn,
-                !canInteract && styles.actionBtnDisabled,
-                isOffline && styles.actionBtnOffline,
-                {
-                  opacity: pressed && canInteract ? 0.7 : 1,
-                  transform: [{ scale: pressed ? 0.93 : 1 }],
-                },
+                { opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.93 : 1 }] },
               ]}
             >
               <Feather

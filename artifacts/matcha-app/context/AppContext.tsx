@@ -70,7 +70,6 @@ import {
   normalizeStoredProfilePhotos,
   type UserProfilePhoto,
 } from "@/utils/profilePhotos";
-import { clearDiscoveryFrontCardCache } from "@/utils/discoveryFrontCardCache";
 import { normalizeIsoDateString } from "@/utils/dateOfBirth";
 import {
   ATOMIC_PROFILE_FIELD_GROUPS,
@@ -2081,7 +2080,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     removals.push(AsyncStorage.removeItem(getViewerBootstrapStorageKey(userId)));
     removals.push(clearMutationQueueForUser(userId));
-    removals.push(clearDiscoveryFrontCardCache(userId));
 
     const [allKeys, filtersRaw] = await Promise.all([
       AsyncStorage.getAllKeys(),
