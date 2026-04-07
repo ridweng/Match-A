@@ -1010,20 +1010,11 @@ export default function DiscoverScreen() {
   const hasMoreServerProfiles = Boolean(discoveryFeed.hasMore);
   const hasFilterMatches = sourceEntries.length > 0;
   const hasCatalogMatches = eligibleCount > 0;
-  // const frontShellId = stableDeck.front;
-  // const secondShellId = stableDeck.second;
-  // const thirdShellId = stableDeck.third;
   const frontContent = getSlotContent(stableDeck, "front");
   const secondContent = getSlotContent(stableDeck, "second");
   const thirdContent = getSlotContent(stableDeck, "third");
   const frontEntry = frontContent
     ? buildDiscoveryQueueSlot(frontContent.profile, frontContent.phase)
-    : null;
-  const secondEntry = secondContent
-    ? buildDiscoveryQueueSlot(secondContent.profile, secondContent.phase)
-    : null;
-  const thirdEntry = thirdContent
-    ? buildDiscoveryQueueSlot(thirdContent.profile, thirdContent.phase)
     : null;
   const frontProfile = frontContent?.profile ?? null;
   const secondProfile = secondContent?.profile ?? null;
@@ -1051,19 +1042,6 @@ export default function DiscoverScreen() {
   const currentImage =
     currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ??
     currentImages[0];
-  // const frontCardKey = frontProfile
-  //   ? `front:${frontProfile.id}:${frontShellId}`
-  //   : "front:empty";
-  // const secondCardKey = secondProfile
-  //   ? `second:${secondProfile.id}:${secondShellId}`
-  //   : "second:empty";
-  // const frontImageKey = frontProfile
-  //   ? `${frontProfile.id}:${Math.min(activePhotoIndex, Math.max(currentImages.length - 1, 0))}`
-  //   : "front-image:empty";
-  // const secondImageUri = secondEntry?.coverImage ?? secondProfile?.images[0] ?? null;
-  // const secondImageKey = secondProfile
-  //   ? `${secondProfile.id}:0`
-  //   : "second-image:empty";
   const pronounLabel = frontProfile
     ? getPronounLabel(frontProfile.pronouns, language)
     : "";
@@ -1181,17 +1159,16 @@ export default function DiscoverScreen() {
     traceFocused && DISCOVERY_ISOLATION_MODE === "B" && isDeckAnimating;
   const shouldSuppressVisualChurn =
     traceFocused && DISCOVERY_ISOLATION_MODE === "C" && isDeckAnimating;
-  const shouldUseStableSlotImageKeys = DISCOVERY_ISOLATION_MODE === "D";
 
   const getTraceSnapshot = useCallback(
     () => ({
       frontId: frontProfile?.id ?? null,
       secondId: secondProfile?.id ?? null,
       thirdId: thirdProfile?.id ?? null,
-      frontCardKey,
-      secondCardKey,
-      frontImageKey,
-      secondImageKey,
+      frontCardKey: `front:${frontProfile?.id ?? "empty"}`,
+      secondCardKey: `second:${secondProfile?.id ?? "empty"}`,
+      frontImageKey: `${frontProfile?.id ?? "empty"}:${activePhotoIndex}`,
+      secondImageKey: `${secondProfile?.id ?? "empty"}:0`,
       visibleQueueLength: renderedQueueIds.filter((value) => value !== null).length,
       queuedDecisionCount: discoveryQueueRuntime.queuedDecisionCount ?? 0,
       frontReady: frontContent?.phase === "full",
@@ -1205,14 +1182,10 @@ export default function DiscoverScreen() {
       activePhotoIndex,
       discoveryQueueRuntime.queuedDecisionCount,
       frontContent?.phase,
-      frontCardKey,
-      frontImageKey,
       isDeckAnimating,
       isInfoVisible,
       renderedQueueIds,
       secondReady,
-      secondCardKey,
-      secondImageKey,
       frontProfile?.id,
       secondProfile?.id,
       thirdProfile?.id,
@@ -1294,12 +1267,12 @@ export default function DiscoverScreen() {
 
   useEffect(() => {
     trace("render_identity_changed", {
-      frontCardKey,
-      secondCardKey,
-      frontImageKey,
-      secondImageKey,
+      frontCardKey: `front:${frontProfile?.id ?? "empty"}`,
+      secondCardKey: `second:${secondProfile?.id ?? "empty"}`,
+      frontImageKey: `${frontProfile?.id ?? "empty"}:${activePhotoIndex}`,
+      secondImageKey: `${secondProfile?.id ?? "empty"}:0`,
     });
-  }, [frontCardKey, secondCardKey, frontImageKey, secondImageKey, trace]);
+  }, [activePhotoIndex, frontProfile?.id, secondProfile?.id, trace]);
 
   useEffect(() => {
     if (isDeckAnimating || isQueueLoading) {
@@ -2453,7 +2426,7 @@ export default function DiscoverScreen() {
               const { width: nextWidth, height: nextHeight } = event.nativeEvent.layout;
               logLayoutChange("card_stack", { width: nextWidth, height: nextHeight });
             }}
-          ></View>
+          >
             {(["slotA", "slotB", "slotC"] as SlotId[]).map((slotId) => {
               const content = stableDeck[slotId];
               const isFront = stableDeck.front === slotId;
