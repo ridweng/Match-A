@@ -642,6 +642,8 @@ export default function DiscoverScreen() {
   const insightSheetClosingRef = useRef(false);
   const backScrollRef = useRef<ScrollView | null>(null);
 
+  const optimisticFrontIdRef = useRef<number | null>(null);
+
   const trace = useCallback(
     (event: string, payload?: Record<string, unknown>) => {
       if (!traceFocused || !DISCOVERY_TRACE_EVENTS.has(event)) {
@@ -1490,11 +1492,30 @@ export default function DiscoverScreen() {
     if (sourceEntries.length === 0) return;
 
     const currentFrontId = getSlotContent(stableDeckRef.current, "front")?.profileId ?? null;
+    const currentSecondId = getSlotContent(stableDeckRef.current, "second")?.profileId ?? null;
     const newFrontId = sourceEntries[0]?.id ?? null;
     const newSecondId = sourceEntries[1]?.id ?? null;
-    const currentSecondId = getSlotContent(stableDeckRef.current, "second")?.profileId ?? null;
 
-    // Visible window unchanged — only third slot (buffer) needs updating
+    // Guard: we just did an optimistic rotation but sourceEntries hasn't caught up yet.
+    // The deck already shows the correct next profile — do NOT rebuild or we get a flicker.
+    if (
+      optimisticFrontIdRef.current !== null &&
+      discoveryIdsEqual(currentFrontId, optimisticFrontIdRef.current) &&
+      !discoveryIdsEqual(newFrontId, optimisticFrontIdRef.current)
+    ) {
+      // sourceEntries still reflects old data — skip this render cycle entirely
+      return;
+    }
+
+    // sourceEntries has caught up — clear the optimistic lock
+    if (
+      optimisticFrontIdRef.current !== null &&
+      discoveryIdsEqual(newFrontId, optimisticFrontIdRef.current)
+    ) {
+      optimisticFrontIdRef.current = null;
+    }
+
+    // Visible window stable — only update the third buffer slot silently
     if (
       currentFrontId !== null &&
       discoveryIdsEqual(currentFrontId, newFrontId) &&
@@ -1517,7 +1538,7 @@ export default function DiscoverScreen() {
       return;
     }
 
-    // Visible window changed — full rebuild
+    // Visible window changed (filter change, cold start, exhaustion recovery) — full rebuild
     const nextDeck = buildStableDeck(sourceEntries);
     stableDeckRef.current = nextDeck;
     setStableDeck(nextDeck);
@@ -1529,7 +1550,7 @@ export default function DiscoverScreen() {
     swipeFeedbackX.setValue(0);
     deckProgress.setValue(0);
     flipAnim.setValue(0);
-  }, [sourceEntries]);
+  }, [sourceEntries]); // ← sourceEntries ONLY — no isDeckAnimating
 
   React.useEffect(() => {
     if (!filteredEntries.length) {
@@ -1661,25 +1682,25 @@ export default function DiscoverScreen() {
   }, [deckProgress, flipAnim, position, swipeFeedbackX]);
 
   const promoteDeckAfterDecision = useCallback(
-    (
-      optimisticEntries: DiscoverEntry[],
-      options: {
-        requestId: string;
-        targetProfileId: number;
-        replacementProfileId: number | null;
-      }
-    ) => {
+    (optimisticEntries, options) => {
       swipingRef.current = false;
       const replacementProfile =
         optimisticEntries.length >= 3 ? optimisticEntries[2]?.profile ?? null : null;
+
+      let promotedFrontId: number | null = null;
 
       setStableDeck((current) => {
         let next = rotateStableDeck(current, replacementProfile);
         next = upgradeSlotToFull(next, next.front);
         next = upgradeSlotToCover(next, next.second);
         stableDeckRef.current = next;
+        // Track the new front so the effect doesn't rebuild prematurely
+        promotedFrontId = getSlotContent(next, "front")?.profileId ?? null;
         return next;
       });
+
+      // Must set after setStableDeck since it's synchronous in the updater
+      optimisticFrontIdRef.current = promotedFrontId;
 
       expectedRenderQueueRef.current = {
         requestId: options.requestId,
@@ -1871,8 +1892,7 @@ export default function DiscoverScreen() {
 
   const animateButtonSwipeFeedback = useCallback(
     (direction: SwipeDirection, onComplete: () => void) => {
-      const feedbackTarget =
-        direction === "right" ? SWIPE_FEEDBACK_DISTANCE : -SWIPE_FEEDBACK_DISTANCE;
+      const feedbackTarget = direction === "right" ? SWIPE_FEEDBACK_DISTANCE : -SWIPE_FEEDBACK_DISTANCE;
       const flyTarget = direction === "right" ? width * 1.5 : -width * 1.5;
 
       swipeFeedbackX.setValue(0);
@@ -1885,49 +1905,34 @@ export default function DiscoverScreen() {
         }),
         Animated.timing(position, {
           toValue: { x: flyTarget, y: 0 },
-          duration: SWIPE_FEEDBACK_BUTTON_DURATION + SWIPE_FEEDBACK_COMMIT_HOLD_DURATION,
+          duration: SWIPE_FEEDBACK_BUTTON_DURATION,
           useNativeDriver: false,
         }),
-        Animated.timing(deckProgress, {
-          toValue: 1,
-          duration: SWIPE_FEEDBACK_BUTTON_DURATION + SWIPE_FEEDBACK_COMMIT_HOLD_DURATION,
-          useNativeDriver: false,
-        }),
+        // ← deckProgress REMOVED
       ]).start(({ finished }) => {
-        if (!finished) {
-          resetCardState();
-          return;
-        }
+        if (!finished) { resetCardState(); return; }
         onComplete();
       });
     },
-    [deckProgress, position, resetCardState, swipeFeedbackX, width],
+    [position, resetCardState, swipeFeedbackX, width],
   );
+
   const holdGestureSwipeFeedback = useCallback(
     (onComplete: () => void) => {
       const direction = swipeDirectionRef.current;
       const flyTarget = direction === "right" ? width * 1.5 : -width * 1.5;
 
-      Animated.parallel([
-        Animated.timing(position, {
-          toValue: { x: flyTarget, y: 0 },
-          duration: SWIPE_OUT_DURATION,
-          useNativeDriver: false,
-        }),
-        Animated.timing(deckProgress, {
-          toValue: 1,
-          duration: SWIPE_OUT_DURATION,
-          useNativeDriver: false,
-        }),
-      ]).start(({ finished }) => {
-        if (!finished) {
-          resetCardState();
-          return;
-        }
+      Animated.timing(position, {
+        toValue: { x: flyTarget, y: 0 },
+        duration: SWIPE_OUT_DURATION,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (!finished) { resetCardState(); return; }
         onComplete();
       });
+      // ← deckProgress REMOVED
     },
-    [deckProgress, position, resetCardState, width],
+    [position, resetCardState, width],
   );
 
   const commitDiscoverySwipe = useCallback(
@@ -2433,82 +2438,129 @@ export default function DiscoverScreen() {
               const isSecond = stableDeck.second === slotId;
               const isThird = stableDeck.third === slotId;
               const profile = content?.profile ?? null;
-              const imageUri = isFront
-                ? (currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ?? currentImages[0])
-                : content?.coverImageUri ?? null;
+              const slotImageUri = isSecond
+                ? (content?.coverImageUri ?? null)
+                : isFront
+                  ? (currentImages[Math.min(activePhotoIndex, currentImages.length - 1)] ?? currentImages[0] ?? null)
+                  : null;
 
               return (
                 <Animated.View
-                  key={slotId}                          // ← PERMANENT, never changes
+                  key={slotId}
                   {...(isFront ? panResponder.panHandlers : {})}
                   pointerEvents={isFront ? "box-none" : "none"}
                   style={[
                     styles.cardBase,
                     cardFrameStyle,
                     !profile && styles.cardSlotHidden,
-                    isFront && styles.cardInteractive,
-                    isFront && {
-                      zIndex: 3,
-                      transform: [
-                        { translateX: position.x },
-                        { translateY: position.y },
-                        { rotate },
-                      ],
-                    },
+                    isFront && [
+                      styles.cardInteractive,
+                      {
+                        zIndex: 3,
+                        transform: [
+                          { translateX: position.x },
+                          { translateY: position.y },
+                          { rotate },
+                        ],
+                      },
+                    ],
                     isSecond && [
                       styles.cardSecond,
                       {
                         zIndex: 2,
-                        opacity: profile ? promotedSecondOpacity : 0,
-                        transform: [
-                          { scale: promotedSecondScale },
-                          { translateY: promotedSecondTranslateY },
-                        ],
+                        opacity: profile ? 0.85 : 0,
                       },
                     ],
                     isThird && [
                       styles.cardThird,
                       {
                         zIndex: 1,
-                        opacity: profile ? promotedThirdOpacity : 0,
-                        transform: [
-                          { scale: promotedThirdScale },
-                          { translateY: promotedThirdTranslateY },
-                        ],
                       },
                     ],
                   ]}
                 >
-                  {/* Third — just a backdrop color */}
+                  {/* ── THIRD: plain backdrop only ─────────────────────────── */}
                   {isThird && profile ? (
                     <View style={styles.cardThirdBackdrop} />
                   ) : null}
 
-                  {/* Second and Front — image + metadata */}
-                  {(isFront || isSecond) && profile && imageUri ? (
-                    <ExpoImage
-                      key={slotId}                      // ← stable recycling key per slot
-                      source={{ uri: imageUri }}
-                      recyclingKey={slotId}             // ← ExpoImage reuses texture for same slot
-                      style={styles.cardImage}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
-                      transition={0}
-                    />
+                  {/* ── SECOND: image + metadata overlay ──────────────────── */}
+                  {isSecond && profile ? (
+                    <>
+                      {slotImageUri ? (
+                        <ExpoImage
+                          source={{ uri: slotImageUri }}
+                          recyclingKey={slotId}
+                          style={styles.cardImage}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                          transition={0}
+                        />
+                      ) : null}
+                      <LinearGradient
+                        colors={["transparent", "rgba(15,26,20,0.98)"]}
+                        style={styles.cardGradient}
+                        pointerEvents="none"
+                      >
+                        {profile.pronouns ? (
+                          <Text style={styles.cardPronouns}>
+                            {getPronounLabel(profile.pronouns, language)}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.cardName}>{profile.name}</Text>
+                        {profile.genderIdentity ? (
+                          <Text style={styles.cardIdentity}>
+                            {getGenderIdentityLabel(profile.genderIdentity, t)}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.cardAgeSign}>
+                          {(() => {
+                            const z = getZodiacSignLabel(
+                              getZodiacSignFromIsoDate(profile.dateOfBirth ?? ""), t
+                            );
+                            return z ? `${profile.age} · ${z}` : String(profile.age);
+                          })()}
+                        </Text>
+                        <View style={styles.cardRow}>
+                          <Feather name="map-pin" size={13} color={Colors.primaryLight} />
+                          <Text style={styles.cardLocation}>{profile.location}</Text>
+                          <Text style={styles.cardDot}>·</Text>
+                          <Text style={styles.cardOccupation}>
+                            {t(profile.occupation.es, profile.occupation.en)}
+                          </Text>
+                        </View>
+                        <View style={styles.interestsRow}>
+                          {profile.attributes.interests.slice(0, 3).map((interest) => (
+                            <View key={`${slotId}-${profile.id}-${interest}`} style={styles.interestChip}>
+                              <Text style={styles.interestChipText}>{interest}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </LinearGradient>
+                    </>
                   ) : null}
 
-                  {/* Front — all overlays, stamps, gradient, info flip */}
+                  {/* ── FRONT: flip card with front face + back face ───────── */}
                   {isFront && profile ? (
                     <>
-                      <View style={styles.photoTapLayer} pointerEvents="box-none">
-                        <Pressable onPress={() => stepPhoto("prev")} style={styles.photoTapZone} />
-                        <Pressable onPress={() => stepPhoto("next")} style={styles.photoTapZone} />
-                      </View>
-
-                      <Animated.View pointerEvents="none" style={[styles.likeOverlay, { opacity: likeOpacity }]}>
-                        <LinearGradient colors={["transparent", Colors.likeOverlay]} style={StyleSheet.absoluteFillObject} />
+                      {/* stamp overlays sit behind the faces */}
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[styles.likeOverlay, { opacity: likeOpacity }]}
+                      >
+                        <LinearGradient
+                          colors={["transparent", Colors.likeOverlay]}
+                          style={StyleSheet.absoluteFillObject}
+                        />
                         <View style={styles.stampContainer}>
-                          <Animated.View style={{ transform: [{ scale: likeStampScale }, { translateY: likeStampTranslateY }] }}>
+                          <Animated.View
+                            style={{
+                              transform: [
+                                { scale: likeStampScale },
+                                { translateY: likeStampTranslateY },
+                              ],
+                            }}
+                          >
                             <View style={styles.likeStamp}>
                               <Feather name="heart" size={28} color="#fff" />
                               <Text style={styles.stampText}>{t("ME GUSTA", "LIKE")}</Text>
@@ -2517,10 +2569,23 @@ export default function DiscoverScreen() {
                         </View>
                       </Animated.View>
 
-                      <Animated.View pointerEvents="none" style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}>
-                        <LinearGradient colors={["transparent", Colors.dislikeOverlay]} style={StyleSheet.absoluteFillObject} />
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[styles.dislikeOverlay, { opacity: dislikeOpacity }]}
+                      >
+                        <LinearGradient
+                          colors={["transparent", Colors.dislikeOverlay]}
+                          style={StyleSheet.absoluteFillObject}
+                        />
                         <View style={styles.stampContainer}>
-                          <Animated.View style={{ transform: [{ scale: dislikeStampScale }, { translateY: dislikeStampTranslateY }] }}>
+                          <Animated.View
+                            style={{
+                              transform: [
+                                { scale: dislikeStampScale },
+                                { translateY: dislikeStampTranslateY },
+                              ],
+                            }}
+                          >
                             <View style={styles.dislikeStamp}>
                               <Feather name="x" size={28} color="#fff" />
                               <Text style={styles.stampText}>{t("PASAR", "PASS")}</Text>
@@ -2529,7 +2594,7 @@ export default function DiscoverScreen() {
                         </View>
                       </Animated.View>
 
-                      {/* Front face */}
+                      {/* FRONT FACE — image lives here */}
                       <Animated.View
                         pointerEvents={isInfoVisible ? "none" : "auto"}
                         style={[
@@ -2540,16 +2605,42 @@ export default function DiscoverScreen() {
                             : { transform: [{ perspective: 1200 }, { rotateY: frontRotate }] },
                         ]}
                       >
-                        <LinearGradient colors={["transparent", "rgba(15,26,20,0.98)"]} style={styles.cardGradient}>
-                          {pronounLabel ? <Text style={styles.cardPronouns}>{pronounLabel}</Text> : null}
+                        {/* image — recyclingKey is stable per slot so ExpoImage never remounts */}
+                        {slotImageUri ? (
+                          <ExpoImage
+                            source={{ uri: slotImageUri }}
+                            recyclingKey={slotId}
+                            style={styles.cardImage}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            transition={0}
+                          />
+                        ) : null}
+
+                        <View style={styles.photoTapLayer} pointerEvents="box-none">
+                          <Pressable onPress={() => stepPhoto("prev")} style={styles.photoTapZone} />
+                          <Pressable onPress={() => stepPhoto("next")} style={styles.photoTapZone} />
+                        </View>
+
+                        <LinearGradient
+                          colors={["transparent", "rgba(15,26,20,0.98)"]}
+                          style={styles.cardGradient}
+                        >
+                          {pronounLabel ? (
+                            <Text style={styles.cardPronouns}>{pronounLabel}</Text>
+                          ) : null}
                           <Text style={styles.cardName}>{profile.name}</Text>
-                          {genderIdentityLabel ? <Text style={styles.cardIdentity}>{genderIdentityLabel}</Text> : null}
+                          {genderIdentityLabel ? (
+                            <Text style={styles.cardIdentity}>{genderIdentityLabel}</Text>
+                          ) : null}
                           <Text style={styles.cardAgeSign}>{ageWithSign}</Text>
                           <View style={styles.cardRow}>
                             <Feather name="map-pin" size={13} color={Colors.primaryLight} />
                             <Text style={styles.cardLocation}>{profile.location}</Text>
                             <Text style={styles.cardDot}>·</Text>
-                            <Text style={styles.cardOccupation}>{t(profile.occupation.es, profile.occupation.en)}</Text>
+                            <Text style={styles.cardOccupation}>
+                              {t(profile.occupation.es, profile.occupation.en)}
+                            </Text>
                           </View>
                           <View style={styles.interestsRow}>
                             {profile.attributes.interests.slice(0, 3).map((interest) => (
@@ -2563,7 +2654,10 @@ export default function DiscoverScreen() {
                               {currentImages.map((_, index) => (
                                 <View
                                   key={`${profile.id}-dot-${index}`}
-                                  style={[styles.photoDot, index === activePhotoIndex && styles.photoDotActive]}
+                                  style={[
+                                    styles.photoDot,
+                                    index === activePhotoIndex && styles.photoDotActive,
+                                  ]}
                                 />
                               ))}
                             </View>
@@ -2571,7 +2665,7 @@ export default function DiscoverScreen() {
                         </LinearGradient>
                       </Animated.View>
 
-                      {/* Back info face */}
+                      {/* BACK FACE — info panel */}
                       <Animated.View
                         pointerEvents={isInfoVisible ? "auto" : "none"}
                         style={[
@@ -2582,35 +2676,98 @@ export default function DiscoverScreen() {
                             : { transform: [{ perspective: 1200 }, { rotateY: backRotate }] },
                         ]}
                       >
-                        {/* ... your existing back info ScrollView content unchanged ... */}
+                        <View style={styles.backHeader}>
+                          <View style={styles.backInfoBadge}>
+                            <Feather name="info" size={14} color={Colors.info} />
+                          </View>
+                          <Text style={styles.backName}>
+                            {profile.name}, {profile.age}
+                          </Text>
+                          <Text style={styles.backMeta}>
+                            {profile.location} · {t(profile.occupation.es, profile.occupation.en)}
+                          </Text>
+                        </View>
+
+                        <ScrollView
+                          ref={backScrollRef}
+                          style={styles.backScroll}
+                          contentContainerStyle={styles.backScrollContent}
+                          showsVerticalScrollIndicator={false}
+                        >
+                          <View style={styles.backSection}>
+                            <Text style={styles.backSectionTitle}>{t("Sobre mí", "About me")}</Text>
+                            <AboutRow
+                              icon="message-circle"
+                              label={t("Sobre mí", "About me")}
+                              value={t(profile.about.bio.es, profile.about.bio.en)}
+                            />
+                            <AboutRow
+                              icon="heart"
+                              label={t("Metas de tu relación", "Relationship goals")}
+                              value={getRelationshipGoalLabel(profile.about.relationshipGoals, t)}
+                            />
+                            <AboutRow
+                              icon="book-open"
+                              label={t("Educación", "Education")}
+                              value={getEducationLabel(profile.about.education, t)}
+                            />
+                            <AboutRow
+                              icon="users"
+                              label={t("Hijxs", "Children")}
+                              value={getChildrenPreferenceLabel(profile.about.childrenPreference, t)}
+                            />
+                            <AboutRow
+                              icon="globe"
+                              label={t("Idiomas", "Languages")}
+                              value={
+                                <View style={styles.flagImageRow}>
+                                  {profile.about.languagesSpoken.map((value) => {
+                                    const uri = getLanguageFlagUri(value);
+                                    return uri ? (
+                                      <ExpoImage
+                                        key={`${profile.id}-${value}`}
+                                        source={{ uri }}
+                                        style={styles.flagImage}
+                                        contentFit="cover"
+                                        cachePolicy="memory-disk"
+                                      />
+                                    ) : (
+                                      <View key={`${profile.id}-${value}`} style={styles.flagFallback}>
+                                        <Feather name="globe" size={14} color={Colors.info} />
+                                      </View>
+                                    );
+                                  })}
+                                </View>
+                              }
+                            />
+                          </View>
+
+                          <View style={styles.backSection}>
+                            <Text style={styles.backSectionTitle}>
+                              {t("Estilo de vida", "Life Style")}
+                            </Text>
+                            <View style={styles.lifestyleGrid}>
+                              <LifestyleTile icon="activity" label={t("Actividad física", "Activity")} value={getPhysicalActivityLabel(profile.lifestyle.physicalActivity, t)} />
+                              <LifestyleTile icon="coffee" label={t("Bebida", "Drink")} value={getAlcoholUseLabel(profile.lifestyle.alcoholUse, t)} />
+                              <LifestyleTile icon="wind" label={t("Tabaco", "Smoke")} value={getTobaccoUseLabel(profile.lifestyle.tobaccoUse, t)} />
+                              <LifestyleTile icon="flag" label={t("Política", "Politics")} value={getPoliticalInterestLabel(profile.lifestyle.politicalInterest, t)} />
+                              <LifestyleTile icon="star" label={t("Religión", "Religion")} value={getReligionImportanceLabel(profile.lifestyle.religionImportance, t)} />
+                              <LifestyleTile icon="moon" label={t("Creencia", "Belief")} value={getReligionLabel(profile.lifestyle.religion, t)} />
+                            </View>
+                          </View>
+
+                          <View style={styles.backSection}>
+                            <Text style={styles.backSectionTitle}>
+                              {t("Atributos físicos", "Physical attributes")}
+                            </Text>
+                            <PhysicalRow icon="user" label={t("Tipo de cuerpo", "Body type")} value={getBodyTypeLabel(profile.physical.bodyType, t)} />
+                            <PhysicalRow icon="maximize-2" label={t("Altura", "Height")} value={profile.physical.height} />
+                            <PhysicalRow icon="feather" label={t("Color de cabello", "Hair color")} value={getHairColorLabel(profile.physical.hairColor, t)} />
+                            <PhysicalRow icon="map" label={t("Etnia", "Ethnicity")} value={getEthnicityLabel(profile.physical.ethnicity, t)} />
+                          </View>
+                        </ScrollView>
                       </Animated.View>
                     </>
-                  ) : null}
-
-                  {/* Second — metadata overlay */}
-                  {isSecond && profile ? (
-                    <LinearGradient
-                      colors={["transparent", "rgba(15,26,20,0.98)"]}
-                      style={styles.cardGradient}
-                      pointerEvents="none"
-                    >
-                      {profile.pronouns ? <Text style={styles.cardPronouns}>{getPronounLabel(profile.pronouns, language)}</Text> : null}
-                      <Text style={styles.cardName}>{profile.name}</Text>
-                      <Text style={styles.cardAgeSign}>{String(profile.age)}</Text>
-                      <View style={styles.cardRow}>
-                        <Feather name="map-pin" size={13} color={Colors.primaryLight} />
-                        <Text style={styles.cardLocation}>{profile.location}</Text>
-                        <Text style={styles.cardDot}>·</Text>
-                        <Text style={styles.cardOccupation}>{t(profile.occupation.es, profile.occupation.en)}</Text>
-                      </View>
-                      <View style={styles.interestsRow}>
-                        {profile.attributes.interests.slice(0, 3).map((interest) => (
-                          <View key={`second-${profile.id}-${interest}`} style={styles.interestChip}>
-                            <Text style={styles.interestChipText}>{interest}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </LinearGradient>
                   ) : null}
                 </Animated.View>
               );
