@@ -458,6 +458,43 @@ export class AdminController {
     const architectureFlowRows = overview.architectureFlow
       .map((item) => `<li>${escapeHtml(item)}</li>`)
       .join("");
+    const funnelCards = [
+      {
+        label: "Signed up",
+        value: overview.funnel.signedUp.count,
+        fromPrevious: overview.funnel.signedUp.pctFromPrevious,
+        fromSignedUp: overview.funnel.signedUp.pctFromSignedUp,
+      },
+      {
+        label: "Onboarded",
+        value: overview.funnel.onboarded.count,
+        fromPrevious: overview.funnel.onboarded.pctFromPrevious,
+        fromSignedUp: overview.funnel.onboarded.pctFromSignedUp,
+      },
+      {
+        label: "Activated",
+        value: overview.funnel.activated.count,
+        fromPrevious: overview.funnel.activated.pctFromPrevious,
+        fromSignedUp: overview.funnel.activated.pctFromSignedUp,
+      },
+      {
+        label: "Reached threshold",
+        value: overview.funnel.reachedThreshold.count,
+        fromPrevious: overview.funnel.reachedThreshold.pctFromPrevious,
+        fromSignedUp: overview.funnel.reachedThreshold.pctFromSignedUp,
+      },
+    ]
+      .map(
+        (stage) => `
+          <div class="card">
+            <div class="label">${escapeHtml(stage.label)}</div>
+            <div class="value">${escapeHtml(stage.value)}</div>
+            <div class="muted">From previous: ${escapeHtml(stage.fromPrevious)}</div>
+            <div class="muted">From signed up: ${escapeHtml(stage.fromSignedUp)}</div>
+          </div>
+        `
+      )
+      .join("");
 
     res.send(
       this.renderPage(
@@ -498,6 +535,14 @@ export class AdminController {
           )} · Latest filtered projection rebuild: ${escapeHtml(
             toIso(overview.counts.latest_projection_rebuild_at)
           )}</div>
+          <div class="card" style="margin-bottom:16px;">
+            <h2>Activation Funnel</h2>
+            <div class="muted" style="margin-bottom:12px;">Signed up uses account creation time. Onboarded uses onboarding completion time. Activated currently uses onboarding completion time as a documented fallback until a canonical activation timestamp is stored. Reached threshold uses the threshold projection timestamp.</div>
+            <div class="grid">${funnelCards}</div>
+            <div class="muted">Activation timestamp source: ${escapeHtml(
+              overview.funnel.activationTimestampSource
+            )}</div>
+          </div>
           <div class="grid">
             <div class="card"><div class="label">Real users</div><div class="value">${escapeHtml(overview.counts.real_users)}</div></div>
             <div class="card"><div class="label">Dummy profiles</div><div class="value">${escapeHtml(overview.counts.dummy_profiles)}</div></div>

@@ -80,7 +80,6 @@ const accessTtlMs = runtimeConfig.accessTtlMinutes * 60 * 1000;
 const refreshTtlMs = runtimeConfig.refreshTtlDays * 24 * 60 * 60 * 1000;
 const verificationTtlMs = runtimeConfig.emailVerificationTtlMinutes * 60 * 1000;
 const passwordResetTtlMs = runtimeConfig.passwordResetTtlMinutes * 60 * 1000;
-const ONBOARDING_ROLLOUT_AT = new Date(runtimeConfig.onboardingRolloutAt).getTime();
 const PER_IP_MINUTE_LIMIT = 5;
 const PER_IP_HOUR_LIMIT = 20;
 const PER_TARGET_QUARTER_HOUR_LIMIT = 3;
@@ -274,30 +273,97 @@ export class AuthService {
   resolveHasCompletedOnboarding(
     user: ReturnType<AuthService["mapUser"]> | null | undefined
   ) {
-    if (user?.onboardingStatus === "completed" || user?.onboardingStatus === "exempt") {
-      return true;
-    }
-    const createdAtMs = user?.createdAt ? new Date(user.createdAt).getTime() : NaN;
-    if (Number.isFinite(createdAtMs) && createdAtMs < ONBOARDING_ROLLOUT_AT) {
-      return true;
-    }
-    return false;
+    return this.resolveCanonicalOnboardingState(user) === "complete";
   }
 
-  private resolveHasCompletedOnboardingFromSnapshot(
+  private resolveCanonicalOnboardingState(
+    user: ReturnType<AuthService["mapUser"]> | null | undefined,
+  ): "incomplete" | "complete" {
+    if (user?.onboardingStatus === "completed" || user?.onboardingStatus === "exempt") {
+      return "complete";
+    }
+    return "incomplete";
+  }
+
+  private resolveCanonicalOnboardingStateFromSnapshot(
     user: ReturnType<AuthService["mapUser"]> | null | undefined,
     snapshot?: AuthUserSessionSnapshot | null
-  ) {
+  ): "incomplete" | "complete" {
     if (snapshot?.onboardingStatus === "completed" || snapshot?.onboardingStatus === "exempt") {
-      return true;
+      return "complete";
     }
     if (snapshot?.onboardingStatus === "pending") {
-      return false;
+      return "incomplete";
     }
-    if (this.resolveHasCompletedOnboarding(user)) {
-      return true;
+    return this.resolveCanonicalOnboardingState(user);
+  }
+
+  private async repairLegacyCompletedOnboardingForUser(userId: number) {
+    await pool.query(
+      `WITH eligible_repair AS (
+         SELECT DISTINCT p.user_id
+         FROM core.profiles p
+         WHERE p.kind = 'user'
+           AND p.user_id = $1
+           AND COALESCE(TRIM(p.gender_identity), '') <> ''
+           AND COALESCE(TRIM(p.pronouns), '') <> ''
+           AND COALESCE(TRIM(p.personality), '') <> ''
+           AND COALESCE(TRIM(p.relationship_goals), '') <> ''
+           AND COALESCE(TRIM(p.children_preference), '') <> ''
+           AND COALESCE(TRIM(p.education), '') <> ''
+           AND COALESCE(TRIM(p.physical_activity), '') <> ''
+           AND COALESCE(TRIM(p.body_type), '') <> ''
+           AND EXISTS (
+             SELECT 1
+             FROM core.profile_languages pl
+             WHERE pl.profile_id = p.id
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM media.profile_images pi
+             JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+             WHERE pi.profile_id = p.id
+               AND ma.status = 'ready'
+           )
+       )
+       INSERT INTO core.user_onboarding
+         (user_id, status, required_version, started_at, completed_at, exempted_at, completion_origin, created_at, updated_at)
+       SELECT
+         er.user_id,
+         'completed'::onboarding_status,
+         1,
+         NOW(),
+         NOW(),
+         NULL,
+         'legacy_backfill',
+         NOW(),
+         NOW()
+       FROM eligible_repair er
+       ON CONFLICT (user_id) DO UPDATE SET
+         status = 'completed'::onboarding_status,
+         completed_at = COALESCE(core.user_onboarding.completed_at, EXCLUDED.completed_at),
+         completion_origin = CASE
+           WHEN core.user_onboarding.status = 'completed'::onboarding_status
+             THEN core.user_onboarding.completion_origin
+           ELSE 'legacy_backfill'
+         END,
+         updated_at = NOW()
+       WHERE core.user_onboarding.status <> 'completed'::onboarding_status`,
+      [userId]
+    );
+  }
+
+  async ensureCanonicalOnboardingState(
+    user: ReturnType<AuthService["mapUser"]> | null | undefined
+  ) {
+    if (!user?.id) {
+      return user;
     }
-    return Boolean(snapshot?.profileImageCount && snapshot.profileImageCount > 0);
+    if (user.onboardingStatus === "completed" || user.onboardingStatus === "exempt") {
+      return user;
+    }
+    await this.repairLegacyCompletedOnboardingForUser(user.id);
+    return this.findUserById(user.id);
   }
 
   async authPayload(
@@ -306,17 +372,20 @@ export class AuthService {
     refreshToken: string,
     options?: { snapshot?: AuthUserSessionSnapshot | null }
   ) {
-    const needsProfileCompletion = !user?.name || !user?.dateOfBirth;
-    const hasCompletedOnboarding = this.resolveHasCompletedOnboardingFromSnapshot(
-      user,
+    const canonicalUser = (await this.ensureCanonicalOnboardingState(user)) || user;
+    const needsProfileCompletion = !canonicalUser?.name || !canonicalUser?.dateOfBirth;
+    const onboardingState = this.resolveCanonicalOnboardingStateFromSnapshot(
+      canonicalUser,
       options?.snapshot
     );
+    const hasCompletedOnboarding = onboardingState === "complete";
     return {
       status: "authenticated",
       accessToken,
       refreshToken,
-      user: this.sanitizeUser(user),
+      user: this.sanitizeUser(canonicalUser),
       needsProfileCompletion,
+      onboardingState,
       hasCompletedOnboarding,
     };
   }
@@ -1957,14 +2026,17 @@ export class AuthService {
     const auth = await this.authenticate(authorizationHeader, {
       source: "get_me",
     });
+    const canonicalUser = (await this.ensureCanonicalOnboardingState(auth.user)) || auth.user;
     const snapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
+    const onboardingState = this.resolveCanonicalOnboardingStateFromSnapshot(
+      canonicalUser,
+      snapshot
+    );
     return {
-      user: this.sanitizeUser(auth.user),
-      needsProfileCompletion: !auth.user?.name || !auth.user?.dateOfBirth,
-      hasCompletedOnboarding: this.resolveHasCompletedOnboardingFromSnapshot(
-        auth.user,
-        snapshot
-      ),
+      user: this.sanitizeUser(canonicalUser),
+      needsProfileCompletion: !canonicalUser?.name || !canonicalUser?.dateOfBirth,
+      onboardingState,
+      hasCompletedOnboarding: onboardingState === "complete",
     };
   }
 
@@ -1981,15 +2053,18 @@ export class AuthService {
         return { error: dobStatus.code };
       }
     }
-    const user = await this.updateUserProfile(auth.user.id, updates);
+    const updatedUser = await this.updateUserProfile(auth.user.id, updates);
+    const user = (await this.ensureCanonicalOnboardingState(updatedUser)) || updatedUser;
     const snapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
+    const onboardingState = this.resolveCanonicalOnboardingStateFromSnapshot(
+      user,
+      snapshot
+    );
     return {
       user: this.sanitizeUser(user),
       needsProfileCompletion: !user?.name || !user?.dateOfBirth,
-      hasCompletedOnboarding: this.resolveHasCompletedOnboardingFromSnapshot(
-        user,
-        snapshot
-      ),
+      onboardingState,
+      hasCompletedOnboarding: onboardingState === "complete",
     };
   }
 
@@ -2015,6 +2090,7 @@ export class AuthService {
     });
     return {
       status: "ok" as const,
+      onboardingState: "complete" as const,
       hasCompletedOnboarding: this.resolveHasCompletedOnboarding(user),
     };
   }

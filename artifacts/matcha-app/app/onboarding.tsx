@@ -110,11 +110,12 @@ export default function OnboardingScreen() {
     authError,
     authStatus,
     finishOnboarding,
-    hasCompletedOnboarding,
+    isOnline,
     language,
-    needsProfileCompletion,
     onboardingResumeStep,
+    resolvedAccessGate,
     saveOnboardingDraft,
+    sessionOfflineFallback,
     setOnboardingResumeStep,
     t,
     user,
@@ -189,7 +190,7 @@ export default function OnboardingScreen() {
   }, [applySeedToForm, buildProfileSeed]);
 
   React.useEffect(() => {
-    if (hasCompletedOnboarding || onboardingResumeStep !== 1) {
+    if (resolvedAccessGate.onboardingState === "complete" || onboardingResumeStep !== 1) {
       return;
     }
 
@@ -197,7 +198,12 @@ export default function OnboardingScreen() {
     hasLocalDraftChangesRef.current = false;
     hasLocalPhotoDraftChangesRef.current = false;
     applySeedToForm(seed);
-  }, [applySeedToForm, buildProfileSeed, hasCompletedOnboarding, onboardingResumeStep]);
+  }, [
+    applySeedToForm,
+    buildProfileSeed,
+    onboardingResumeStep,
+    resolvedAccessGate.onboardingState,
+  ]);
 
   React.useEffect(() => {
     setStep(onboardingResumeStep);
@@ -208,14 +214,10 @@ export default function OnboardingScreen() {
       router.replace(AUTH_SIGN_IN_ROUTE);
       return;
     }
-    if (needsProfileCompletion) {
-      router.replace("/complete-profile");
-      return;
+    if (resolvedAccessGate.route !== "/onboarding") {
+      router.replace(resolvedAccessGate.route);
     }
-    if (hasCompletedOnboarding) {
-      router.replace("/(tabs)/discover");
-    }
-  }, [authStatus, hasCompletedOnboarding, needsProfileCompletion]);
+  }, [authStatus, resolvedAccessGate.route]);
 
   const topPad = insets.top + (Platform.OS === "web" ? 67 : 16);
   const { restingBottomInset } = useBottomObstruction({
@@ -246,6 +248,11 @@ export default function OnboardingScreen() {
     Boolean(physicalActivity) &&
     Boolean(bodyType) &&
     Boolean(personality);
+  const isServerProgressBlocked = !isOnline || sessionOfflineFallback;
+  const offlineBannerCopy = t(
+    "Necesitas conexión para continuar con el onboarding.",
+    "You need a connection to continue onboarding."
+  );
 
   const animateToStep = (nextStep: number) => {
     Animated.sequence([
@@ -389,6 +396,10 @@ export default function OnboardingScreen() {
     }
 
     setFormError(null);
+    if (isServerProgressBlocked) {
+      setFormError(offlineBannerCopy);
+      return;
+    }
     const requestId = `onboarding_draft_${Date.now()}`;
     const ok = await saveOnboardingDraft({
       genderIdentity,
@@ -425,6 +436,10 @@ export default function OnboardingScreen() {
     }
 
     setFormError(null);
+    if (isServerProgressBlocked) {
+      setFormError(offlineBannerCopy);
+      return;
+    }
     const draftSaved = await saveOnboardingDraft({
       genderIdentity,
       pronouns,
@@ -718,11 +733,12 @@ export default function OnboardingScreen() {
 
       <Pressable
         onPress={handleContinueFromForm}
-        disabled={!isFormComplete || authBusy}
+        disabled={!isFormComplete || authBusy || isServerProgressBlocked}
         style={({ pressed }) => [
           styles.primaryButton,
-          (!isFormComplete || authBusy) && styles.primaryButtonDisabled,
-          pressed && isFormComplete && !authBusy && { opacity: 0.92 },
+          (!isFormComplete || authBusy || isServerProgressBlocked) &&
+            styles.primaryButtonDisabled,
+          pressed && isFormComplete && !authBusy && !isServerProgressBlocked && { opacity: 0.92 },
         ]}
       >
         <Text style={styles.primaryButtonText}>
@@ -758,11 +774,11 @@ export default function OnboardingScreen() {
       ) : null}
       <Pressable
         onPress={handleFinish}
-        disabled={authBusy}
+        disabled={authBusy || isServerProgressBlocked}
         style={({ pressed }) => [
           styles.primaryButton,
-          authBusy && styles.primaryButtonDisabled,
-          pressed && !authBusy && { opacity: 0.92 },
+          (authBusy || isServerProgressBlocked) && styles.primaryButtonDisabled,
+          pressed && !authBusy && !isServerProgressBlocked && { opacity: 0.92 },
         ]}
       >
         <Text style={styles.primaryButtonText}>
@@ -787,6 +803,12 @@ export default function OnboardingScreen() {
           bottomOffset={restingBottomInset}
           extraKeyboardSpace={18}
         >
+        {isServerProgressBlocked ? (
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={16} color={Colors.info} />
+            <Text style={styles.offlineBannerText}>{offlineBannerCopy}</Text>
+          </View>
+        ) : null}
         <ProgressBar currentStep={step} t={t} />
         <Animated.View
           style={[
@@ -819,6 +841,26 @@ const styles = StyleSheet.create({
   },
   animatedWrap: {
     flexGrow: 1,
+  },
+  offlineBanner: {
+    marginTop: 12,
+    marginBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.28)",
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.text,
   },
   progressBlock: {
     paddingTop: 8,

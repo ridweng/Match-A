@@ -25,6 +25,7 @@ import {
   type DiscoveryFeedProfileResponse,
   type DiscoveryLikeResponse,
   type DiscoveryPreferencesResponse,
+  type OnboardingState,
   type ServerHealthCheckResult,
   type ViewerBootstrapResponse,
   type ProviderAvailability,
@@ -182,6 +183,17 @@ type LocationSyncResult = {
   message?: string | null;
 };
 type ServerHealthStatus = "unknown" | "checking" | "healthy" | "unhealthy";
+type OnboardingAccessState = "unknown" | "incomplete" | "complete";
+type AccessTruthSource = "backend_confirmed" | "offline_safe_cache" | "unknown_fallback";
+type ResolvedAccessGate = {
+  authState: "authenticated" | "unauthenticated";
+  onboardingState: OnboardingAccessState;
+  needsProfileCompletion: boolean;
+  canEnterDiscover: boolean;
+  route: "/login" | "/complete-profile" | "/onboarding" | "/(tabs)/discover";
+  reason: string;
+  source: AccessTruthSource | null;
+};
 
 type BiometricResult = { ok: boolean; code?: string };
 type AccessGateState =
@@ -577,6 +589,8 @@ type AppContextType = {
   providerAvailability: ProviderAvailability;
   needsProfileCompletion: boolean;
   hasCompletedOnboarding: boolean;
+  onboardingAccessState: OnboardingAccessState;
+  resolvedAccessGate: ResolvedAccessGate;
   completeProfile: (data: { name: string; dateOfBirth: string }) => Promise<boolean>;
   onboardingResumeStep: number;
   setOnboardingResumeStep: (step: number) => Promise<void>;
@@ -698,6 +712,7 @@ const DISCOVERY_VIEW_PREFERENCES_STORAGE_KEY = "discoveryViewPreferences";
 const DISCOVERY_FEED_PAGE_STORAGE_PREFIX = "discoveryFeedPage:";
 const LAST_AUTH_USER_ID_STORAGE_KEY = "lastAuthUserId";
 const VIEWER_BOOTSTRAP_STORAGE_PREFIX = "viewerBootstrap:";
+const ONBOARDING_GATE_STORAGE_PREFIX = "onboardingGate:";
 const PENDING_POST_LOGIN_ROUTE_STORAGE_KEY = "pendingPostLoginRoute";
 const ONBOARDING_RESUME_DRAFT_STORAGE_KEY = "onboardingResumeDraft";
 const DISCOVERY_LOCATION_SYNC_STORAGE_PREFIX = "discoveryLocationSync:";
@@ -711,6 +726,11 @@ function createLocationSyncRequestId(prefix = "location_sync") {
 
 type DiscoveryFiltersCache = Record<string, DiscoveryFilters>;
 type ViewerBootstrapCache = ViewerBootstrapResponse;
+type PersistedOnboardingGateCache = {
+  userId: number;
+  onboardingState: OnboardingState;
+  confirmedAt: string;
+};
 type ViewerBootstrapMetadata = Pick<
   ViewerBootstrapCache,
   "syncedAt" | "bootstrapGeneratedAt" | "viewerVersion" | "updatedAtByDomain"
@@ -906,6 +926,36 @@ export type DiscoveryQueueRuntime = {
 
 function getViewerBootstrapStorageKey(userId: number) {
   return `${VIEWER_BOOTSTRAP_STORAGE_PREFIX}${userId}`;
+}
+
+function getOnboardingGateStorageKey(userId: number) {
+  return `${ONBOARDING_GATE_STORAGE_PREFIX}${userId}`;
+}
+
+function normalizePersistedOnboardingGateCache(
+  value: unknown
+): PersistedOnboardingGateCache | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Partial<PersistedOnboardingGateCache>;
+  if (!Number.isFinite(candidate.userId) || candidate.userId == null) {
+    return null;
+  }
+  if (
+    candidate.onboardingState !== "complete" &&
+    candidate.onboardingState !== "incomplete"
+  ) {
+    return null;
+  }
+  return {
+    userId: Number(candidate.userId),
+    onboardingState: candidate.onboardingState,
+    confirmedAt:
+      typeof candidate.confirmedAt === "string" && candidate.confirmedAt.trim().length
+        ? candidate.confirmedAt
+        : new Date().toISOString(),
+  };
 }
 
 function createDefaultBootstrapMetadata(): ViewerBootstrapMetadata {
@@ -1204,30 +1254,66 @@ function buildOnboardingRequestHeaders(requestId?: string) {
   };
 }
 
-function inferCompletedOnboardingFromBootstrap(
-  bootstrap: ViewerBootstrapCache | null | undefined
-) {
-  if (!bootstrap) {
-    return false;
+function resolveCanonicalOnboardingAccessState(
+  onboardingState: OnboardingState | null | undefined
+): OnboardingAccessState {
+  return onboardingState === "complete" ? "complete" : "incomplete";
+}
+
+function resolveAccessGate(input: {
+  authStatus: AuthStatus;
+  needsProfileCompletion: boolean;
+  onboardingState: OnboardingAccessState;
+  source: AccessTruthSource | null;
+}): ResolvedAccessGate {
+  if (input.authStatus !== "authenticated") {
+    return {
+      authState: "unauthenticated",
+      onboardingState: "unknown",
+      needsProfileCompletion: false,
+      canEnterDiscover: false,
+      route: "/login",
+      reason: "unauthenticated",
+      source: null,
+    };
   }
 
-  if (bootstrap.hasCompletedOnboarding) {
-    return true;
+  if (input.needsProfileCompletion) {
+    return {
+      authState: "authenticated",
+      onboardingState: input.onboardingState,
+      needsProfileCompletion: true,
+      canEnterDiscover: false,
+      route: "/complete-profile",
+      reason: "backend_profile_completion_required",
+      source: input.source,
+    };
   }
 
-  const hasRemotePhoto = Array.isArray(bootstrap.photos) && bootstrap.photos.length > 0;
-  const profile = bootstrap.profile;
-  const hasOnboardingSignals = Boolean(
-    profile?.relationshipGoals ||
-      profile?.childrenPreference ||
-      profile?.education ||
-      profile?.physicalActivity ||
-      profile?.bodyType ||
-      profile?.personality ||
-      profile?.languagesSpoken?.length
-  );
+  if (input.onboardingState === "complete") {
+    return {
+      authState: "authenticated",
+      onboardingState: "complete",
+      needsProfileCompletion: false,
+      canEnterDiscover: true,
+      route: "/(tabs)/discover",
+      reason: "onboarding_complete",
+      source: input.source,
+    };
+  }
 
-  return hasRemotePhoto && hasOnboardingSignals;
+  return {
+    authState: "authenticated",
+    onboardingState: input.onboardingState,
+    needsProfileCompletion: false,
+    canEnterDiscover: false,
+    route: "/onboarding",
+    reason:
+      input.onboardingState === "unknown"
+        ? "onboarding_unknown_forced_safe_fallback"
+        : "onboarding_incomplete",
+    source: input.source,
+  };
 }
 
 function mergeOnboardingResumeProfile(
@@ -1659,6 +1745,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     useState<VerificationStatus>("idle");
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
   const needsProfileCompletionRef = useRef(false);
+  const [onboardingAccessState, setOnboardingAccessStateState] =
+    useState<OnboardingAccessState>("unknown");
+  const onboardingAccessStateRef = useRef<OnboardingAccessState>("unknown");
+  const [onboardingAccessSource, setOnboardingAccessSourceState] =
+    useState<AccessTruthSource>("unknown_fallback");
+  const onboardingAccessSourceRef = useRef<AccessTruthSource>("unknown_fallback");
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const hasCompletedOnboardingRef = useRef(false);
   const [biometricsEnabled, setBiometricsEnabledState] = useState(false);
@@ -1752,6 +1844,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     accessStateRef.current = next;
     setAccessStateState(next);
   }, []);
+  const setNeedsProfileCompletionResolved = useCallback((next: boolean) => {
+    needsProfileCompletionRef.current = next;
+    setNeedsProfileCompletion((current) => (current === next ? current : next));
+  }, []);
+  const setOnboardingAccessStateResolved = useCallback(
+    (
+      next: OnboardingAccessState,
+      source: AccessTruthSource,
+      reason: string,
+      extra?: Record<string, unknown>
+    ) => {
+      onboardingAccessStateRef.current = next;
+      onboardingAccessSourceRef.current = source;
+      setOnboardingAccessStateState((current) => (current === next ? current : next));
+      setOnboardingAccessSourceState((current) =>
+        current === source ? current : source
+      );
+      hasCompletedOnboardingRef.current = next === "complete";
+      setHasCompletedOnboarding((current) =>
+        current === (next === "complete") ? current : next === "complete"
+      );
+      debugLog("[auth-gate] onboarding_state_resolved", {
+        onboardingState: next,
+        source,
+        reason,
+        userId: userRef.current?.id ?? null,
+        ...extra,
+      });
+    },
+    []
+  );
   const setBiometricBusyState = useCallback((next: boolean) => {
     biometricBusyRef.current = next;
     setBiometricBusy(next);
@@ -1807,6 +1930,62 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     [authStatus]
   );
+  const persistOnboardingGateCache = useCallback(
+    async (userId: number, onboardingState: OnboardingState) => {
+      const cache: PersistedOnboardingGateCache = {
+        userId,
+        onboardingState,
+        confirmedAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(
+        getOnboardingGateStorageKey(userId),
+        JSON.stringify(cache)
+      );
+    },
+    []
+  );
+  const readOnboardingGateCache = useCallback(async (userId: number) => {
+    const raw = await AsyncStorage.getItem(getOnboardingGateStorageKey(userId));
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = normalizePersistedOnboardingGateCache(JSON.parse(raw));
+      if (!parsed || parsed.userId !== userId) {
+        await AsyncStorage.removeItem(getOnboardingGateStorageKey(userId));
+        return null;
+      }
+      return parsed;
+    } catch {
+      await AsyncStorage.removeItem(getOnboardingGateStorageKey(userId));
+      return null;
+    }
+  }, []);
+  const applyBackendConfirmedOnboardingState = useCallback(
+    async (
+      userId: number | null | undefined,
+      onboardingState: OnboardingState | null | undefined,
+      reason: string
+    ) => {
+      const resolvedState = resolveCanonicalOnboardingAccessState(onboardingState);
+      setOnboardingAccessStateResolved(
+        resolvedState,
+        "backend_confirmed",
+        reason,
+        {
+          userId: userId ?? null,
+          backendOnboardingState: onboardingState ?? null,
+        }
+      );
+      if (userId && Number.isFinite(userId)) {
+        await persistOnboardingGateCache(
+          userId,
+          resolvedState === "complete" ? "complete" : "incomplete"
+        );
+      }
+    },
+    [persistOnboardingGateCache, setOnboardingAccessStateResolved]
+  );
   const resetClientState = useCallback(() => {
     const emptyPopularAttributes = createEmptyPopularAttributesByCategory();
     const defaultGoals = normalizeStoredGoals(DEFAULT_GOALS);
@@ -1846,10 +2025,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setLastBiometricErrorCode(null);
     setLockCycleId(0);
     lockCycleIdRef.current = 0;
-    setHasCompletedOnboarding(false);
-    hasCompletedOnboardingRef.current = false;
-    setNeedsProfileCompletion(false);
-    needsProfileCompletionRef.current = false;
+    setOnboardingAccessStateResolved(
+      "unknown",
+      "unknown_fallback",
+      "client_state_reset"
+    );
+    setNeedsProfileCompletionResolved(false);
     setAuthError(null);
     setAuthFormPrefill(null);
     setPendingVerificationEmail(null);
@@ -1895,7 +2076,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     goalsRef.current = defaultGoals;
     setGoals(defaultGoals);
     viewerBootstrapMetaRef.current = createDefaultBootstrapMetadata();
-  }, []);
+  }, [setNeedsProfileCompletionResolved, setOnboardingAccessStateResolved]);
 
   const clearPendingPostLoginRoute = useCallback(async () => {
     pendingPostLoginRouteRef.current = null;
@@ -2069,6 +2250,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     removals.push(AsyncStorage.removeItem(getViewerBootstrapStorageKey(userId)));
+    removals.push(AsyncStorage.removeItem(getOnboardingGateStorageKey(userId)));
     removals.push(clearMutationQueueForUser(userId));
 
     const [allKeys, filtersRaw] = await Promise.all([
@@ -2176,12 +2358,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updatedAtByDomain:
           overrides?.updatedAtByDomain ?? viewerBootstrapMetaRef.current.updatedAtByDomain,
       };
+      const nextOnboardingState =
+        overrides?.onboardingState ??
+        (onboardingAccessStateRef.current === "complete" ? "complete" : "incomplete");
       const bootstrap: ViewerBootstrapCache = {
         user: currentUser,
+        onboardingState: nextOnboardingState,
         needsProfileCompletion:
           overrides?.needsProfileCompletion ?? needsProfileCompletionRef.current,
         hasCompletedOnboarding:
-          overrides?.hasCompletedOnboarding ?? hasCompletedOnboardingRef.current,
+          overrides?.hasCompletedOnboarding ?? nextOnboardingState === "complete",
         profile: nextProfile,
         settings: nextSettings,
         photos: overrides?.photos ?? nextProfile.photos.map((photo) => ({
@@ -2230,7 +2416,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [persistViewerBootstrapCache]);
 
   const applyViewerBootstrap = useCallback(
-    async (bootstrap: ViewerBootstrapCache, options?: { persist?: boolean }) => {
+    async (
+      bootstrap: ViewerBootstrapCache,
+      options?: { persist?: boolean; applyGateState?: boolean }
+    ) => {
       const normalizedBootstrapUser: AuthUser = {
         ...bootstrap.user,
         dateOfBirth: normalizeIsoDateString(bootstrap.user.dateOfBirth),
@@ -2256,10 +2445,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           bootstrap.updatedAtByDomain ||
           createDefaultBootstrapMetadata().updatedAtByDomain,
       };
-      setNeedsProfileCompletion(bootstrap.needsProfileCompletion);
-      needsProfileCompletionRef.current = bootstrap.needsProfileCompletion;
-      setHasCompletedOnboarding(bootstrap.hasCompletedOnboarding);
-      hasCompletedOnboardingRef.current = bootstrap.hasCompletedOnboarding;
+      setNeedsProfileCompletionResolved(bootstrap.needsProfileCompletion);
+      if (options?.applyGateState !== false) {
+        setOnboardingAccessStateResolved(
+          resolveCanonicalOnboardingAccessState(
+            bootstrap.onboardingState ??
+              (bootstrap.hasCompletedOnboarding ? "complete" : "incomplete")
+          ),
+          "backend_confirmed",
+          "viewer_bootstrap_applied",
+          {
+            userId: normalizedBootstrapUser.id,
+          }
+        );
+      }
       setLanguageState(bootstrap.settings.language);
       languageRef.current = bootstrap.settings.language;
       setHeightUnitState(bootstrap.settings.heightUnit);
@@ -2374,7 +2573,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
     },
-    [persistViewerBootstrapCache, restoreProfilePhotos]
+    [
+      persistViewerBootstrapCache,
+      restoreProfilePhotos,
+      setNeedsProfileCompletionResolved,
+      setOnboardingAccessStateResolved,
+    ]
   );
 
   useEffect(() => {
@@ -2472,6 +2676,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (es: string, en: string) => (language === "es" ? es : en),
     [language]
   );
+
+  const resolvedAccessGate = useMemo(
+    () =>
+      resolveAccessGate({
+        authStatus,
+        needsProfileCompletion,
+        onboardingState: onboardingAccessState,
+        source: onboardingAccessSource,
+      }),
+    [
+      authStatus,
+      needsProfileCompletion,
+      onboardingAccessSource,
+      onboardingAccessState,
+    ]
+  );
+
+  useEffect(() => {
+    debugLog("[auth-gate] route_decision", {
+      authState: resolvedAccessGate.authState,
+      onboardingState: resolvedAccessGate.onboardingState,
+      needsProfileCompletion: resolvedAccessGate.needsProfileCompletion,
+      canEnterDiscover: resolvedAccessGate.canEnterDiscover,
+      route: resolvedAccessGate.route,
+      reason: resolvedAccessGate.reason,
+      source: resolvedAccessGate.source,
+      sessionOfflineFallback,
+      userId: userRef.current?.id ?? null,
+    });
+  }, [resolvedAccessGate, sessionOfflineFallback]);
 
   const refreshProfileLocation = useCallback(
     async (options?: { reason?: string; force?: boolean; requestId?: string }) => {
@@ -2745,6 +2979,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshToken: string | null;
       user: AuthUser;
       needsProfileCompletion: boolean;
+      onboardingState: OnboardingState;
       hasCompletedOnboarding: boolean;
     }, options?: { restoreOnboardingDraft?: boolean }) => {
       Keyboard.dismiss();
@@ -2752,10 +2987,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...session.user,
         dateOfBirth: normalizeIsoDateString(session.user.dateOfBirth),
       };
+      const previousUserId = userRef.current?.id ?? null;
       debugLog("[auth] applySession", {
         userId: normalizedSessionUser.id,
         needsProfileCompletion: session.needsProfileCompletion,
-        hasCompletedOnboarding: session.hasCompletedOnboarding,
+        onboardingState: session.onboardingState,
       });
       setAccessToken(session.accessToken);
       accessTokenRef.current = session.accessToken;
@@ -2767,14 +3003,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPendingVerificationPassword(null);
       setVerificationStatus("idle");
       setAuthError(null);
-      setNeedsProfileCompletion(session.needsProfileCompletion);
-      setHasCompletedOnboarding(session.hasCompletedOnboarding);
+      setNeedsProfileCompletionResolved(session.needsProfileCompletion);
+      await applyBackendConfirmedOnboardingState(
+        normalizedSessionUser.id,
+        session.onboardingState,
+        "apply_session"
+      );
       setSessionOfflineFallback(false);
       await Promise.all([
         AsyncStorage.setItem(LAST_AUTH_USER_ID_STORAGE_KEY, String(normalizedSessionUser.id)),
         AsyncStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, session.accessToken),
         AsyncStorage.removeItem("profile"),
         AsyncStorage.removeItem("goals"),
+        previousUserId && previousUserId !== normalizedSessionUser.id
+          ? clearUserScopedCachedState(previousUserId)
+          : Promise.resolve(),
         session.refreshToken
           ? SecureStore.setItemAsync(REFRESH_TOKEN_STORAGE_KEY, session.refreshToken)
           : SecureStore.deleteItemAsync(REFRESH_TOKEN_STORAGE_KEY),
@@ -2789,6 +3032,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
         bootstrap = {
           user: normalizedSessionUser,
+          onboardingState: session.onboardingState,
           needsProfileCompletion: session.needsProfileCompletion,
           hasCompletedOnboarding: session.hasCompletedOnboarding,
           profile: normalizeStoredProfile({
@@ -2829,23 +3073,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      const resolvedHasCompletedOnboarding =
-        session.hasCompletedOnboarding || inferCompletedOnboardingFromBootstrap(bootstrap);
-      if (resolvedHasCompletedOnboarding !== session.hasCompletedOnboarding) {
-        debugLog("[auth] onboarding completion inferred_from_bootstrap", {
-          userId: normalizedSessionUser.id,
-          sessionHasCompletedOnboarding: session.hasCompletedOnboarding,
-          resolvedHasCompletedOnboarding,
-          photoCount: bootstrap.photos.length,
-        });
-      }
-
-      setHasCompletedOnboarding(resolvedHasCompletedOnboarding);
-      hasCompletedOnboardingRef.current = resolvedHasCompletedOnboarding;
-
       await applyViewerBootstrap({
         ...bootstrap,
-        hasCompletedOnboarding: resolvedHasCompletedOnboarding,
+        onboardingState: session.onboardingState,
+        hasCompletedOnboarding: session.onboardingState === "complete",
       });
       const onboardingResumeDraft = onboardingResumeDraftRef.current;
       const resumeDraftMatchesSession =
@@ -2857,13 +3088,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         Boolean(onboardingResumeDraft) &&
         resumeDraftMatchesSession &&
         !session.needsProfileCompletion &&
-        !resolvedHasCompletedOnboarding;
+        session.onboardingState !== "complete";
 
       if (shouldRestoreOnboardingDraft) {
         await applyOnboardingResumeDraftToProfile();
       } else if (onboardingResumeDraft && !resumeDraftMatchesSession) {
         await clearOnboardingResumeState().catch(() => {});
-      } else if (resolvedHasCompletedOnboarding || session.needsProfileCompletion) {
+      } else if (session.onboardingState === "complete" || session.needsProfileCompletion) {
         await clearOnboardingResumeState().catch(() => {});
       } else {
         const preservedStep = onboardingResumeDraft?.step ?? onboardingResumeStepRef.current;
@@ -2879,11 +3110,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       requestQueueReplay();
     },
     [
+      applyBackendConfirmedOnboardingState,
       applyOnboardingResumeDraftToProfile,
       applyViewerBootstrap,
+      clearUserScopedCachedState,
       clearOnboardingResumeState,
       requestQueueReplay,
       setAccessState,
+      setNeedsProfileCompletionResolved,
     ]
   );
 
@@ -2895,10 +3129,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         refreshToken: tokens.refreshToken,
         user: me.user,
         needsProfileCompletion: me.needsProfileCompletion,
+        onboardingState: me.onboardingState,
         hasCompletedOnboarding: me.hasCompletedOnboarding,
       });
       return {
         needsProfileCompletion: me.needsProfileCompletion,
+        onboardingState: me.onboardingState,
         hasCompletedOnboarding: me.hasCompletedOnboarding,
       };
     },
@@ -2908,9 +3144,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const clearOnboardingResumeForFreshIncompleteSession = useCallback(
     async (session: {
       needsProfileCompletion: boolean;
+      onboardingState: OnboardingState;
       hasCompletedOnboarding: boolean;
     }) => {
-      if (!session.needsProfileCompletion && !session.hasCompletedOnboarding) {
+      if (!session.needsProfileCompletion && session.onboardingState !== "complete") {
         await clearOnboardingResumeState().catch(() => {});
       }
     },
@@ -2918,12 +3155,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const syncPostAuthRedirectFromResolvedState = useCallback(() => {
-    const nextRoute = resolvePostAuthRedirectRoute({
+    const nextRoute = resolveAccessGate({
+      authStatus: "authenticated",
       needsProfileCompletion: needsProfileCompletionRef.current,
-      hasCompletedOnboarding: hasCompletedOnboardingRef.current,
+      onboardingState: onboardingAccessStateRef.current,
+      source: onboardingAccessSourceRef.current,
     });
     setPostAuthRedirectRoute(
-      nextRoute === "/(tabs)/discover" ? null : nextRoute
+      nextRoute.route === "/(tabs)/discover"
+        ? null
+        : (nextRoute.route as PostAuthRedirectRoute)
     );
   }, []);
 
@@ -3184,12 +3425,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           lastAuthUserId && Number.isFinite(lastAuthUserId)
             ? await AsyncStorage.getItem(getViewerBootstrapStorageKey(lastAuthUserId))
             : null;
+        const cachedOnboardingGate =
+          lastAuthUserId && Number.isFinite(lastAuthUserId)
+            ? await readOnboardingGateCache(lastAuthUserId)
+            : null;
 
         if (cachedBootstrapRaw) {
           try {
             await applyViewerBootstrap(
               JSON.parse(cachedBootstrapRaw) as ViewerBootstrapCache,
-              { persist: false }
+              { persist: false, applyGateState: false }
             );
           } catch {}
         } else {
@@ -3210,6 +3455,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               )
               .catch(() => {});
           }
+        }
+
+        if (cachedOnboardingGate) {
+          setOnboardingAccessStateResolved(
+            resolveCanonicalOnboardingAccessState(cachedOnboardingGate.onboardingState),
+            "offline_safe_cache",
+            "startup_cached_gate_restored",
+            {
+              userId: cachedOnboardingGate.userId,
+              confirmedAt: cachedOnboardingGate.confirmedAt,
+            }
+          );
+        } else {
+          setOnboardingAccessStateResolved(
+            "unknown",
+            "unknown_fallback",
+            "startup_gate_unknown"
+          );
         }
 
         if (lastAuthUserId && cachedDiscoveryFilters?.[String(lastAuthUserId)]) {
@@ -3238,9 +3501,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
             await clearOnboardingResumeForFreshIncompleteSession(session);
             await applySession(session);
+            const resolvedPostUnlockRoute = resolveAccessGate({
+              authStatus: "authenticated",
+              needsProfileCompletion: session.needsProfileCompletion,
+              onboardingState: resolveCanonicalOnboardingAccessState(
+                session.onboardingState
+              ),
+              source: "backend_confirmed",
+            }).route;
             if (bioEnabled && Platform.OS !== "web") {
               incrementLockCycleId();
-              setPendingUnlockDestination("/(tabs)/discover");
+              setPendingUnlockDestination(
+                resolvedPostUnlockRoute === "/(tabs)/discover"
+                  ? "/(tabs)/discover"
+                  : null
+              );
               setLastLockTriggerState("cold_start");
               setLastBiometricErrorCode(null);
               setAccessState("authenticated_locked");
@@ -3257,9 +3532,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               });
               setSessionOfflineFallback(true);
               setAuthStatus("authenticated");
+              const offlineResolvedRoute = resolveAccessGate({
+                authStatus: "authenticated",
+                needsProfileCompletion: needsProfileCompletionRef.current,
+                onboardingState: onboardingAccessStateRef.current,
+                source: onboardingAccessSourceRef.current,
+              }).route;
               if (bioEnabled && Platform.OS !== "web") {
                 incrementLockCycleId();
-                setPendingUnlockDestination("/(tabs)/discover");
+                setPendingUnlockDestination(
+                  offlineResolvedRoute === "/(tabs)/discover"
+                    ? "/(tabs)/discover"
+                    : null
+                );
                 setLastLockTriggerState("cold_start");
                 setLastBiometricErrorCode(null);
                 setAccessState("authenticated_locked");
@@ -3305,12 +3590,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     clearUserScopedCachedState,
     clearStoredSessionTokens,
     persistProfile,
+    readOnboardingGateCache,
     resetClientState,
     restoreProfilePhotos,
     setSignInPrefill,
     incrementLockCycleId,
     logBiometricEvent,
     setAccessState,
+    setOnboardingAccessStateResolved,
     setBiometricAppReady,
     setBootstrapComplete,
   ]);
@@ -3581,10 +3868,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const me = await updateMe(accessToken, mePatch);
         setUser(me.user);
         userRef.current = me.user;
-        setNeedsProfileCompletion(me.needsProfileCompletion);
-        needsProfileCompletionRef.current = me.needsProfileCompletion;
-        setHasCompletedOnboarding(me.hasCompletedOnboarding);
-        hasCompletedOnboardingRef.current = me.hasCompletedOnboarding;
+        setNeedsProfileCompletionResolved(me.needsProfileCompletion);
+        await applyBackendConfirmedOnboardingState(
+          me.user.id,
+          me.onboardingState,
+          "save_settings_update_me"
+        );
 
         await persistViewerBootstrapCache({
           user: me.user,
@@ -3595,6 +3884,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             heightUnit: settingsResult.settings.heightUnit,
           },
           needsProfileCompletion: me.needsProfileCompletion,
+          onboardingState: me.onboardingState,
           hasCompletedOnboarding: me.hasCompletedOnboarding,
         });
 
@@ -3649,6 +3939,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         emailVerified: true,
       },
       needsProfileCompletion: false,
+      onboardingState: "incomplete",
       hasCompletedOnboarding: false,
     });
   }, [applySession]);
@@ -3744,7 +4035,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             accessToken: payload.accessToken,
             refreshToken: payload.refreshToken,
           });
-          if (!hydrated.needsProfileCompletion && !hydrated.hasCompletedOnboarding) {
+          if (!hydrated.needsProfileCompletion && hydrated.onboardingState !== "complete") {
             await clearOnboardingResumeState().catch(() => {});
           }
           syncPostAuthRedirectFromResolvedState();
@@ -4048,8 +4339,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               const me = await updateMe(accessToken, payload.mePatch);
               setUser(me.user);
               userRef.current = me.user;
-              setNeedsProfileCompletion(me.needsProfileCompletion);
-              setHasCompletedOnboarding(me.hasCompletedOnboarding);
+              setNeedsProfileCompletionResolved(me.needsProfileCompletion);
+              await applyBackendConfirmedOnboardingState(
+                me.user.id,
+                me.onboardingState,
+                "replay_settings_save"
+              );
               payload.completed.account = true;
               await updateMutationQueueItem(item.id, {
                 canonicalPayload: payload,
@@ -4258,18 +4553,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (accessToken) {
           const result = await updateMe(accessToken, data);
           setUser(result.user);
-          setNeedsProfileCompletion(result.needsProfileCompletion);
-          setHasCompletedOnboarding(result.hasCompletedOnboarding);
+          userRef.current = result.user;
+          setNeedsProfileCompletionResolved(result.needsProfileCompletion);
+          await applyBackendConfirmedOnboardingState(
+            result.user.id,
+            result.onboardingState,
+            "complete_profile"
+          );
           await persistConfirmedProfileWithBootstrap(updated);
           await applyConfirmedProfileFields(["name", "dateOfBirth"], updated);
         } else {
-          await persistConfirmedProfileWithBootstrap(updated);
-          await persistViewerBootstrapCache({
-            profile: updated,
-            needsProfileCompletion: false,
-          });
+          setAuthError("SESSION_NOT_READY");
+          return false;
         }
-        setNeedsProfileCompletion(false);
+        setNeedsProfileCompletionResolved(false);
         return true;
       } catch (e: any) {
         setAuthError(e?.message || "UNKNOWN_ERROR");
@@ -4452,14 +4749,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
 
         const token = accessTokenRef.current;
-        if (token) {
-          await runWithOnboardingSessionRecovery(
-            requestId,
-            "save_draft",
-            async (resolvedToken) =>
-              submitOnboardingDraftToServer(resolvedToken, data, requestId)
-          );
+        if (!token || !isOnlineRef.current) {
+          setAuthError(!token ? "SESSION_NOT_READY" : "NETWORK_UNAVAILABLE");
+          return false;
         }
+        await runWithOnboardingSessionRecovery(
+          requestId,
+          "save_draft",
+          async (resolvedToken) =>
+            submitOnboardingDraftToServer(resolvedToken, data, requestId)
+        );
         return true;
       } catch (e: any) {
         setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
@@ -4491,34 +4790,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await cacheOnboardingResumeDraft(updated);
 
         const token = accessTokenRef.current;
-        if (token) {
-          await runWithOnboardingSessionRecovery(
-            requestId,
-            "finish_onboarding_save_draft",
-            async (resolvedToken) =>
-              submitOnboardingDraftToServer(resolvedToken, data, requestId)
-          );
-          await commitOnboardingPhotos(data.photos, {
-            requestId,
-          });
-          const result = await runWithOnboardingSessionRecovery(
-            requestId,
-            "finish_onboarding_complete",
-            async (resolvedToken) =>
-              completeOnboardingRequest(resolvedToken, {
-                headers: buildOnboardingRequestHeaders(requestId),
-              })
-          );
-          setHasCompletedOnboarding(result.hasCompletedOnboarding);
-          await persistViewerBootstrapCache({
-            hasCompletedOnboarding: result.hasCompletedOnboarding,
-          });
-        } else {
-          setHasCompletedOnboarding(true);
-          await persistViewerBootstrapCache({
-            hasCompletedOnboarding: true,
-          });
+        if (!token || !isOnlineRef.current) {
+          setAuthError(!token ? "SESSION_NOT_READY" : "NETWORK_UNAVAILABLE");
+          return false;
         }
+        await runWithOnboardingSessionRecovery(
+          requestId,
+          "finish_onboarding_save_draft",
+          async (resolvedToken) =>
+            submitOnboardingDraftToServer(resolvedToken, data, requestId)
+        );
+        await commitOnboardingPhotos(data.photos, {
+          requestId,
+        });
+        const result = await runWithOnboardingSessionRecovery(
+          requestId,
+          "finish_onboarding_complete",
+          async (resolvedToken) =>
+            completeOnboardingRequest(resolvedToken, {
+              headers: buildOnboardingRequestHeaders(requestId),
+            })
+        );
+        await applyBackendConfirmedOnboardingState(
+          userRef.current?.id,
+          result.onboardingState,
+          "finish_onboarding_complete"
+        );
+        await persistViewerBootstrapCache({
+          onboardingState: result.onboardingState,
+          hasCompletedOnboarding: result.hasCompletedOnboarding,
+        });
 
         await clearOnboardingResumeState();
         console.log("[onboarding-auth] onboarding_complete_succeeded", {
@@ -6635,6 +6936,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         providerAvailability,
         needsProfileCompletion,
         hasCompletedOnboarding,
+        onboardingAccessState,
+        resolvedAccessGate,
         completeProfile,
         onboardingResumeStep,
         setOnboardingResumeStep,

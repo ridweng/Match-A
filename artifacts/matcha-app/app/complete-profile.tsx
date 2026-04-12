@@ -32,8 +32,9 @@ export default function CompleteProfileScreen() {
     authError,
     clearAuthFeedback,
     completeProfile,
-    hasCompletedOnboarding,
-    needsProfileCompletion,
+    isOnline,
+    resolvedAccessGate,
+    sessionOfflineFallback,
     t,
     user,
   } = useApp();
@@ -47,10 +48,16 @@ export default function CompleteProfileScreen() {
       router.replace(AUTH_SIGN_IN_ROUTE);
       return;
     }
-    if (!needsProfileCompletion) {
-      router.replace(hasCompletedOnboarding ? "/(tabs)/discover" : "/onboarding");
+    if (resolvedAccessGate.route !== "/complete-profile") {
+      router.replace(resolvedAccessGate.route);
     }
-  }, [authStatus, hasCompletedOnboarding, needsProfileCompletion]);
+  }, [authStatus, resolvedAccessGate.route]);
+
+  const isServerSaveBlocked = !isOnline || sessionOfflineFallback;
+  const offlineBannerCopy = t(
+    "Necesitas conexión para continuar con el onboarding.",
+    "You need a connection to continue onboarding."
+  );
 
   const handleSave = async () => {
     clearAuthFeedback();
@@ -73,12 +80,16 @@ export default function CompleteProfileScreen() {
       );
       return;
     }
+    if (isServerSaveBlocked) {
+      setLocalError(offlineBannerCopy);
+      return;
+    }
     const ok = await completeProfile({
       name: name.trim(),
       dateOfBirth,
     });
     if (ok) {
-      router.replace(hasCompletedOnboarding ? "/(tabs)/discover" : "/onboarding");
+      router.replace(resolvedAccessGate.route === "/complete-profile" ? "/onboarding" : resolvedAccessGate.route);
     }
   };
 
@@ -105,6 +116,12 @@ export default function CompleteProfileScreen() {
             Platform.OS !== "android" && styles.contentCentered,
           ]}
         >
+        {isServerSaveBlocked ? (
+          <View style={styles.offlineBanner}>
+            <Feather name="wifi-off" size={16} color={Colors.info} />
+            <Text style={styles.offlineBannerText}>{offlineBannerCopy}</Text>
+          </View>
+        ) : null}
         <View style={styles.header}>
           <View style={styles.badge}>
             <Feather name="user-check" size={18} color={Colors.primaryLight} />
@@ -143,11 +160,11 @@ export default function CompleteProfileScreen() {
 
           <Pressable
             onPress={handleSave}
-            disabled={authBusy}
+            disabled={authBusy || isServerSaveBlocked}
             style={({ pressed }) => [
               styles.submit,
-              pressed && !authBusy && { opacity: 0.88 },
-              authBusy && { opacity: 0.7 },
+              pressed && !authBusy && !isServerSaveBlocked && { opacity: 0.88 },
+              (authBusy || isServerSaveBlocked) && { opacity: 0.7 },
             ]}
           >
             {authBusy ? (
@@ -189,6 +206,25 @@ const styles = StyleSheet.create({
   contentCentered: {
     flex: 1,
     justifyContent: "center",
+  },
+  offlineBanner: {
+    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: Colors.infoOverlay,
+    borderWidth: 1,
+    borderColor: "rgba(90,169,255,0.28)",
+  },
+  offlineBannerText: {
+    flex: 1,
+    fontFamily: "Inter_500Medium",
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.text,
   },
   header: {
     paddingTop: 12,

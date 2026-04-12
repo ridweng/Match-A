@@ -640,10 +640,17 @@ export class ViewerService {
       this.getBootstrapFreshness(userId, profileId),
     ]);
 
+    const canonicalUser =
+      (await this.authService.ensureCanonicalOnboardingState(user)) || user;
+    const onboardingState = this.authService.resolveHasCompletedOnboarding(canonicalUser)
+      ? "complete"
+      : "incomplete";
+
     return {
-      user: this.authService.sanitizeUser(user),
-      needsProfileCompletion: !user?.name || !user?.dateOfBirth,
-      hasCompletedOnboarding: this.authService.resolveHasCompletedOnboarding(user),
+      user: this.authService.sanitizeUser(canonicalUser),
+      needsProfileCompletion: !canonicalUser?.name || !canonicalUser?.dateOfBirth,
+      onboardingState,
+      hasCompletedOnboarding: onboardingState === "complete",
       profile: profile.profile,
       settings: settings.settings,
       photos: photos.photos,

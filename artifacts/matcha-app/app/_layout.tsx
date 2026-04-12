@@ -42,6 +42,7 @@ function RootLayoutNav() {
     postAuthRedirectRoute,
     clearPostAuthRedirectRoute,
     accessState,
+    resolvedAccessGate,
     t,
     goalsUnlockPromptVisible,
     dismissGoalsUnlockPrompt,
@@ -103,7 +104,10 @@ function RootLayoutNav() {
         pathname === RESET_PASSWORD_ROUTE ||
         pathname === VERIFY_EMAIL_RESULT_ROUTE)
     ) {
-      nextRoute = DISCOVER_ROUTE;
+      nextRoute =
+        resolvedAccessGate.route === "/login"
+          ? AUTH_SIGN_IN_ROUTE
+          : resolvedAccessGate.route;
     }
 
     if (nextRoute) {
@@ -131,6 +135,7 @@ function RootLayoutNav() {
     isLocked,
     pathname,
     postAuthRedirectRoute,
+    resolvedAccessGate.route,
     shouldShowTabs,
   ]);
 

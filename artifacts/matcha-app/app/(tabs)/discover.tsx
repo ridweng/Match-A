@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { usePathname } from "expo-router";
+import { router, usePathname } from "expo-router";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -398,7 +398,7 @@ export default function DiscoverScreen() {
     likeProfile, passProfile, goals, language,
     discoveryFeed, discoveryQueueRuntime, discoveryFilters,
     lastServerSyncAt, recordDiscoverySwipe, recordDiscoveryQueueTrace,
-    refreshProfileLocation, refreshDiscoveryCandidates, saveDiscoveryFilters,
+    refreshProfileLocation, refreshDiscoveryCandidates, resolvedAccessGate, saveDiscoveryFilters,
   } = useApp();
 
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
@@ -443,6 +443,33 @@ export default function DiscoverScreen() {
   const expectedRenderQueueRef        = useRef<{ requestId: string | null; resultQueue: Array<string | number> } | null>(null);
   const backScrollRef                 = useRef<ScrollView | null>(null);
   const traceFocused = discoveryVerboseDebugEnabled && pathname.endsWith("/discover");
+
+  useEffect(() => {
+    if (!pathname.endsWith("/discover")) {
+      return;
+    }
+    if (authStatus !== "authenticated") {
+      router.replace("/login");
+      return;
+    }
+    if (!resolvedAccessGate.canEnterDiscover) {
+      debugDiscoveryWarn("[auth-gate] discover_entry_denied", {
+        route: resolvedAccessGate.route,
+        onboardingState: resolvedAccessGate.onboardingState,
+        reason: resolvedAccessGate.reason,
+        source: resolvedAccessGate.source,
+      });
+      router.replace(resolvedAccessGate.route);
+    }
+  }, [
+    authStatus,
+    pathname,
+    resolvedAccessGate.canEnterDiscover,
+    resolvedAccessGate.onboardingState,
+    resolvedAccessGate.reason,
+    resolvedAccessGate.route,
+    resolvedAccessGate.source,
+  ]);
 
   // ─── Animated values ─────────────────────────────────────────────────────────
   // position:       gesture tracking + button-swipe fly-out (JS thread, needed for PanResponder)

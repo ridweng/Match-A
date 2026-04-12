@@ -92,6 +92,29 @@ type OverviewView = {
   selectedCountry: string;
   availableCountries: OverviewRealCountryRow[];
   counts: OverviewCounts;
+  funnel: {
+    signedUp: {
+      count: string;
+      pctFromPrevious: string;
+      pctFromSignedUp: string;
+    };
+    onboarded: {
+      count: string;
+      pctFromPrevious: string;
+      pctFromSignedUp: string;
+    };
+    activated: {
+      count: string;
+      pctFromPrevious: string;
+      pctFromSignedUp: string;
+    };
+    reachedThreshold: {
+      count: string;
+      pctFromPrevious: string;
+      pctFromSignedUp: string;
+    };
+    activationTimestampSource: "canonical" | "onboarding_completed_at_fallback";
+  };
   thresholds: { bucket: string; count: string }[];
   batches: { dummy_batch_key: string; generation_version: number; profile_count: string }[];
   activeBatch: { dummy_batch_key: string; generation_version: number } | null;
@@ -112,6 +135,13 @@ type OverviewView = {
     body: string;
   }[];
   architectureFlow: string[];
+};
+
+type OverviewFunnelCountsRow = {
+  signed_up: string;
+  onboarded: string;
+  activated: string;
+  reached_threshold: string;
 };
 
 type DatabaseTableKey =
@@ -653,6 +683,44 @@ export class AdminService {
                   : 1095;
 
     return new Date(now - days * 24 * 60 * 60 * 1000);
+  }
+
+  private formatPercent(numerator: number, denominator: number) {
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+      return "0.0%";
+    }
+    return `${((numerator / denominator) * 100).toFixed(1)}%`;
+  }
+
+  private buildOverviewFunnel(row?: OverviewFunnelCountsRow | null) {
+    const signedUp = Number(row?.signed_up || 0);
+    const onboarded = Number(row?.onboarded || 0);
+    const activated = Number(row?.activated || 0);
+    const reachedThreshold = Number(row?.reached_threshold || 0);
+
+    return {
+      signedUp: {
+        count: String(signedUp),
+        pctFromPrevious: "100.0%",
+        pctFromSignedUp: "100.0%",
+      },
+      onboarded: {
+        count: String(onboarded),
+        pctFromPrevious: this.formatPercent(onboarded, signedUp),
+        pctFromSignedUp: this.formatPercent(onboarded, signedUp),
+      },
+      activated: {
+        count: String(activated),
+        pctFromPrevious: this.formatPercent(activated, onboarded),
+        pctFromSignedUp: this.formatPercent(activated, signedUp),
+      },
+      reachedThreshold: {
+        count: String(reachedThreshold),
+        pctFromPrevious: this.formatPercent(reachedThreshold, activated),
+        pctFromSignedUp: this.formatPercent(reachedThreshold, signedUp),
+      },
+      activationTimestampSource: "onboarding_completed_at_fallback" as const,
+    };
   }
 
   private buildResolvedCountryExpression(alias: string, hasProfileCountryColumn: boolean) {
@@ -1293,8 +1361,11 @@ export class AdminService {
               AND ma.status = 'ready'
           ) AS has_ready_media,
           o.status AS onboarding_status,
+          o.completed_at AS onboarded_at,
           o.completed_at AS activated_at,
           o.completion_origin,
+          COALESCE(pth.threshold_reached, false) AS threshold_reached,
+          pth.threshold_reached_at,
           CASE
             WHEN o.status = 'completed'::onboarding_status
              AND p.is_discoverable = true
@@ -1324,6 +1395,7 @@ export class AdminService {
             : ""
         }
         LEFT JOIN core.user_onboarding o ON o.user_id = p.user_id
+        LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
         WHERE p.kind = 'user'
       ),
       filtered_real_profiles AS (
@@ -1350,7 +1422,7 @@ export class AdminService {
       )
     `;
 
-    const [counts, thresholds, batches, activeBatch, genderDistribution, realUserGenderDistribution, realUserCountryDistribution, availableCountries, interactedUsers] = await Promise.all([
+    const [counts, funnelCounts, thresholds, batches, activeBatch, genderDistribution, realUserGenderDistribution, realUserCountryDistribution, availableCountries, interactedUsers] = await Promise.all([
       pool.query<OverviewCounts>(
         `${overviewCte}
          SELECT
@@ -1406,7 +1478,31 @@ export class AdminService {
              FROM goals.user_goal_projection_meta ugpm
              JOIN filtered_real_profiles frp ON frp.user_id = ugpm.user_id
            ) AS latest_projection_rebuild_at
-         `
+      `
+      , [selectedCountry, windowStart]),
+      pool.query<OverviewFunnelCountsRow>(
+        `${overviewCte}
+         SELECT
+           COUNT(*) FILTER (
+             WHERE ($1::text = 'all' OR rp.resolved_country = $1)
+               AND ($2::timestamptz IS NULL OR rp.created_at >= $2)
+           )::text AS signed_up,
+           COUNT(*) FILTER (
+             WHERE ($1::text = 'all' OR rp.resolved_country = $1)
+               AND rp.onboarding_status = 'completed'::onboarding_status
+               AND ($2::timestamptz IS NULL OR rp.onboarded_at >= $2)
+           )::text AS onboarded,
+           COUNT(*) FILTER (
+             WHERE ($1::text = 'all' OR rp.resolved_country = $1)
+               AND rp.is_activated = true
+               AND ($2::timestamptz IS NULL OR rp.activated_at >= $2)
+           )::text AS activated,
+           COUNT(*) FILTER (
+             WHERE ($1::text = 'all' OR rp.resolved_country = $1)
+               AND rp.threshold_reached = true
+               AND ($2::timestamptz IS NULL OR rp.threshold_reached_at >= $2)
+           )::text AS reached_threshold
+         FROM real_profiles rp`
       , [selectedCountry, windowStart]),
       pool.query<{ bucket: string; count: string }>(
         `${overviewCte}
@@ -1543,6 +1639,7 @@ export class AdminService {
         latest_decision_event_at: null,
         latest_projection_rebuild_at: null,
       },
+      funnel: this.buildOverviewFunnel(funnelCounts.rows[0] || null),
       thresholds: thresholds.rows,
       batches: batches.rows,
       activeBatch: activeBatch.rows[0] || null,

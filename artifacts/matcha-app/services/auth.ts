@@ -20,6 +20,7 @@ export type AuthProvider = "google" | "facebook" | "apple";
 export type AuthCallbackProvider = AuthProvider | "email";
 export type BaseGender = "male" | "female" | "non_binary" | "fluid";
 export type TherianMode = "exclude" | "include" | "only";
+export type OnboardingState = "incomplete" | "complete";
 export type DiscoveryFilters = {
   selectedGenders: BaseGender[];
   therianMode: TherianMode;
@@ -49,6 +50,7 @@ export type AuthSessionResponse = {
   refreshToken: string;
   user: AuthUser;
   needsProfileCompletion: boolean;
+  onboardingState: OnboardingState;
   hasCompletedOnboarding: boolean;
 };
 
@@ -99,11 +101,13 @@ export type AuthCallbackPayload = {
 export type MeResponse = {
   user: AuthUser;
   needsProfileCompletion: boolean;
+  onboardingState: OnboardingState;
   hasCompletedOnboarding: boolean;
 };
 
 export type CompleteOnboardingResponse = {
   status: "ok";
+  onboardingState: OnboardingState;
   hasCompletedOnboarding: boolean;
 };
 
@@ -170,6 +174,7 @@ export type ViewerProfileResponse = {
 export type ViewerBootstrapResponse = {
   user: AuthUser;
   needsProfileCompletion: boolean;
+  onboardingState: OnboardingState;
   hasCompletedOnboarding: boolean;
   profile: ViewerProfileResponse;
   settings: UserSettingsResponse["settings"];
@@ -895,7 +900,9 @@ export async function signUp(input: {
   });
 }
 
-export async function signIn(input: { email: string; password: string }) {
+export async function signIn(
+  input: { email: string; password: string }
+): Promise<AuthSessionResponse> {
   if (isDemoCredentials(input)) {
     try {
       return await request<AuthSessionResponse>("/api/auth/sign-in", {
@@ -909,6 +916,7 @@ export async function signIn(input: { email: string; password: string }) {
         refreshToken: DEMO_REFRESH_TOKEN,
         user: DEMO_USER,
         needsProfileCompletion: false,
+        onboardingState: DEMO_HAS_COMPLETED_ONBOARDING ? "complete" : "incomplete",
         hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
       };
     }
@@ -919,7 +927,9 @@ export async function signIn(input: { email: string; password: string }) {
   });
 }
 
-export async function refreshSession(refreshToken: string) {
+export async function refreshSession(
+  refreshToken: string
+): Promise<AuthSessionResponse> {
   if (isDemoToken(refreshToken)) {
     return {
       status: "authenticated" as const,
@@ -927,6 +937,7 @@ export async function refreshSession(refreshToken: string) {
       refreshToken: DEMO_REFRESH_TOKEN,
       user: DEMO_USER,
       needsProfileCompletion: false,
+      onboardingState: DEMO_HAS_COMPLETED_ONBOARDING ? "complete" : "incomplete",
       hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
@@ -947,11 +958,12 @@ export async function signOut(accessToken: string) {
   });
 }
 
-export async function getMe(accessToken: string) {
+export async function getMe(accessToken: string): Promise<MeResponse> {
   if (isDemoToken(accessToken)) {
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
+      onboardingState: DEMO_HAS_COMPLETED_ONBOARDING ? "complete" : "incomplete",
       hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
@@ -960,12 +972,15 @@ export async function getMe(accessToken: string) {
   });
 }
 
-export async function getViewerBootstrap(accessToken: string) {
+export async function getViewerBootstrap(
+  accessToken: string
+): Promise<ViewerBootstrapResponse> {
   if (isDemoToken(accessToken)) {
     const now = new Date().toISOString();
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
+      onboardingState: DEMO_HAS_COMPLETED_ONBOARDING ? "complete" : "incomplete",
       hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
       profile: DEMO_VIEWER_PROFILE,
       settings: DEMO_SETTINGS,
@@ -1052,7 +1067,7 @@ export async function updateViewerProfile(
 export async function updateMe(
   accessToken: string,
   payload: { name?: string; dateOfBirth?: string; profession?: string }
-) {
+): Promise<MeResponse> {
   if (isDemoToken(accessToken)) {
     if (typeof payload.name === "string") DEMO_USER.name = payload.name;
     if (typeof payload.dateOfBirth === "string") DEMO_USER.dateOfBirth = payload.dateOfBirth;
@@ -1060,6 +1075,7 @@ export async function updateMe(
     return {
       user: DEMO_USER,
       needsProfileCompletion: false,
+      onboardingState: DEMO_HAS_COMPLETED_ONBOARDING ? "complete" : "incomplete",
       hasCompletedOnboarding: DEMO_HAS_COMPLETED_ONBOARDING,
     };
   }
@@ -1148,11 +1164,12 @@ export async function confirmPasswordReset(token: string, password: string) {
 export async function completeOnboarding(
   accessToken: string,
   options: ProtectedRequestOptions = {}
-) {
+): Promise<CompleteOnboardingResponse> {
   if (isDemoToken(accessToken)) {
     DEMO_HAS_COMPLETED_ONBOARDING = true;
     return {
       status: "ok" as const,
+      onboardingState: "complete" as const,
       hasCompletedOnboarding: true,
     };
   }
@@ -1813,7 +1830,7 @@ export async function reorderGoals(
 export async function signInWithProvider(
   provider: AuthProvider,
   mode: "signin" | "signup"
-) {
+): Promise<AuthSessionResponse> {
   const redirectUri = Linking.createURL("auth-callback");
   const startUrl =
     `${getBaseUrl()}/api/auth/social/start/${provider}` +
@@ -1832,10 +1849,12 @@ export async function signInWithProvider(
 
   const me = await getMe(callback.accessToken);
   return {
+    status: "authenticated" as const,
     accessToken: callback.accessToken,
     refreshToken: callback.refreshToken,
     user: me.user,
     needsProfileCompletion: me.needsProfileCompletion,
+    onboardingState: me.onboardingState,
     hasCompletedOnboarding: me.hasCompletedOnboarding,
   };
 }
