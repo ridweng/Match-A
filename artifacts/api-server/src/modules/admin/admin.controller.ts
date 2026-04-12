@@ -535,14 +535,6 @@ export class AdminController {
           )} · Latest filtered projection rebuild: ${escapeHtml(
             toIso(overview.counts.latest_projection_rebuild_at)
           )}</div>
-          <div class="card" style="margin-bottom:16px;">
-            <h2>Activation Funnel</h2>
-            <div class="muted" style="margin-bottom:12px;">Signed up uses account creation time. Onboarded uses onboarding completion time. Activated currently uses onboarding completion time as a documented fallback until a canonical activation timestamp is stored. Reached threshold uses the threshold projection timestamp.</div>
-            <div class="grid">${funnelCards}</div>
-            <div class="muted">Activation timestamp source: ${escapeHtml(
-              overview.funnel.activationTimestampSource
-            )}</div>
-          </div>
           <div class="grid">
             <div class="card"><div class="label">Real users</div><div class="value">${escapeHtml(overview.counts.real_users)}</div></div>
             <div class="card"><div class="label">Dummy profiles</div><div class="value">${escapeHtml(overview.counts.dummy_profiles)}</div></div>
@@ -553,6 +545,14 @@ export class AdminController {
             <div class="card"><div class="label">Users activated</div><div class="value">${escapeHtml(overview.counts.users_activated)}</div></div>
             <div class="card"><div class="label">Total decisions</div><div class="value">${escapeHtml(overview.counts.total_decisions)}</div><div class="muted">${escapeHtml(OVERVIEW_TIMEFRAME_LABELS[overview.selectedTimeframe])}</div></div>
             <div class="card"><div class="label">Active dummy batch</div><div class="value">${escapeHtml(overview.activeBatch?.dummy_batch_key || "—")}</div><div class="muted">Generation ${escapeHtml(overview.activeBatch?.generation_version ?? "—")} · global</div></div>
+          </div>
+          <div class="card" style="margin-bottom:16px;">
+            <h2>Activation Funnel</h2>
+            <div class="muted" style="margin-bottom:12px;">Signed up uses account creation time. Onboarded uses onboarding completion time. Activated currently uses onboarding completion time as a documented fallback until a canonical activation timestamp is stored. Reached threshold uses the threshold projection timestamp.</div>
+            <div class="grid">${funnelCards}</div>
+            <div class="muted">Activation timestamp source: ${escapeHtml(
+              overview.funnel.activationTimestampSource
+            )}</div>
           </div>
           <div class="card" style="margin-bottom: 16px;">
             <h2>Threshold Distribution</h2>
