@@ -252,6 +252,8 @@ export default function VerifyEmailResultScreen() {
       eyebrow={content.eyebrow}
       icon={content.icon as React.ComponentProps<typeof Feather>["name"]}
       onBack={() => router.replace(AUTH_SIGN_IN_ROUTE)}
+      cardVerticalAlign="center"
+      contentVerticalAlign="center"
     >
       {viewState.kind === "loading" ? (
         <View style={styles.centerState}>
@@ -279,19 +281,7 @@ export default function VerifyEmailResultScreen() {
           </View>
           {content.body ? <Text style={styles.feedbackHint}>{content.body}</Text> : null}
 
-          {viewState.kind === "success" || viewState.kind === "already_verified" ? (
-            <Pressable
-              onPress={finalizeSuccessFlow}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pressed && { opacity: 0.86 },
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {t("Abrir MatchA ahora", "Open MatchA now")}
-              </Text>
-            </Pressable>
-          ) : (
+          {viewState.kind === "success" || viewState.kind === "already_verified" ? null : (
             <Pressable
               onPress={() => router.replace(AUTH_SIGN_IN_ROUTE)}
               style={({ pressed }) => [
@@ -330,6 +320,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     gap: 12,
+    alignItems: "center",
   },
   feedbackIcon: {
     width: 40,
@@ -350,19 +341,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     color: Colors.primaryLight,
-  },
-  primaryButton: {
-    minHeight: 50,
-    borderRadius: 16,
-    backgroundColor: Colors.primaryLight,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 18,
-  },
-  primaryButtonText: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 14,
-    color: Colors.textInverted,
+    textAlign: "center",
   },
   secondaryButton: {
     minHeight: 50,

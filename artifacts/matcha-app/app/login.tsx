@@ -168,7 +168,9 @@ export default function LoginScreen() {
     pendingVerificationEmail,
     verificationStatus,
     checkPendingVerificationStatus,
+    resendPendingVerificationEmail,
     providerAvailability,
+    resetPendingVerificationState,
     clearAuthFeedback,
     t,
   } = useApp();
@@ -321,12 +323,15 @@ export default function LoginScreen() {
     await signInWithProvider(provider, mode === "signup" ? "signup" : "signin");
   };
 
-  const activeError = localError || translateAuthError(authError, t);
+  const translatedAuthError = translateAuthError(authError, t);
   const shouldShowVerificationBack =
     mode !== "landing" &&
     Boolean(pendingVerificationEmail) &&
     verificationStatus !== "idle" &&
     verificationStatus !== "verified";
+  const activeError = shouldShowVerificationBack
+    ? localError
+    : localError || translatedAuthError;
   const topOffset = insets.top + (Platform.OS === "web" ? 67 : 4);
   const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 6);
   const authKeyboardVerticalOffset =
@@ -464,6 +469,19 @@ export default function LoginScreen() {
     nextVerificationCheckAt,
     verificationDelayMs,
   ]);
+
+  const handleManualVerificationResend = useCallback(async () => {
+    await resendPendingVerificationEmail();
+    setVerificationDelayMs(INITIAL_VERIFICATION_POLL_MS);
+    setNextVerificationCheckAt(Date.now() + INITIAL_VERIFICATION_POLL_MS);
+  }, [resendPendingVerificationEmail]);
+
+  const handleBackToSignIn = useCallback(() => {
+    resetPendingVerificationState();
+    resetMessages();
+    setPassword("");
+    setMode("signin");
+  }, [resetPendingVerificationState]);
 
   return (
     <View style={styles.container}>
@@ -783,12 +801,12 @@ export default function LoginScreen() {
                       </Pressable>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.authTitle}>
-                          {t("Verificación pendiente", "Verification pending")}
+                          {t("Tu correo aún no fue verificado", "Your email is not verified yet")}
                         </Text>
                         <Text style={styles.authSub}>
                           {t(
-                            "Mantén esta tarjeta abierta. Revisaremos tu verificación automáticamente.",
-                            "Keep this card open. We will check your verification automatically."
+                            "Te enviamos un nuevo correo de verificación para que puedas activar tu cuenta y continuar en MatchA.",
+                            "We sent you a new verification email so you can activate your account and continue in MatchA."
                           )}
                         </Text>
                       </View>
@@ -797,26 +815,29 @@ export default function LoginScreen() {
                     <View style={styles.verificationBadge}>
                       <Feather name="mail" size={18} color={Colors.primaryLight} />
                       <Text style={styles.verificationBadgeText}>
-                        {t("Correo enviado", "Email sent")}
+                        {t("Correo reenviado", "Email resent")}
                       </Text>
                     </View>
 
                     <View style={styles.verifyBox}>
                       <Text style={styles.verifyTitle}>
-                        {t("Revisa tu bandeja de entrada", "Check your inbox")}
+                        {t("Tu correo aún no fue verificado", "Your email is not verified yet")}
                       </Text>
                       <Text style={styles.verifyText}>
                         {t(
-                          `Tu cuenta ya está creada. Falta verificar ${pendingVerificationEmail}.`,
-                          `Your account is ready. ${pendingVerificationEmail} still needs verification.`
+                          "Tu cuenta existe, pero todavía falta verificar el correo para continuar en MatchA.",
+                          "Your account exists, but your email still needs verification before you can continue in MatchA."
                         )}
                       </Text>
                       <Text style={styles.verifyText}>
                         {t(
-                          "La primera comprobación automática será en 1 minuto. Si sigue pendiente, aumentará 30 segundos cada vez.",
-                          "The first automatic check will happen in 1 minute. If it is still pending, it will increase by 30 seconds each time."
+                          "Te enviamos un nuevo correo de verificación para que puedas activar tu cuenta y continuar. Revisa tu bandeja de entrada.",
+                          "We sent you a new verification email so you can activate your account and continue. Check your inbox."
                         )}
                       </Text>
+                      {pendingVerificationEmail ? (
+                        <Text style={styles.verifyEmailValue}>{pendingVerificationEmail}</Text>
+                      ) : null}
                     </View>
 
                     <View style={styles.verificationMeta}>
@@ -834,33 +855,70 @@ export default function LoginScreen() {
                       </Text>
                     </View>
 
-                    {activeError ? (
+                    {localError ? (
                       <Text style={styles.errorText}>{activeError}</Text>
                     ) : null}
 
                     <Pressable
-                      onPress={handleManualVerificationCheck}
-                      disabled={verificationChecking}
+                      onPress={handleManualVerificationResend}
+                      disabled={authBusy}
                       style={({ pressed }) => [
                         styles.submitBtn,
-                        pressed && !verificationChecking && { opacity: 0.86 },
-                        verificationChecking && { opacity: 0.7 },
+                        pressed && !authBusy && { opacity: 0.86 },
+                        authBusy && { opacity: 0.7 },
                       ]}
                     >
-                      {verificationChecking ? (
+                      {authBusy ? (
                         <ActivityIndicator color={Colors.textInverted} />
                       ) : (
                         <>
                           <Text style={styles.submitBtnText}>
-                            {t("Comprobar ahora", "Check now")}
+                            {t("Reenviar correo", "Resend email")}
                           </Text>
                           <Feather
-                            name="refresh-cw"
+                            name="send"
                             size={18}
                             color={Colors.textInverted}
                           />
                         </>
                       )}
+                    </Pressable>
+
+                    <Pressable
+                      onPress={handleManualVerificationCheck}
+                      disabled={verificationChecking}
+                      style={({ pressed }) => [
+                        styles.secondaryActionBtn,
+                        pressed && !verificationChecking && { opacity: 0.86 },
+                        verificationChecking && { opacity: 0.7 },
+                      ]}
+                    >
+                      {verificationChecking ? (
+                        <ActivityIndicator color={Colors.text} />
+                      ) : (
+                        <>
+                          <Text style={styles.secondaryActionBtnText}>
+                            {t("Comprobar ahora", "Check now")}
+                          </Text>
+                          <Feather
+                            name="refresh-cw"
+                            size={18}
+                            color={Colors.text}
+                          />
+                        </>
+                      )}
+                    </Pressable>
+
+                    <Pressable
+                      onPress={handleBackToSignIn}
+                      style={({ pressed }) => [
+                        styles.swapAction,
+                        pressed && { opacity: 0.76 },
+                      ]}
+                    >
+                      <Text style={styles.swapActionText}>
+                        {t("Volver a iniciar sesión", "Back to sign in")}
+                      </Text>
                     </Pressable>
                     </View>
                   )}
@@ -1169,6 +1227,12 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     lineHeight: 19,
   },
+  verifyEmailValue: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 13,
+    color: Colors.primaryLight,
+    lineHeight: 19,
+  },
   verificationBack: {
     flex: 1,
     justifyContent: "center",
@@ -1221,6 +1285,23 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontSize: 16,
     color: Colors.textInverted,
+  },
+  secondaryActionBtn: {
+    height: 54,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 6,
+  },
+  secondaryActionBtnText: {
+    fontFamily: "Inter_700Bold",
+    fontSize: 16,
+    color: Colors.text,
   },
   swapAction: {
     alignSelf: "center",

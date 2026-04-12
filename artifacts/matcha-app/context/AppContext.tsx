@@ -583,6 +583,7 @@ type AppContextType = {
   pendingVerificationEmail: string | null;
   verificationStatus: VerificationStatus;
   checkPendingVerificationStatus: () => Promise<"pending" | "verified" | null>;
+  resendPendingVerificationEmail: () => Promise<boolean>;
   resetPendingVerificationState: () => void;
   handleAuthCallback: (payload: AuthCallbackPayload) => Promise<boolean>;
   clearAuthFeedback: () => void;
@@ -3957,13 +3958,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        if (code === "EMAIL_VERIFICATION_REQUIRED") {
+          const normalizedEmail = input.email.trim();
+          setPendingVerificationEmail(normalizedEmail);
+          setPendingVerificationPassword(input.password);
+          setSignInPrefill(normalizedEmail);
+          setAuthStatus("verification_pending");
+          setVerificationStatus("pending");
+          try {
+            await authResendVerificationEmail(normalizedEmail);
+          } catch (resendError: any) {
+            debugWarn("[auth] verification resend after sign-in failed", {
+              email: normalizedEmail,
+              error:
+                resendError instanceof ApiError
+                  ? resendError.code
+                  : resendError?.message || "UNKNOWN_ERROR",
+            });
+          }
+          return false;
+        }
         setAuthError(code);
         return false;
       } finally {
         setAuthBusy(false);
       }
     },
-    [applySession, clearOnboardingResumeForFreshIncompleteSession, syncPostAuthRedirectFromResolvedState]
+    [
+      applySession,
+      clearOnboardingResumeForFreshIncompleteSession,
+      setSignInPrefill,
+      syncPostAuthRedirectFromResolvedState,
+    ]
   );
 
   const signUp = useCallback(
@@ -4112,6 +4138,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
   }, [completePendingVerificationSignIn, pendingVerificationEmail]);
+
+  const resendPendingVerificationEmail = useCallback(async () => {
+    const email = pendingVerificationEmail?.trim();
+    if (!email) {
+      return false;
+    }
+
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      await authResendVerificationEmail(email);
+      setAuthStatus("verification_pending");
+      setVerificationStatus("pending");
+      return true;
+    } catch (e: any) {
+      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      setAuthError(code);
+      setVerificationStatus("pending");
+      return false;
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [pendingVerificationEmail]);
 
   const logout = useCallback(async () => {
     try {
@@ -6930,6 +6979,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         pendingVerificationEmail,
         verificationStatus,
         checkPendingVerificationStatus,
+        resendPendingVerificationEmail,
         resetPendingVerificationState,
         handleAuthCallback,
         clearAuthFeedback,

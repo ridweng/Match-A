@@ -88,6 +88,7 @@ export default function ForgotPasswordScreen() {
       icon="mail"
       keyboardEnabled
       onBack={() => router.replace(AUTH_SIGN_IN_ROUTE)}
+      cardVerticalAlign="center"
     >
       {submitted ? (
         <View style={styles.feedbackCard}>

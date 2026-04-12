@@ -30,6 +30,8 @@ type AuthScreenShellProps = {
   icon?: React.ComponentProps<typeof Feather>["name"];
   keyboardEnabled?: boolean;
   footer?: React.ReactNode;
+  cardVerticalAlign?: "bottom" | "center";
+  contentVerticalAlign?: "top" | "center";
 };
 
 const AUTH_KEYBOARD_VERTICAL_OFFSET_IOS = -16;
@@ -43,6 +45,8 @@ export function AuthScreenShell({
   icon = "shield",
   keyboardEnabled = false,
   footer,
+  cardVerticalAlign = "bottom",
+  contentVerticalAlign = "top",
 }: AuthScreenShellProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -90,14 +94,20 @@ export function AuthScreenShell({
         ]}
       >
         <KeyboardSheet
-          style={styles.overlayCardShell}
+          style={[
+            styles.overlayCardShell,
+            cardVerticalAlign === "center" && styles.overlayCardShellCentered,
+          ]}
           keyboardVerticalOffset={authKeyboardVerticalOffset}
           bottomInset={0}
           enabled={keyboardEnabled}
         >
           <View style={[styles.authCard, { maxHeight: authCardMaxHeight }]}>
             <ScrollView
-              contentContainerStyle={styles.authCardContent}
+              contentContainerStyle={[
+                styles.authCardContent,
+                contentVerticalAlign === "center" && styles.authCardContentCentered,
+              ]}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="none"
               showsVerticalScrollIndicator={false}
@@ -158,6 +168,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     paddingTop: 12,
   },
+  overlayCardShellCentered: {
+    justifyContent: "center",
+  },
   authCard: {
     borderRadius: 28,
     backgroundColor: "rgba(20,31,24,1)",
@@ -173,6 +186,10 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 18,
     paddingBottom: 28,
+  },
+  authCardContentCentered: {
+    flexGrow: 1,
+    justifyContent: "center",
   },
   authHeader: {
     flexDirection: "row",
