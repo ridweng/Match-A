@@ -22,6 +22,7 @@ import { DateOfBirthField } from "@/components/DateOfBirthField";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useBottomObstruction } from "@/components/useBottomObstruction";
 import colors from "@/constants/colors";
+import { AUTH_SIGN_IN_ROUTE } from "@/constants/routes";
 import {
   ENGLISH_PRONOUNS,
   GENDER_IDENTITIES,
@@ -601,7 +602,7 @@ export default function SettingsScreen() {
           style: "destructive",
           onPress: async () => {
             await logout();
-            router.replace("/login");
+            router.replace(AUTH_SIGN_IN_ROUTE);
           },
         },
       ]
@@ -636,7 +637,7 @@ export default function SettingsScreen() {
               );
               return;
             }
-            router.replace("/login");
+            router.replace(AUTH_SIGN_IN_ROUTE);
           },
         },
       ]

@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -26,6 +27,7 @@ import {
   useBottomObstruction,
 } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
+import { FORGOT_PASSWORD_ROUTE } from "@/constants/routes";
 import { useApp } from "@/context/AppContext";
 import type { AuthProvider } from "@/services/auth";
 import { isAdultBirthDate } from "@/utils/dateOfBirth";
@@ -36,6 +38,7 @@ type AuthCardFace = "front" | "back";
 const { width } = Dimensions.get("window");
 const INITIAL_VERIFICATION_POLL_MS = 60_000;
 const VERIFICATION_POLL_INCREMENT_MS = 30_000;
+const AUTH_KEYBOARD_VERTICAL_OFFSET_IOS = 16;
 
 const providerMeta: Array<{
   provider: AuthProvider;
@@ -324,8 +327,10 @@ export default function LoginScreen() {
     Boolean(pendingVerificationEmail) &&
     verificationStatus !== "idle" &&
     verificationStatus !== "verified";
-  const topOffset = insets.top + (Platform.OS === "web" ? 67 : 16);
-  const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 24);
+  const topOffset = insets.top + (Platform.OS === "web" ? 67 : 4);
+  const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 6);
+  const authKeyboardVerticalOffset =
+    Platform.OS === "ios" ? AUTH_KEYBOARD_VERTICAL_OFFSET_IOS : topOffset;
   const landingPaddingTop = topOffset + 24;
   const verificationChecking = verificationStatus === "checking";
   const nextCheckLabel = formatCountdownLabel(secondsUntilVerificationCheck, t);
@@ -575,7 +580,7 @@ export default function LoginScreen() {
         >
           <KeyboardSheet
             style={styles.overlayCardShell}
-            keyboardVerticalOffset={topOffset}
+            keyboardVerticalOffset={authKeyboardVerticalOffset}
             bottomInset={0}
             enabled
           >
@@ -706,6 +711,23 @@ export default function LoginScreen() {
                       placeholder={t("Mínimo 8 caracteres", "At least 8 characters")}
                       secureTextEntry
                     />
+
+                    {mode === "signin" ? (
+                      <Pressable
+                        onPress={() => router.push(FORGOT_PASSWORD_ROUTE)}
+                        style={({ pressed }) => [
+                          styles.forgotPasswordAction,
+                          pressed && { opacity: 0.74 },
+                        ]}
+                      >
+                        <Text style={styles.forgotPasswordActionText}>
+                          {t(
+                            "¿Olvidaste tu contraseña?",
+                            "Forgot your password?"
+                          )}
+                        </Text>
+                      </Pressable>
+                    ) : null}
 
                     {activeError ? <Text style={styles.errorText}>{activeError}</Text> : null}
 
@@ -1110,6 +1132,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.error,
     lineHeight: 18,
+  },
+  forgotPasswordAction: {
+    alignSelf: "flex-end",
+    marginTop: -2,
+    marginBottom: 2,
+    paddingVertical: 2,
+  },
+  forgotPasswordActionText: {
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
+    color: Colors.primaryLight,
   },
   noticeText: {
     fontFamily: "Inter_500Medium",

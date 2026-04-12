@@ -1745,16 +1745,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setLastServerHealthFailureReason(options.failureReason ?? null);
       }
       updateEffectiveOnline(deviceOnlineRef.current, nextStatus);
-      if (previousStatus !== nextStatus) {
-        debugLog("[reachability] server_health_status_changed", {
-          previousStatus,
-          nextStatus,
-          checkedAt: options?.checkedAt ?? null,
-          failureReason: options?.failureReason ?? null,
-          reason: options?.reason ?? null,
-          statusCode: options?.result?.status ?? null,
-        });
-      }
     },
     [updateEffectiveOnline]
   );
@@ -2793,11 +2783,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let bootstrap: ViewerBootstrapCache;
       try {
         bootstrap = await getViewerBootstrap(session.accessToken);
-        debugLog("[auth] bootstrap fetched", {
-          userId: normalizedSessionUser.id,
-          viewerVersion: bootstrap.viewerVersion,
-          bootstrapGeneratedAt: bootstrap.bootstrapGeneratedAt,
-        });
       } catch {
         debugWarn("[auth] bootstrap fetch failed, using fallback cache seed", {
           userId: normalizedSessionUser.id,
@@ -3124,7 +3109,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setBootstrapComplete(false);
         setBiometricAppReady(false);
         setAccessState("booting");
-        logBiometricEvent("biometric_boot_restore_started");
         const [
           lang,
           savedDiscoveryFilters,
@@ -3254,9 +3238,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             }
             await clearOnboardingResumeForFreshIncompleteSession(session);
             await applySession(session);
-            logBiometricEvent("biometric_boot_restore_authenticated", {
-              userId: session.user.id,
-            });
             if (bioEnabled && Platform.OS !== "web") {
               incrementLockCycleId();
               setPendingUnlockDestination("/(tabs)/discover");
@@ -3276,10 +3257,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               });
               setSessionOfflineFallback(true);
               setAuthStatus("authenticated");
-              logBiometricEvent("biometric_boot_restore_authenticated", {
-                userId: lastAuthUserId,
-                source: "warm_cache",
-              });
               if (bioEnabled && Platform.OS !== "web") {
                 incrementLockCycleId();
                 setPendingUnlockDestination("/(tabs)/discover");
@@ -3355,22 +3332,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      debugLog("[reachability] server_health_check_started", {
-        reason,
-        timeoutMs: SERVER_HEALTH_TIMEOUT_MS,
-      });
-
       try {
         const result = await checkServerHealth({
           timeoutMs: SERVER_HEALTH_TIMEOUT_MS,
         });
 
         if (result.healthy) {
-          debugLog("[reachability] server_health_check_succeeded", {
-            reason,
-            checkedAt: result.checkedAt,
-            status: result.status ?? null,
-          });
           commitServerHealthStatus("healthy", {
             checkedAt: result.checkedAt,
             failureReason: null,

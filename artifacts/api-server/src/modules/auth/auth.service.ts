@@ -717,7 +717,8 @@ export class AuthService {
     await this.emailService.sendWelcomeEmail({
       recipientEmail: profile.email,
       recipientName: profile.display_name || undefined,
-      locale: profile.language === "es" ? "es" : "en",
+      locale: "es",
+      appLink: `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/login`,
     });
 
     const update = await pool.query<{ id: number }>(
@@ -1067,6 +1068,15 @@ export class AuthService {
     );
   }
 
+  async revokeAllSessionsForUser(userId: number) {
+    await pool.query(
+      `UPDATE auth.auth_sessions
+       SET revoked_at = NOW(), updated_at = NOW()
+       WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId]
+    );
+  }
+
   async findUserSettings(userId: number) {
     return (
       (await this.queryOne<SettingsRow>(
@@ -1352,7 +1362,7 @@ export class AuthService {
     await this.emailService.sendVerificationEmail({
       recipientEmail: email,
       verificationLink: url,
-      locale: "en",
+      locale: "es",
     });
     return true;
   }
@@ -1361,6 +1371,16 @@ export class AuthService {
     return `${runtimeConfig.baseUrl}/api/auth/verify-email/confirm?token=${encodeURIComponent(
       token
     )}`;
+  }
+
+  createVerificationResultUrl(token?: string) {
+    const target = new URL(
+      `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/verify-email-result`
+    );
+    if (token) {
+      target.searchParams.set("token", token);
+    }
+    return target.toString();
   }
 
   createPasswordResetUrl(token: string) {
@@ -1376,7 +1396,7 @@ export class AuthService {
       recipientEmail: email,
       recipientName,
       resetLink: url,
-      locale: "en",
+      locale: "es",
     });
   }
 
@@ -1684,7 +1704,7 @@ export class AuthService {
 
     if (!user || user.emailVerified || limited) {
       return this.genericEmailActionResponse(
-        "If the account exists and still needs verification, a new email will be sent."
+        "Si la cuenta existe y todavía necesita verificación, enviaremos un nuevo correo."
       );
     }
 
@@ -1701,14 +1721,14 @@ export class AuthService {
     } catch (error) {
       if (error instanceof EmailDeliveryError) {
         return this.genericEmailActionResponse(
-          "If the account exists and still needs verification, a new email will be sent."
+          "Si la cuenta existe y todavía necesita verificación, enviaremos un nuevo correo."
         );
       }
       throw error;
     }
 
     return this.genericEmailActionResponse(
-      "If the account exists and still needs verification, a new email will be sent."
+      "Si la cuenta existe y todavía necesita verificación, enviaremos un nuevo correo."
     );
   }
 
@@ -1738,7 +1758,7 @@ export class AuthService {
 
     if (!user || limited) {
       return this.genericEmailActionResponse(
-        "If the account exists, a password reset email will be sent."
+        "Si el correo existe en MatchA, enviaremos un enlace para restablecer la contraseña."
       );
     }
 
@@ -1771,15 +1791,47 @@ export class AuthService {
       if (error instanceof EmailDeliveryError) {
         console.error("[api-server] password reset email failed", error.code);
         return this.genericEmailActionResponse(
-          "If the account exists, a password reset email will be sent."
+          "Si el correo existe en MatchA, enviaremos un enlace para restablecer la contraseña."
         );
       }
       throw error;
     }
 
     return this.genericEmailActionResponse(
-      "If the account exists, a password reset email will be sent."
+      "Si el correo existe en MatchA, enviaremos un enlace para restablecer la contraseña."
     );
+  }
+
+  async validatePasswordResetToken(token: string) {
+    const existing = await this.queryOne<{
+      id: number;
+      expires_at: string | Date;
+      used_at: string | Date | null;
+      superseded_at: string | Date | null;
+    }>(
+      `SELECT *
+       FROM auth.password_reset_tokens
+       WHERE token_hash = $1
+       LIMIT 1`,
+      [this.hashToken(token)]
+    );
+
+    if (!existing) {
+      return { error: "INVALID_PASSWORD_RESET_TOKEN" as const };
+    }
+    if (existing.used_at) {
+      return { error: "USED_PASSWORD_RESET_TOKEN" as const };
+    }
+    if (existing.superseded_at) {
+      return { error: "SUPERSEDED_PASSWORD_RESET_TOKEN" as const };
+    }
+    if (new Date(existing.expires_at).getTime() < Date.now()) {
+      return { error: "EXPIRED_PASSWORD_RESET_TOKEN" as const };
+    }
+
+    return {
+      status: "valid" as const,
+    };
   }
 
   async confirmPasswordReset(input: { token: string; password: string }) {
@@ -1795,6 +1847,7 @@ export class AuthService {
        WHERE id = $2`,
       [passwordHash, consumed.userId]
     );
+    await this.revokeAllSessionsForUser(consumed.userId);
 
     return {
       status: "password_reset_complete" as const,
@@ -1875,7 +1928,7 @@ export class AuthService {
     }
     if ("alreadyVerified" in result) {
       return {
-        status: "verified" as const,
+        status: "already_verified" as const,
         user: this.sanitizeUser(result.user || null),
       };
     }
@@ -1892,57 +1945,12 @@ export class AuthService {
   }
 
   async getVerificationConfirmRedirect(token: string) {
-    const target = new URL(runtimeConfig.frontendRedirectUri);
     if (!token) {
       this.logVerificationRedirectOutcome("invalid");
-      target.searchParams.set("status", "error");
-      target.searchParams.set("code", "INVALID_VERIFICATION_TOKEN");
-      return target.toString();
+      return this.createVerificationResultUrl();
     }
 
-    const result = await this.consumeVerificationToken(token);
-    if (!result) {
-      this.logVerificationRedirectOutcome("invalid");
-      target.searchParams.set("status", "error");
-      target.searchParams.set("code", "INVALID_VERIFICATION_TOKEN");
-      return target.toString();
-    }
-
-    if ("alreadyVerified" in result) {
-      this.logVerificationRedirectOutcome("already_verified", result.user?.email);
-      target.searchParams.set("status", "already_verified");
-      target.searchParams.set("provider", "email");
-      target.searchParams.set("email", result.user?.email || "");
-      return target.toString();
-    }
-
-    if ("replaced" in result) {
-      this.logVerificationRedirectOutcome("replaced", result.user?.email);
-      target.searchParams.set("status", "error");
-      target.searchParams.set("code", "VERIFICATION_LINK_REPLACED");
-      target.searchParams.set("email", result.user?.email || "");
-      return target.toString();
-    }
-
-    if (result.expired) {
-      this.logVerificationRedirectOutcome("expired");
-      target.searchParams.set("status", "error");
-      target.searchParams.set("code", "EXPIRED_VERIFICATION_TOKEN");
-      return target.toString();
-    }
-
-    const payload = await this.createSessionResponse(result.user);
-    this.logVerificationRedirectOutcome("success", result.user?.email);
-    target.searchParams.set("status", "success");
-    target.searchParams.set("provider", "email");
-    target.searchParams.set("accessToken", payload.accessToken);
-    target.searchParams.set("refreshToken", payload.refreshToken);
-    target.searchParams.set(
-      "needsProfileCompletion",
-      payload.needsProfileCompletion ? "true" : "false"
-    );
-    target.searchParams.set("email", result.user?.email || "");
-    return target.toString();
+    return this.createVerificationResultUrl(token);
   }
 
   async getMe(authorizationHeader: string | undefined) {

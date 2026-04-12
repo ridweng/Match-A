@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { View } from "react-native";
 
 import Colors from "@/constants/colors";
+import { AUTH_SIGN_IN_ROUTE } from "@/constants/routes";
 import { useApp } from "@/context/AppContext";
 import type { AuthCallbackPayload } from "@/services/auth";
 
@@ -36,7 +37,7 @@ export default function AuthCallbackScreen() {
     void (async () => {
       const success = await handleAuthCallback(payload);
       if (!success) {
-        router.replace("/login");
+        router.replace(AUTH_SIGN_IN_ROUTE);
       }
     })();
   }, [handleAuthCallback, params]);

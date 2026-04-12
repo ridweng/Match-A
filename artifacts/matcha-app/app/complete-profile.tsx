@@ -16,6 +16,7 @@ import { DateOfBirthField } from "@/components/DateOfBirthField";
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useBottomObstruction } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
+import { AUTH_SIGN_IN_ROUTE } from "@/constants/routes";
 import { useApp } from "@/context/AppContext";
 import { isAdultBirthDate } from "@/utils/dateOfBirth";
 
@@ -43,7 +44,7 @@ export default function CompleteProfileScreen() {
 
   useEffect(() => {
     if (authStatus !== "authenticated") {
-      router.replace("/login");
+      router.replace(AUTH_SIGN_IN_ROUTE);
       return;
     }
     if (!needsProfileCompletion) {

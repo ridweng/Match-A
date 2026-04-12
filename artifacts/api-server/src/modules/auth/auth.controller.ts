@@ -50,6 +50,10 @@ const passwordResetRequestSchema = z.object({
   email: z.string().trim().email(),
 });
 
+const passwordResetValidateSchema = z.object({
+  token: z.string().min(20),
+});
+
 const passwordResetConfirmSchema = z.object({
   token: z.string().min(20),
   password: z.string().min(8).max(128),
@@ -308,6 +312,27 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_PASSWORD_RESET_REQUEST_PAYLOAD", error);
+      }
+      console.error(error);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: "INTERNAL_SERVER_ERROR" });
+    }
+  }
+
+  @Post("password-reset/validate")
+  @ApiOperation({ summary: "Validate a password reset token without consuming it" })
+  async validatePasswordReset(@Body() body: unknown, @Res() res: Response) {
+    try {
+      const input = passwordResetValidateSchema.parse(body);
+      const result = await this.authService.validatePasswordResetToken(input.token);
+      if ("error" in result) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ error: result.error });
+      }
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return this.sendZodError(res, "INVALID_PASSWORD_RESET_VALIDATE_PAYLOAD", error);
       }
       console.error(error);
       return res

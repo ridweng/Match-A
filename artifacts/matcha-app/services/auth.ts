@@ -67,6 +67,24 @@ export type VerificationResendResponse = {
   message: string;
 };
 
+export type VerifyEmailResponse = {
+  status: "verified" | "already_verified";
+  user: AuthUser | null;
+};
+
+export type PasswordResetRequestResponse = {
+  status: "ok";
+  message: string;
+};
+
+export type PasswordResetValidateResponse = {
+  status: "valid";
+};
+
+export type PasswordResetConfirmResponse = {
+  status: "password_reset_complete";
+};
+
 export type AuthCallbackPayload = {
   status?: string;
   provider?: AuthCallbackProvider | string;
@@ -802,12 +820,6 @@ export async function checkServerHealth(options?: {
     typeof AbortController !== "undefined" ? new AbortController() : null;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
-  debugLog("[api] server health check started", {
-    timeoutMs,
-    checkedAt,
-    path: "/api/healthz/ready",
-  });
-
   try {
     const fetchPromise = fetch(`${getBaseUrl()}/api/healthz/ready`, {
       method: "GET",
@@ -840,11 +852,6 @@ export async function checkServerHealth(options?: {
       };
     }
 
-    debugLog("[api] server health check succeeded", {
-      status: response.status,
-      checkedAt,
-      path: "/api/healthz/ready",
-    });
     return {
       healthy: true,
       status: response.status,
@@ -1088,7 +1095,7 @@ export async function updateSettings(
 }
 
 export async function verifyEmail(token: string) {
-  return request("/api/auth/verify-email", {
+  return request<VerifyEmailResponse>("/api/auth/verify-email", {
     method: "POST",
     body: { token },
   });
@@ -1114,6 +1121,27 @@ export async function resendVerificationEmail(email: string) {
   return request<VerificationResendResponse>("/api/auth/verify-email/resend", {
     method: "POST",
     body: { email },
+  });
+}
+
+export async function requestPasswordReset(email: string) {
+  return request<PasswordResetRequestResponse>("/api/auth/password-reset/request", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export async function validatePasswordResetToken(token: string) {
+  return request<PasswordResetValidateResponse>("/api/auth/password-reset/validate", {
+    method: "POST",
+    body: { token },
+  });
+}
+
+export async function confirmPasswordReset(token: string, password: string) {
+  return request<PasswordResetConfirmResponse>("/api/auth/password-reset/confirm", {
+    method: "POST",
+    body: { token, password },
   });
 }
 
@@ -1830,6 +1858,14 @@ export function toReadableAuthError(code: string) {
       return "INVALID_VERIFICATION_TOKEN";
     case "VERIFICATION_LINK_REPLACED":
       return "VERIFICATION_LINK_REPLACED";
+    case "INVALID_PASSWORD_RESET_TOKEN":
+      return "INVALID_PASSWORD_RESET_TOKEN";
+    case "EXPIRED_PASSWORD_RESET_TOKEN":
+      return "EXPIRED_PASSWORD_RESET_TOKEN";
+    case "USED_PASSWORD_RESET_TOKEN":
+      return "USED_PASSWORD_RESET_TOKEN";
+    case "SUPERSEDED_PASSWORD_RESET_TOKEN":
+      return "SUPERSEDED_PASSWORD_RESET_TOKEN";
     case "UNDERAGE":
       return "UNDERAGE";
     case "PROVIDER_UNAVAILABLE":

@@ -2,6 +2,7 @@ import type {
   BaseEmailTemplateInput,
   EmailTemplateContent,
 } from "../interfaces/email-template.interface";
+import { renderMatchaAuthEmailHtml } from "./matcha-auth-email.template";
 
 export type VerifyEmailTemplateInput = BaseEmailTemplateInput & {
   verificationLink: string;
@@ -10,19 +11,35 @@ export type VerifyEmailTemplateInput = BaseEmailTemplateInput & {
 export function renderVerifyEmailTemplate(
   input: VerifyEmailTemplateInput
 ): EmailTemplateContent {
-  const recipientName = input.recipientName || (input.locale === "es" ? "hola" : "there");
-
-  if (input.locale === "es") {
-    return {
-      subject: `Verifica tu cuenta de ${input.appName}`,
-      text: `Hola ${recipientName},\n\nVerifica tu cuenta de ${input.appName} abriendo este enlace:\n${input.verificationLink}\n\nSi no creaste esta cuenta, puedes ignorar este correo.`,
-      html: `<p>Hola ${recipientName},</p><p>Verifica tu cuenta de ${input.appName} abriendo este enlace:</p><p><a href="${input.verificationLink}">${input.verificationLink}</a></p><p>Si no creaste esta cuenta, puedes ignorar este correo.</p>`,
-    };
-  }
-
+  const recipientName = input.recipientName || "hola";
+  const subject = `Confirma tu correo en ${input.appName}`;
   return {
-    subject: `Verify your ${input.appName} account`,
-    text: `Hi ${recipientName},\n\nVerify your ${input.appName} account by opening this link:\n${input.verificationLink}\n\nIf you did not create this account, you can ignore this email.`,
-    html: `<p>Hi ${recipientName},</p><p>Verify your ${input.appName} account by opening this link:</p><p><a href="${input.verificationLink}">${input.verificationLink}</a></p><p>If you did not create this account, you can ignore this email.</p>`,
+    subject,
+    text: [
+      `Hola ${recipientName},`,
+      "",
+      "Ya casi estás dentro de MatchA. Confirma tu correo para activar tu cuenta y continuar con tu experiencia.",
+      "",
+      `Confirmar correo: ${input.verificationLink}`,
+      "",
+      "Si tú no creaste esta cuenta, puedes ignorar este mensaje.",
+      "Por seguridad, este enlace vence automáticamente.",
+    ].join("\n"),
+    html: renderMatchaAuthEmailHtml({
+      subject,
+      preheader: "Confirma tu correo para activar tu cuenta en MatchA.",
+      eyebrow: "Confirmación de correo",
+      title: "Confirma tu correo en MatchA",
+      greeting: `Hola ${recipientName},`,
+      paragraphs: [
+        "Ya casi estás dentro de MatchA. Confirma tu correo para activar tu cuenta y continuar con tu experiencia.",
+        "Si tú no creaste esta cuenta, puedes ignorar este mensaje.",
+      ],
+      actionLabel: "Confirmar correo",
+      actionUrl: input.verificationLink,
+      supportingNote: "Por seguridad, este enlace vence automáticamente.",
+      footer:
+        "Recibiste este correo porque se creó una cuenta o se solicitó una verificación para este correo en MatchA.",
+    }),
   };
 }

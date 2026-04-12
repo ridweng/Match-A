@@ -2,23 +2,47 @@ import type {
   BaseEmailTemplateInput,
   EmailTemplateContent,
 } from "../interfaces/email-template.interface";
+import { renderMatchaAuthEmailHtml } from "./matcha-auth-email.template";
+
+export type WelcomeTemplateInput = BaseEmailTemplateInput & {
+  appLink: string;
+};
 
 export function renderWelcomeTemplate(
-  input: BaseEmailTemplateInput
+  input: WelcomeTemplateInput
 ): EmailTemplateContent {
-  const recipientName = input.recipientName || (input.locale === "es" ? "hola" : "there");
-
-  if (input.locale === "es") {
-    return {
-      subject: `Bienvenido a ${input.appName}`,
-      text: `Hola ${recipientName},\n\nTu cuenta ya está verificada. Bienvenido a ${input.appName}.\n\nEstamos listos para acompañarte en tu progreso.`,
-      html: `<p>Hola ${recipientName},</p><p>Tu cuenta ya está verificada. Bienvenido a ${input.appName}.</p><p>Estamos listos para acompañarte en tu progreso.</p>`,
-    };
-  }
-
+  const recipientName = input.recipientName || "hola";
+  const subject = `Bienvenido a ${input.appName}`;
   return {
-    subject: `Welcome to ${input.appName}`,
-    text: `Hi ${recipientName},\n\nYour account is now verified. Welcome to ${input.appName}.\n\nWe are ready to support your progress.`,
-    html: `<p>Hi ${recipientName},</p><p>Your account is now verified. Welcome to ${input.appName}.</p><p>We are ready to support your progress.</p>`,
+    subject,
+    text: [
+      `Hola ${recipientName},`,
+      "",
+      "Tu correo ya fue confirmado y tu cuenta está lista.",
+      `Bienvenido a ${input.appName}, un espacio para mejorar, atraer y conectar mejor.`,
+      "",
+      `Abrir ${input.appName}: ${input.appLink}`,
+      "",
+      "Nos alegra tenerte aquí.",
+      "Si no reconoces esta actividad, contáctanos y cambia tu contraseña.",
+    ].join("\n"),
+    html: renderMatchaAuthEmailHtml({
+      subject,
+      preheader: "Tu cuenta ya está lista. Abre MatchA y continúa.",
+      eyebrow: "Bienvenido a MatchA",
+      title: "Tu cuenta ya está lista",
+      greeting: `Hola ${recipientName},`,
+      paragraphs: [
+        "Tu correo ya fue confirmado y tu cuenta está lista.",
+        `Bienvenido a ${input.appName}, un espacio para mejorar, atraer y conectar mejor.`,
+        "Nos alegra tenerte aquí.",
+      ],
+      actionLabel: "Abrir MatchA",
+      actionUrl: input.appLink,
+      supportingNote:
+        "Si no reconoces esta actividad, contáctanos y cambia tu contraseña.",
+      footer:
+        "Gracias por unirte a MatchA. Estamos listos para acompañarte en tu progreso.",
+    }),
   };
 }

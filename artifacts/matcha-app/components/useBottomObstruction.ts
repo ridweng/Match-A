@@ -5,7 +5,7 @@ import { KeyboardEvents } from "react-native-keyboard-controller";
 // Fine-tune these values to control the visual gap between the keyboard
 // and lifted cards/sheets on native platforms.
 export const KEYBOARD_SURFACE_GAP = {
-  ios: 12,
+  ios: 3,
   android: 3,
 } as const;
 

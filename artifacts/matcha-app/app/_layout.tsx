@@ -19,6 +19,15 @@ import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KeyboardProviderCompat } from "@/components/KeyboardProviderCompat";
 import Colors from "@/constants/colors";
+import {
+  AUTH_CALLBACK_ROUTE,
+  AUTH_SIGN_IN_ROUTE,
+  DISCOVER_ROUTE,
+  FORGOT_PASSWORD_ROUTE,
+  PUBLIC_UNAUTHENTICATED_ROUTES,
+  RESET_PASSWORD_ROUTE,
+  VERIFY_EMAIL_RESULT_ROUTE,
+} from "@/constants/routes";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { debugLog } from "@/utils/debug";
 
@@ -38,7 +47,7 @@ function RootLayoutNav() {
     dismissGoalsUnlockPrompt,
   } = useApp();
   const pathname = usePathname();
-  const isAuthCallbackActive = pathname === "/auth-callback";
+  const isAuthCallbackActive = pathname === AUTH_CALLBACK_ROUTE;
   const isLocked =
     accessState === "authenticated_locked" || accessState === "unlocking";
   const shouldShowTabs = accessState === "authenticated_unlocked";
@@ -66,10 +75,13 @@ function RootLayoutNav() {
     }
 
     let nextRoute: string | null = null;
+    const isPublicUnauthenticatedRoute = PUBLIC_UNAUTHENTICATED_ROUTES.includes(
+      pathname as (typeof PUBLIC_UNAUTHENTICATED_ROUTES)[number]
+    );
 
     if (accessState === "unauthenticated" || authStatus !== "authenticated") {
-      if (pathname !== "/login" && !isAuthCallbackActive) {
-        nextRoute = "/login";
+      if (!isPublicUnauthenticatedRoute && !isAuthCallbackActive) {
+        nextRoute = AUTH_SIGN_IN_ROUTE;
       }
     } else if (isLocked) {
       if (pathname !== "/biometric-lock") {
@@ -84,20 +96,17 @@ function RootLayoutNav() {
     } else if (
       shouldShowTabs &&
       (pathname === "/" ||
-        pathname === "/login" ||
+        pathname === AUTH_SIGN_IN_ROUTE ||
         pathname === "/biometric-lock" ||
-        pathname === "/auth-callback")
+        pathname === AUTH_CALLBACK_ROUTE ||
+        pathname === FORGOT_PASSWORD_ROUTE ||
+        pathname === RESET_PASSWORD_ROUTE ||
+        pathname === VERIFY_EMAIL_RESULT_ROUTE)
     ) {
-      nextRoute = "/(tabs)/discover";
+      nextRoute = DISCOVER_ROUTE;
     }
 
     if (nextRoute) {
-      debugLog("[biometric] biometric_route_guard_redirect", {
-        accessState,
-        authStatus,
-        pathname,
-        nextRoute,
-      });
       setLoadingVisible(true);
       if (lastRedirectRef.current !== nextRoute) {
         lastRedirectRef.current = nextRoute;
@@ -130,6 +139,9 @@ function RootLayoutNav() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="auth-callback" />
         <Stack.Screen name="login" />
+        <Stack.Screen name="forgot-password" />
+        <Stack.Screen name="reset-password" />
+        <Stack.Screen name="verify-email-result" />
         <Stack.Screen name="biometric-lock" />
         <Stack.Screen name="complete-profile" />
         <Stack.Screen name="onboarding" />

@@ -24,7 +24,10 @@ import {
   renderResetPasswordTemplate,
   type ResetPasswordTemplateInput,
 } from "./templates/reset-password.template";
-import { renderWelcomeTemplate } from "./templates/welcome.template";
+import {
+  renderWelcomeTemplate,
+  type WelcomeTemplateInput,
+} from "./templates/welcome.template";
 import { renderGenericTransactionalTemplate } from "./templates/generic-transactional.template";
 
 @Injectable()
@@ -175,12 +178,15 @@ export class EmailService implements OnModuleInit {
     recipientEmail: string;
     recipientName?: string;
     locale?: EmailLocale;
+    appLink: string;
   }) {
-    const template = renderWelcomeTemplate({
+    const templateInput: WelcomeTemplateInput = {
       appName: this.appRuntime.name,
       locale: input.locale || "en",
       recipientName: input.recipientName,
-    });
+      appLink: input.appLink,
+    };
+    const template = renderWelcomeTemplate(templateInput);
     try {
       await this.provider.send(
         this.buildPayloadFromTemplate(

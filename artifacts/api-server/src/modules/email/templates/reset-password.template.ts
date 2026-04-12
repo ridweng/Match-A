@@ -2,6 +2,7 @@ import type {
   BaseEmailTemplateInput,
   EmailTemplateContent,
 } from "../interfaces/email-template.interface";
+import { renderMatchaAuthEmailHtml } from "./matcha-auth-email.template";
 
 export type ResetPasswordTemplateInput = BaseEmailTemplateInput & {
   resetLink: string;
@@ -10,19 +11,37 @@ export type ResetPasswordTemplateInput = BaseEmailTemplateInput & {
 export function renderResetPasswordTemplate(
   input: ResetPasswordTemplateInput
 ): EmailTemplateContent {
-  const recipientName = input.recipientName || (input.locale === "es" ? "hola" : "there");
-
-  if (input.locale === "es") {
-    return {
-      subject: `Restablece tu contraseña de ${input.appName}`,
-      text: `Hola ${recipientName},\n\nRecibimos una solicitud para restablecer tu contraseña. Usa este enlace:\n${input.resetLink}\n\nSi no solicitaste este cambio, puedes ignorar este correo.`,
-      html: `<p>Hola ${recipientName},</p><p>Recibimos una solicitud para restablecer tu contraseña. Usa este enlace:</p><p><a href="${input.resetLink}">${input.resetLink}</a></p><p>Si no solicitaste este cambio, puedes ignorar este correo.</p>`,
-    };
-  }
-
+  const recipientName = input.recipientName || "hola";
+  const subject = `Restablece tu contraseña de ${input.appName}`;
   return {
-    subject: `Reset your ${input.appName} password`,
-    text: `Hi ${recipientName},\n\nWe received a request to reset your password. Use this link:\n${input.resetLink}\n\nIf you did not request this change, you can ignore this email.`,
-    html: `<p>Hi ${recipientName},</p><p>We received a request to reset your password. Use this link:</p><p><a href="${input.resetLink}">${input.resetLink}</a></p><p>If you did not request this change, you can ignore this email.</p>`,
+    subject,
+    text: [
+      `Hola ${recipientName},`,
+      "",
+      "Recibimos una solicitud para restablecer tu contraseña en MatchA.",
+      "",
+      `Crear nueva contraseña: ${input.resetLink}`,
+      "",
+      "Si no solicitaste este cambio, puedes ignorar este mensaje. Tu cuenta seguirá protegida.",
+      "Por seguridad, este enlace solo puede usarse una vez y vence automáticamente.",
+    ].join("\n"),
+    html: renderMatchaAuthEmailHtml({
+      subject,
+      preheader: "Usa este enlace para crear una nueva contraseña en MatchA.",
+      eyebrow: "Recuperación de acceso",
+      title: "Restablece tu contraseña",
+      greeting: `Hola ${recipientName},`,
+      paragraphs: [
+        "Recibimos una solicitud para restablecer tu contraseña en MatchA.",
+        "Usa el siguiente enlace para crear una nueva contraseña.",
+        "Si no solicitaste este cambio, puedes ignorar este mensaje. Tu cuenta seguirá protegida.",
+      ],
+      actionLabel: "Crear nueva contraseña",
+      actionUrl: input.resetLink,
+      supportingNote:
+        "Por seguridad, este enlace solo puede usarse una vez y vence automáticamente.",
+      footer:
+        "Si no reconoces esta solicitud, no necesitas hacer nada más. Nadie podrá cambiar tu contraseña sin este enlace.",
+    }),
   };
 }

@@ -21,6 +21,7 @@ import { OverlaySelectField } from "@/components/OverlaySelectField";
 import { SpokenLanguagesPickerField } from "@/components/SpokenLanguagesPickerField";
 import { useBottomObstruction } from "@/components/useBottomObstruction";
 import Colors from "@/constants/colors";
+import { AUTH_SIGN_IN_ROUTE } from "@/constants/routes";
 import {
   BODY_TYPES,
   CHILDREN_PREFERENCES,
@@ -204,7 +205,7 @@ export default function OnboardingScreen() {
 
   React.useEffect(() => {
     if (authStatus !== "authenticated") {
-      router.replace("/login");
+      router.replace(AUTH_SIGN_IN_ROUTE);
       return;
     }
     if (needsProfileCompletion) {
