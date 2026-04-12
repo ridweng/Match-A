@@ -1511,7 +1511,7 @@ export default function DiscoverScreen() {
                           style={styles.cardImage}
                           contentFit="cover"
                           cachePolicy="memory-disk"
-                          transition={0}
+                          transition={180}
                         />
                       ) : null}
                       <LinearGradient
@@ -1536,6 +1536,13 @@ export default function DiscoverScreen() {
                             </View>
                           ))}
                         </View>
+                        {profile.images.length > 1 ? (
+                        <View style={styles.photoDotsRow}>
+                          {profile.images.map((_, index) => (
+                            <View key={`${slotId}-${profile.id}-dot-${index}`} style={styles.photoDot} />
+                          ))}
+                        </View>
+                      ) : null}
                       </LinearGradient>
                     </>
                   ) : null}
