@@ -1285,6 +1285,9 @@ export default function DiscoverScreen() {
           const result = await requestDecision(profile, { requestId, renderedFrontId, tapSource: origin, decisionContext });
           if (!result) return;
           if (result.decisionRejectedReason === "cursor_stale") { setIsQueueLoading(true); return; }
+          if (result.replacementProfile?.images?.[0]) {
+            void ExpoImage.prefetch(result.replacementProfile.images[0]);
+          }
           if (result.replacementProfile) {
             void warmDiscoveryProfileImages(result.replacementProfile, 1, 0);
           }
@@ -1511,7 +1514,7 @@ export default function DiscoverScreen() {
                           style={styles.cardImage}
                           contentFit="cover"
                           cachePolicy="memory-disk"
-                          transition={180}
+                          transition={120}
                         />
                       ) : null}
                       <LinearGradient
@@ -1593,7 +1596,7 @@ export default function DiscoverScreen() {
                             style={styles.cardImage}
                             contentFit="cover"
                             cachePolicy="memory-disk"
-                            transition={0}
+                            transition={120}
                           />
                         ) : null}
 
@@ -1692,6 +1695,22 @@ export default function DiscoverScreen() {
               );
             })}
           </View>
+
+          {secondContent?.coverImageUri ? (
+            <View
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            >
+              <ExpoImage
+                source={{ uri: secondContent.coverImageUri }}
+                recyclingKey={`preload-${stableDeck.second}`}
+                style={{ width: 1, height: 1, opacity: 0 }}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={0}
+              />
+            </View>
+          ) : null}
 
           {/* Action buttons */}
           <View style={[styles.actions, { paddingBottom: bottomPad + 80 }]}>
