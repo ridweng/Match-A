@@ -1258,6 +1258,9 @@ export default function DiscoverScreen() {
           const result = await requestDecision(profile, { requestId, renderedFrontId, tapSource: origin, decisionContext });
           if (!result) return;
           if (result.decisionRejectedReason === "cursor_stale") { setIsQueueLoading(true); return; }
+          if (result.replacementProfile) {
+            void warmDiscoveryProfileImages(result.replacementProfile, 1, 0);
+          }
           if (direction === "right" && result.shouldShowDiscoveryUpdate && result.changedCategories.length) {
             const message = buildPopularUpdateMessage(result.changedCategories);
             setPopularUpdateBanner({ id: Date.now(), title: message.title, body: message.body });
