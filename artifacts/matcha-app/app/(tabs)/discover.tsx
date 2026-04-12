@@ -457,6 +457,8 @@ export default function DiscoverScreen() {
   const insightSheetTranslateY = useRef(new Animated.Value(0)).current;
   const insightSheetClosingRef = useRef(false);
 
+  const lastQueueViolationRef = useRef<string | null>(null);
+
   // ─── Derived animated interpolations ─────────────────────────────────────────
   const rotate = position.x.interpolate({
     inputRange: [-width / 2, 0, width / 2],
@@ -861,13 +863,20 @@ export default function DiscoverScreen() {
   // ─── Queue invariant check ───────────────────────────────────────────────────
   useEffect(() => {
     if (isDeckAnimating || isQueueLoading) return;
-    if (!logicalQueueIds.length || renderedQueueIds[0] == null) { setQueueInvariantViolation(null); return; }
+    if (!logicalQueueIds.length || renderedQueueIds[0] == null) { 
+      lastQueueViolationRef.current = null;
+      setQueueInvariantViolation(null);
+      return; }
     if (!discoveryIdsEqual(logicalQueueIds[0], renderedQueueIds[0])) {
       const message = `Rendered head mismatch: logical=${logicalQueueIds[0]} rendered=${renderedQueueIds[0]}`;
-      setQueueInvariantViolation(message);
-      logQueueTrace({ event: "queue_invariant_violation", requestId: discoveryQueueRuntime.lastRequestId, note: message, source: "render" });
+      if (lastQueueViolationRef.current !== message) {   // ← guard
+        lastQueueViolationRef.current = message;
+        setQueueInvariantViolation(message);
+        logQueueTrace({ event: "queue_invariant_violation", requestId: discoveryQueueRuntime.lastRequestId, note: message, source: "render" });
+      }
       return;
     }
+
     setQueueInvariantViolation(null);
   }, [isDeckAnimating, isQueueLoading, logicalQueueIds, logQueueTrace, renderedQueueIds]);
 
