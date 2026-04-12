@@ -50,20 +50,26 @@ export function AuthScreenShell({
 }: AuthScreenShellProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
-  const topOffset = insets.top + (Platform.OS === "web" ? 67 : 4);
-  const bottomPadding = insets.bottom + (Platform.OS === "web" ? 34 : 6);
+  const isViewportCentered = cardVerticalAlign === "center";
+  const topOffset = isViewportCentered
+    ? insets.top + (Platform.OS === "web" ? 24 : 16)
+    : insets.top + (Platform.OS === "web" ? 67 : 4);
+  const bottomPadding = isViewportCentered
+    ? insets.bottom + (Platform.OS === "web" ? 24 : 16)
+    : insets.bottom + (Platform.OS === "web" ? 34 : 6);
   const authKeyboardVerticalOffset =
     Platform.OS === "ios" ? AUTH_KEYBOARD_VERTICAL_OFFSET_IOS : topOffset;
   const { bottomObstructionHeight } = useBottomObstruction({
     safeAreaBottomInset: insets.bottom,
-    restingBottomSpacing: Platform.OS === "web" ? 34 : 24,
+    restingBottomSpacing:
+      isViewportCentered && Platform.OS === "web" ? 24 : Platform.OS === "web" ? 34 : 24,
     extraKeyboardSpacing:
       Platform.OS === "ios" ? KEYBOARD_SURFACE_GAP.ios : KEYBOARD_SURFACE_GAP.android,
     enabled: keyboardEnabled,
   });
   const authCardMaxHeight = Math.max(
     360,
-    windowHeight - topOffset - bottomObstructionHeight - 18
+    windowHeight - topOffset - Math.max(bottomPadding, bottomObstructionHeight) - 18
   );
 
   return (

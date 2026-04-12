@@ -34,10 +34,6 @@ export default function ForgotPasswordScreen() {
         "Si el correo existe en MatchA, ya enviamos un enlace para restablecer tu contraseña.",
         "If the email exists in MatchA, we already sent a reset link."
       ),
-      note: t(
-        "Puedes cerrar esta pestaña ahora.",
-        "You can close this tab now."
-      ),
     }),
     [t]
   );
@@ -88,7 +84,6 @@ export default function ForgotPasswordScreen() {
       icon="mail"
       keyboardEnabled
       onBack={() => router.replace(AUTH_SIGN_IN_ROUTE)}
-      cardVerticalAlign="center"
     >
       {submitted ? (
         <View style={styles.feedbackCard}>
@@ -97,7 +92,6 @@ export default function ForgotPasswordScreen() {
           </View>
           <Text style={styles.feedbackTitle}>{successCopy.title}</Text>
           <Text style={styles.feedbackText}>{successCopy.body}</Text>
-          <Text style={styles.feedbackHint}>{successCopy.note}</Text>
 
           <Pressable
             onPress={() => router.replace(AUTH_SIGN_IN_ROUTE)}
