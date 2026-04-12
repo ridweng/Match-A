@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 
 import Colors from "@/constants/colors";
 
@@ -224,6 +225,14 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
       style={[styles.root, { opacity: screenOpacity }]}
       pointerEvents={visible ? "auto" : "none"}
     >
+      <LinearGradient
+        colors={["#17241C", "#101A15", Colors.background]}
+        locations={[0, 0.42, 1]}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.8, y: 1 }}
+        style={StyleSheet.absoluteFillObject}
+      />
+
       <Animated.View
         style={[
           styles.center,
@@ -255,6 +264,37 @@ export function AppLoadingScreen({ visible, onHidden }: Props) {
               { opacity: glowOpacity },
             ]}
           />
+          <Animated.View
+            style={[
+              styles.ambientHalo,
+              { opacity: glowOpacity },
+            ]}
+          >
+            <LinearGradient
+              colors={[
+                "rgba(82,183,136,0.28)",
+                "rgba(45,106,79,0.16)",
+                "rgba(15,26,20,0)",
+              ]}
+              locations={[0, 0.52, 1]}
+              start={{ x: 0.18, y: 0.1 }}
+              end={{ x: 0.84, y: 0.92 }}
+              style={styles.gradientFill}
+            />
+          </Animated.View>
+          <View style={styles.iconFadePlate}>
+            <LinearGradient
+              colors={[
+                "rgba(82,183,136,0.16)",
+                "rgba(28,43,31,0.68)",
+                "rgba(15,26,20,0.96)",
+              ]}
+              locations={[0, 0.48, 1]}
+              start={{ x: 0.18, y: 0.12 }}
+              end={{ x: 0.82, y: 0.88 }}
+              style={styles.gradientFill}
+            />
+          </View>
           <Animated.View
             style={[
               styles.iconCard,
@@ -341,20 +381,37 @@ const styles = StyleSheet.create({
     borderRadius: GLOW_SIZE / 2,
     backgroundColor: Colors.primaryLight,
   },
+  ambientHalo: {
+    position: "absolute",
+    width: 172,
+    height: 172,
+    borderRadius: 86,
+    overflow: "hidden",
+  },
+  iconFadePlate: {
+    position: "absolute",
+    width: 112,
+    height: 112,
+    borderRadius: 34,
+    overflow: "hidden",
+  },
+  gradientFill: {
+    flex: 1,
+  },
   iconCard: {
-    width: ICON_SIZE,
-    height: ICON_SIZE,
-    borderRadius: 22,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5,
-    borderColor: Colors.primaryLight,
+    width: 74,
+    height: 74,
+    borderRadius: 24,
+    backgroundColor: "rgba(20,31,24,0.74)",
+    borderWidth: 1,
+    borderColor: "rgba(82,183,136,0.2)",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: Colors.primaryLight,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.22,
-    shadowRadius: 16,
-    elevation: 10,
+    shadowOpacity: 0.14,
+    shadowRadius: 24,
+    elevation: 6,
     gap: 4,
   },
   leafRow: {
