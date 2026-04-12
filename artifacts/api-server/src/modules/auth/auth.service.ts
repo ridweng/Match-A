@@ -787,7 +787,7 @@ export class AuthService {
       recipientEmail: profile.email,
       recipientName: profile.display_name || undefined,
       locale: "es",
-      appLink: `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/login`,
+      appLink: this.buildLoginUrl(),
     });
 
     const update = await pool.query<{ id: number }>(
@@ -1436,28 +1436,33 @@ export class AuthService {
     return true;
   }
 
-  createVerificationUrl(token: string) {
-    return `${runtimeConfig.baseUrl}/api/auth/verify-email/confirm?token=${encodeURIComponent(
-      token
-    )}`;
+  private buildFrontendUrl(pathname: string) {
+    return new URL(pathname, `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/`);
   }
 
-  createVerificationResultUrl(token?: string) {
-    const target = new URL(
-      `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/verify-email-result`
-    );
-    if (token) {
-      target.searchParams.set("token", token);
-    }
+  buildLoginUrl() {
+    return this.buildFrontendUrl("/login").toString();
+  }
+
+  buildVerifyEmailUrl(token: string) {
+    const target = this.buildFrontendUrl("/verify-email-result");
+    target.searchParams.set("token", token);
     return target.toString();
   }
 
-  createPasswordResetUrl(token: string) {
+  buildPasswordResetUrl(token: string) {
     const target = new URL(
-      runtimeConfig.passwordResetUrlBase || `${runtimeConfig.frontendBaseUrl}/reset-password`
+      runtimeConfig.passwordResetUrlBase ||
+        this.buildFrontendUrl("/reset-password").toString()
     );
     target.searchParams.set("token", token);
     return target.toString();
+  }
+
+  private buildLegacyVerifyEmailConfirmUrl(token: string) {
+    return `${runtimeConfig.baseUrl}/api/auth/verify-email/confirm?token=${encodeURIComponent(
+      token
+    )}`;
   }
 
   async sendPasswordResetEmail(email: string, url: string, recipientName?: string) {
@@ -1718,7 +1723,8 @@ export class AuthService {
     });
 
     const rawToken = this.randomToken();
-    const verificationUrl = this.createVerificationUrl(rawToken);
+    const verificationUrl = this.buildVerifyEmailUrl(rawToken);
+    const verificationCompatibilityUrl = this.buildLegacyVerifyEmailConfirmUrl(rawToken);
     await this.createVerificationToken(
       user!.id,
       rawToken,
@@ -1748,7 +1754,7 @@ export class AuthService {
       runtimeConfig.nodeEnv !== "production" &&
       (!runtimeConfig.email.enabled || runtimeConfig.email.logOnly)
     ) {
-      payload.verificationPreviewUrl = verificationUrl;
+      payload.verificationPreviewUrl = verificationCompatibilityUrl;
     }
 
     return payload;
@@ -1786,7 +1792,7 @@ export class AuthService {
     );
 
     try {
-      await this.sendVerificationEmail(user.email!, this.createVerificationUrl(rawToken));
+      await this.sendVerificationEmail(user.email!, this.buildVerifyEmailUrl(rawToken));
     } catch (error) {
       if (error instanceof EmailDeliveryError) {
         return this.genericEmailActionResponse(
@@ -1853,7 +1859,7 @@ export class AuthService {
     try {
       await this.sendPasswordResetEmail(
         user.email!,
-        this.createPasswordResetUrl(rawToken),
+        this.buildPasswordResetUrl(rawToken),
         user.name || undefined
       );
     } catch (error) {
@@ -2016,10 +2022,10 @@ export class AuthService {
   async getVerificationConfirmRedirect(token: string) {
     if (!token) {
       this.logVerificationRedirectOutcome("invalid");
-      return this.createVerificationResultUrl();
+      return this.buildFrontendUrl("/verify-email-result").toString();
     }
 
-    return this.createVerificationResultUrl(token);
+    return this.buildVerifyEmailUrl(token);
   }
 
   async getMe(authorizationHeader: string | undefined) {

@@ -1,5 +1,37 @@
 import { z } from "zod";
 
+function parseUrlOrNull(value: string) {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function isIpLikeHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "0.0.0.0" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized) ||
+    /^\[[0-9a-f:]+\]$/i.test(normalized)
+  );
+}
+
+function hasForbiddenPublicPort(url: URL) {
+  if (!url.port) {
+    return false;
+  }
+  if (url.protocol === "https:" && url.port === "443") {
+    return false;
+  }
+  if (url.protocol === "http:" && url.port === "80") {
+    return false;
+  }
+  return true;
+}
+
 const booleanLikeSchema = z
   .union([z.boolean(), z.string(), z.number()])
   .optional()
@@ -85,6 +117,95 @@ const envSchema = z
             code: z.ZodIssueCode.custom,
             path: [key],
             message: `${key} is required when SMTP is enabled`,
+          });
+        }
+      }
+    }
+
+    if (env.APP_ENV === "production") {
+      const frontendBaseUrl = parseUrlOrNull(env.FRONTEND_BASE_URL);
+      const passwordResetUrlBase = parseUrlOrNull(
+        env.AUTH_PASSWORD_RESET_URL_BASE ||
+          `${env.FRONTEND_BASE_URL.replace(/\/+$/, "")}/reset-password`
+      );
+
+      if (!frontendBaseUrl) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["FRONTEND_BASE_URL"],
+          message: "FRONTEND_BASE_URL must be a valid public URL in production",
+        });
+      } else {
+        if (frontendBaseUrl.protocol !== "https:") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["FRONTEND_BASE_URL"],
+            message: "FRONTEND_BASE_URL must use https in production",
+          });
+        }
+        if (isIpLikeHostname(frontendBaseUrl.hostname)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["FRONTEND_BASE_URL"],
+            message: "FRONTEND_BASE_URL must not point to localhost or an IP host in production",
+          });
+        }
+        if (hasForbiddenPublicPort(frontendBaseUrl)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["FRONTEND_BASE_URL"],
+            message: "FRONTEND_BASE_URL must not use a non-standard public port in production",
+          });
+        }
+      }
+
+      if (!passwordResetUrlBase) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+          message: "AUTH_PASSWORD_RESET_URL_BASE must be a valid public URL in production",
+        });
+      } else {
+        if (passwordResetUrlBase.protocol !== "https:") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+            message: "AUTH_PASSWORD_RESET_URL_BASE must use https in production",
+          });
+        }
+        if (isIpLikeHostname(passwordResetUrlBase.hostname)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+            message:
+              "AUTH_PASSWORD_RESET_URL_BASE must not point to localhost or an IP host in production",
+          });
+        }
+        if (hasForbiddenPublicPort(passwordResetUrlBase)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+            message:
+              "AUTH_PASSWORD_RESET_URL_BASE must not use a non-standard public port in production",
+          });
+        }
+        if (
+          frontendBaseUrl &&
+          passwordResetUrlBase.origin !== frontendBaseUrl.origin
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+            message:
+              "AUTH_PASSWORD_RESET_URL_BASE must share the same public origin as FRONTEND_BASE_URL in production",
+          });
+        }
+        if (passwordResetUrlBase.pathname.replace(/\/+$/, "") !== "/reset-password") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["AUTH_PASSWORD_RESET_URL_BASE"],
+            message:
+              "AUTH_PASSWORD_RESET_URL_BASE must point to the /reset-password route in production",
           });
         }
       }

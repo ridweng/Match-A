@@ -35,14 +35,14 @@ services:
       APP_PORT: 8082
       API_BASE_URL: https://${API_HOSTNAME}
       ADMIN_BASE_URL: https://${ADMIN_HOSTNAME}
-      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      FRONTEND_BASE_URL: https://${LANDING_HOSTNAME}
       AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI}
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
       AUTH_ACCESS_TTL_MINUTES: 60
       AUTH_REFRESH_TTL_DAYS: 30
       AUTH_PASSWORD_RESET_TTL_MINUTES: 60
       AUTH_EMAIL_VERIFICATION_TTL_MINUTES: 1440
-      AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
+      AUTH_PASSWORD_RESET_URL_BASE: https://${LANDING_HOSTNAME}/reset-password
       DATABASE_URL: ${DATABASE_URL}
       SMTP_ENABLED: ${SMTP_ENABLED:-false}
       EMAIL_LOG_ONLY: ${EMAIL_LOG_ONLY:-false}
@@ -92,14 +92,14 @@ services:
       APP_PORT: 8082
       API_BASE_URL: https://${API_HOSTNAME}
       ADMIN_BASE_URL: https://${ADMIN_HOSTNAME}
-      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL}
+      FRONTEND_BASE_URL: https://${LANDING_HOSTNAME}
       AUTH_FRONTEND_REDIRECT_URI: ${AUTH_FRONTEND_REDIRECT_URI}
       AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET}
       AUTH_ACCESS_TTL_MINUTES: 60
       AUTH_REFRESH_TTL_DAYS: 30
       AUTH_PASSWORD_RESET_TTL_MINUTES: 60
       AUTH_EMAIL_VERIFICATION_TTL_MINUTES: 1440
-      AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
+      AUTH_PASSWORD_RESET_URL_BASE: https://${LANDING_HOSTNAME}/reset-password
       DATABASE_URL: ${DATABASE_URL}
       SMTP_ENABLED: ${SMTP_ENABLED:-false}
       EMAIL_LOG_ONLY: ${EMAIL_LOG_ONLY:-false}
@@ -125,10 +125,25 @@ services:
       APPLE_PRIVATE_KEY: ${APPLE_PRIVATE_KEY:-}
       APPLE_SERVICE_ID: ${APPLE_SERVICE_ID:-}
 
+  web:
+    build:
+      context: .
+      dockerfile: artifacts/matcha-app/Dockerfile.web
+      args:
+        EXPO_PUBLIC_AUTH_API_URL: https://${API_HOSTNAME}
+    depends_on:
+      api:
+        condition: service_started
+    expose:
+      - "3000"
+    restart: unless-stopped
+
   caddy:
     image: caddy:2.8-alpine
     depends_on:
       api:
+        condition: service_started
+      web:
         condition: service_started
     restart: unless-stopped
     ports:
