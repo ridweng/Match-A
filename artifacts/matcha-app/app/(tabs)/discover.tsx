@@ -1020,6 +1020,7 @@ export default function DiscoverScreen() {
         let next = rotateStableDeck(current, replacementProfile);
         next = upgradeSlotToFull(next, next.front);
         next = upgradeSlotToCover(next, next.second);
+        next = upgradeSlotToCover(next, next.third);
         stableDeckRef.current = next;
         promotedFrontId = getSlotContent(next, "front")?.profileId ?? null;
         return next;
@@ -1455,7 +1456,19 @@ export default function DiscoverScreen() {
                 >
                   {/* ── THIRD: solid backdrop ──────────────────────────────── */}
                   {isThird && profile ? (
-                    <View style={styles.cardThirdBackdrop} />
+                    <>
+                      <View style={styles.cardThirdBackdrop} />
+                      {content?.coverImageUri ? (
+                        <ExpoImage
+                          source={{ uri: content.coverImageUri }}
+                          recyclingKey={slotId}
+                          style={[StyleSheet.absoluteFill, { opacity: 0 }]}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                          pointerEvents="none"
+                        />
+                      ) : null}
+                    </>
                   ) : null}
 
                   {/* ── SECOND: cover image + metadata overlay ─────────────── */}

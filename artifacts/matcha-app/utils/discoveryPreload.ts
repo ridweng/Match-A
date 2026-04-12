@@ -6,7 +6,7 @@ export const DISCOVERY_PRELOAD_QUEUE_LENGTH = 3;
 export const DISCOVERY_PRELOAD_IMAGE_LIMITS_BY_SLOT = [
   Infinity, // slotA front: all images
   1,        // slotB second: cover only
-  0,        // slotC third: nothing
+  1,        // slotC third: nothing
 ] as const;
 
 const warmedImageUris = new Set<string>();
