@@ -209,6 +209,7 @@ export default function ResetPasswordScreen() {
       keyboardEnabled={tokenStatus === "valid" && !resetComplete}
       onBack={() => router.replace(AUTH_SIGN_IN_ROUTE)}
       cardVerticalAlign="center"
+      contentVerticalAlign="center"
     >
       {tokenStatus === "checking" ? (
         <View style={styles.centerState}>
