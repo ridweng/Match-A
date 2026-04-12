@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -72,7 +73,8 @@ export default function ResetPasswordScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [resetComplete, setResetComplete] = useState(false);
-  const redirectStartedRef = useRef(false);
+  const [closeAttempted, setCloseAttempted] = useState(false);
+  const closeStartedRef = useRef(false);
 
   useEffect(() => {
     const currentToken = typeof token === "string" ? token : "";
@@ -109,22 +111,59 @@ export default function ResetPasswordScreen() {
   }, [token]);
 
   useEffect(() => {
-    if (!resetComplete || redirectStartedRef.current) {
+    if (!resetComplete || closeStartedRef.current) {
       return;
     }
 
-    redirectStartedRef.current = true;
-    const timeout = setTimeout(() => {
-      router.replace(AUTH_SIGN_IN_ROUTE);
-    }, 3000);
+    closeStartedRef.current = true;
+    if (Platform.OS !== "web" || typeof window === "undefined") {
+      return;
+    }
 
-    return () => clearTimeout(timeout);
+    let closeCheckTimeout: ReturnType<typeof window.setTimeout> | undefined;
+
+    const timeout = setTimeout(() => {
+      try {
+        window.close();
+      } catch {}
+
+      closeCheckTimeout = window.setTimeout(() => {
+        if (!window.closed) {
+          setCloseAttempted(true);
+        }
+      }, 250);
+    }, 1500);
+
+    return () => {
+      clearTimeout(timeout);
+      if (closeCheckTimeout) {
+        window.clearTimeout(closeCheckTimeout);
+      }
+    };
   }, [resetComplete]);
 
   const invalidState = useMemo(
     () => getResetTokenMessage(tokenErrorCode, t),
     [t, tokenErrorCode]
   );
+  const successHint = useMemo(() => {
+    if (Platform.OS !== "web") {
+      return t(
+        "Ya puedes iniciar sesión con tu nueva contraseña.",
+        "You can now sign in with your new password."
+      );
+    }
+    if (closeAttempted) {
+      return t(
+        "Ya puedes cerrar esta pestaña.",
+        "You can close this tab now."
+      );
+    }
+    return t(
+      "Estamos cerrando esta pestaña.",
+      "We are closing this tab."
+    );
+  }, [closeAttempted, t]);
 
   const handleSubmit = async () => {
     const currentToken = typeof token === "string" ? token : "";
@@ -304,12 +343,7 @@ export default function ResetPasswordScreen() {
               "Your password was updated successfully."
             )}
           </Text>
-          <Text style={styles.feedbackHint}>
-            {t(
-              "Ahora puedes iniciar sesión con tu nueva contraseña.",
-              "You can now sign in with your new password."
-            )}
-          </Text>
+          <Text style={styles.feedbackHint}>{successHint}</Text>
           <Pressable
             onPress={() => router.replace(AUTH_SIGN_IN_ROUTE)}
             style={({ pressed }) => [
