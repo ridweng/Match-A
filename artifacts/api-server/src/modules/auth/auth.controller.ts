@@ -17,53 +17,66 @@ import { z, ZodError } from "zod";
 import type { Request, Response } from "express";
 import { AuthService, type Provider } from "./auth.service";
 import { API_TAGS } from "../../docs/openapi/tags";
+import {
+  RateLimitExceededError,
+  assertIdentifierRateLimit,
+} from "../../security/rate-limit";
+import {
+  normalizedEmailSchema,
+  passwordSchema,
+  tokenSchema,
+} from "../../security/request-validation";
 
 const signUpSchema = z.object({
   name: z.string().trim().min(2).max(120),
-  email: z.string().trim().email(),
-  password: z.string().min(8).max(128),
+  email: normalizedEmailSchema,
+  password: passwordSchema,
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+}).strict();
 
 const signInSchema = z.object({
-  email: z.string().trim().email(),
+  email: normalizedEmailSchema,
   password: z.string().min(1).max(128),
-});
+}).strict();
 
 const refreshSchema = z.object({
-  refreshToken: z.string().min(20),
-});
+  refreshToken: tokenSchema,
+}).strict();
 
 const verifySchema = z.object({
-  token: z.string().min(20),
-});
+  token: tokenSchema,
+}).strict();
 
 const resendVerificationSchema = z.object({
-  email: z.string().trim().email(),
-});
+  email: normalizedEmailSchema,
+}).strict();
 
 const verificationStatusSchema = z.object({
-  email: z.string().trim().email(),
-});
+  email: normalizedEmailSchema,
+}).strict();
 
 const passwordResetRequestSchema = z.object({
-  email: z.string().trim().email(),
-});
+  email: normalizedEmailSchema,
+}).strict();
 
 const passwordResetValidateSchema = z.object({
-  token: z.string().min(20),
-});
+  token: tokenSchema,
+}).strict();
 
 const passwordResetConfirmSchema = z.object({
-  token: z.string().min(20),
-  password: z.string().min(8).max(128),
-});
+  token: tokenSchema,
+  password: passwordSchema,
+}).strict();
+
+const socialHandoffExchangeSchema = z.object({
+  code: tokenSchema,
+}).strict();
 
 const updateProfileSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   profession: z.string().trim().max(120).optional(),
-});
+}).strict();
 
 const updateSettingsSchema = z.object({
   language: z.enum(["es", "en"]).optional(),
@@ -71,7 +84,7 @@ const updateSettingsSchema = z.object({
   genderIdentity: z.string().trim().max(64).optional(),
   pronouns: z.string().trim().max(64).optional(),
   personality: z.string().trim().max(64).optional(),
-});
+}).strict();
 
 const providerSchema = z.enum(["google", "facebook", "apple"]);
 
@@ -89,14 +102,7 @@ export class AuthController {
   }
 
   private getClientIp(req: Request) {
-    const forwardedFor = req.headers["x-forwarded-for"];
-    if (typeof forwardedFor === "string" && forwardedFor.trim()) {
-      return forwardedFor.split(",")[0]!.trim();
-    }
-    if (Array.isArray(forwardedFor) && forwardedFor[0]) {
-      return forwardedFor[0].trim();
-    }
-    return req.ip || "unknown";
+    return req.ip || req.socket.remoteAddress || "unknown";
   }
 
   private getRequestId(req: Request) {
@@ -127,6 +133,23 @@ export class AuthController {
     return res.status(HttpStatus.UNAUTHORIZED).json({ error: message });
   }
 
+  private async assertAuthIdentifierLimit(route: string, identifier: string) {
+    await assertIdentifierRateLimit({
+      route,
+      identifier,
+      windowMs: 15 * 60 * 1000,
+      max: 5,
+    });
+  }
+
+  private sendRateLimitError(res: Response, error: RateLimitExceededError) {
+    res.setHeader("Retry-After", String(error.retryAfterSeconds));
+    return res.status(429).json({
+      error: "TOO_MANY_REQUESTS",
+      message: "Too many requests. Please try again later.",
+    });
+  }
+
   @Get("providers")
   @ApiOperation({ summary: "List enabled authentication providers" })
   getProviders() {
@@ -138,6 +161,7 @@ export class AuthController {
   async signUp(@Body() body: unknown, @Res() res: Response) {
     try {
       const input = signUpSchema.parse(body);
+      await this.assertAuthIdentifierLimit("sign-up", input.email);
       const result = await this.authService.signUp(input);
       if ("error" in result) {
         const status =
@@ -151,6 +175,9 @@ export class AuthController {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_SIGN_UP_PAYLOAD", error);
       }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
+      }
       console.error(error);
       return res
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -163,6 +190,7 @@ export class AuthController {
   async signIn(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signInSchema.parse(body);
+      await this.assertAuthIdentifierLimit("sign-in", input.email);
       const result = await this.authService.signIn(input, {
         requestId: this.getRequestId(req),
       });
@@ -180,6 +208,9 @@ export class AuthController {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_SIGN_IN_PAYLOAD", error);
       }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
+      }
       console.error(error);
       return res
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -192,6 +223,7 @@ export class AuthController {
   async refresh(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const { refreshToken } = refreshSchema.parse(body);
+      await this.assertAuthIdentifierLimit("refresh", refreshToken);
       const result = await this.authService.refresh(refreshToken, {
         requestId: this.getRequestId(req),
       });
@@ -202,6 +234,9 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_REFRESH_PAYLOAD", error);
+      }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
       }
       console.error(error);
       return res
@@ -258,6 +293,7 @@ export class AuthController {
   ) {
     try {
       const input = resendVerificationSchema.parse(body);
+      await this.assertAuthIdentifierLimit("verify-email-resend", input.email);
       return res.json(
         await this.authService.resendVerificationEmail({
           email: input.email,
@@ -267,6 +303,9 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_VERIFY_RESEND_PAYLOAD", error);
+      }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
       }
       console.error(error);
       return res
@@ -303,6 +342,7 @@ export class AuthController {
   ) {
     try {
       const input = passwordResetRequestSchema.parse(body);
+      await this.assertAuthIdentifierLimit("password-reset-request", input.email);
       return res.json(
         await this.authService.requestPasswordReset({
           email: input.email,
@@ -312,6 +352,9 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_PASSWORD_RESET_REQUEST_PAYLOAD", error);
+      }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
       }
       console.error(error);
       return res
@@ -346,6 +389,7 @@ export class AuthController {
   async confirmPasswordReset(@Body() body: unknown, @Res() res: Response) {
     try {
       const input = passwordResetConfirmSchema.parse(body);
+      await this.assertAuthIdentifierLimit("password-reset-confirm", input.token);
       const result = await this.authService.confirmPasswordReset(input);
       if ("error" in result) {
         return res.status(HttpStatus.BAD_REQUEST).json({ error: result.error });
@@ -354,6 +398,9 @@ export class AuthController {
     } catch (error) {
       if (error instanceof ZodError) {
         return this.sendZodError(res, "INVALID_PASSWORD_RESET_CONFIRM_PAYLOAD", error);
+      }
+      if (error instanceof RateLimitExceededError) {
+        return this.sendRateLimitError(res, error);
       }
       console.error(error);
       return res
@@ -544,5 +591,26 @@ export class AuthController {
     @Res() res: Response
   ) {
     return this.handleSocialCallback(provider, query, body, res);
+  }
+
+  @Post("social/exchange")
+  @ApiOperation({ summary: "Exchange a short-lived social auth handoff code" })
+  async exchangeSocialHandoff(@Body() body: unknown, @Res() res: Response) {
+    try {
+      const input = socialHandoffExchangeSchema.parse(body);
+      const result = await this.authService.exchangeSocialHandoffCode(input.code);
+      if ("error" in result) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ error: result.error });
+      }
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return this.sendZodError(res, "INVALID_SOCIAL_HANDOFF_PAYLOAD", error);
+      }
+      console.error(error);
+      return res
+        .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        .json({ error: "INTERNAL_SERVER_ERROR" });
+    }
   }
 }

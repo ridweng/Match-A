@@ -22,11 +22,9 @@ export default function AuthCallbackScreen() {
       status: typeof params.status === "string" ? params.status : undefined,
       provider: typeof params.provider === "string" ? params.provider : undefined,
       code: typeof params.code === "string" ? params.code : undefined,
+      handoffCode:
+        typeof params.handoffCode === "string" ? params.handoffCode : undefined,
       message: typeof params.message === "string" ? params.message : undefined,
-      accessToken:
-        typeof params.accessToken === "string" ? params.accessToken : undefined,
-      refreshToken:
-        typeof params.refreshToken === "string" ? params.refreshToken : undefined,
       needsProfileCompletion:
         typeof params.needsProfileCompletion === "string"
           ? params.needsProfileCompletion === "true"

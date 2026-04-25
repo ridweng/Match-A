@@ -1,5 +1,12 @@
 .git
 .DS_Store
+.env
+.env.*
+!.env.example
+!.env.aws.example
+**/.env
+**/.env.*
+!**/.env.example
 node_modules
 **/node_modules
 **/dist

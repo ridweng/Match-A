@@ -20,6 +20,7 @@ import { GoalsService } from "../goals/goals.service";
 import { ViewerService } from "./viewer.service";
 import { API_TAGS } from "../../docs/openapi/tags";
 import { MATCHA_BEARER_AUTH } from "../../docs/openapi/security";
+import { strictStringArray } from "../../security/request-validation";
 
 const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
@@ -31,7 +32,7 @@ const profileUpdateSchema = z.object({
   pronouns: z.string().trim().max(64).optional(),
   personality: z.string().trim().max(64).optional(),
   relationshipGoals: z.string().trim().max(120).optional(),
-  languagesSpoken: z.array(z.string().trim().min(1).max(64)).max(7).optional(),
+  languagesSpoken: strictStringArray(7).optional(),
   education: z.string().trim().max(120).optional(),
   childrenPreference: z.string().trim().max(120).optional(),
   physicalActivity: z.string().trim().max(120).optional(),
@@ -45,10 +46,10 @@ const profileUpdateSchema = z.object({
   height: z.string().trim().max(32).optional(),
   hairColor: z.string().trim().max(120).optional(),
   ethnicity: z.string().trim().max(160).optional(),
-  interests: z.array(z.string().trim().min(1).max(64)).max(24).optional(),
+  interests: strictStringArray(24).optional(),
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
-});
+}).strict();
 
 const settingsUpdateSchema = z.object({
   language: z.enum(["es", "en"]).optional(),
@@ -56,11 +57,11 @@ const settingsUpdateSchema = z.object({
   genderIdentity: z.string().trim().max(64).optional(),
   pronouns: z.string().trim().max(64).optional(),
   personality: z.string().trim().max(64).optional(),
-});
+}).strict();
 
 const goalCompletionSchema = z.object({
   completed: z.literal(true).optional().default(true),
-});
+}).strict();
 
 const goalReorderSchema = z.object({
   category: z.enum([
@@ -71,8 +72,8 @@ const goalReorderSchema = z.object({
     "language",
     "studies",
   ]),
-  orderedGoalKeys: z.array(z.string().trim().min(1).max(64)).min(1),
-});
+  orderedGoalKeys: strictStringArray(100).pipe(z.array(z.string()).min(1)),
+}).strict();
 
 @ApiTags(API_TAGS.viewer)
 @ApiBearerAuth(MATCHA_BEARER_AUTH)
@@ -348,8 +349,10 @@ export class ViewerController {
               ageMin: z.number().int().min(18).max(100),
               ageMax: z.number().int().min(18).max(100),
             })
+            .strict()
             .refine((value) => value.ageMin <= value.ageMax),
         })
+        .strict()
         .parse(body);
       this.logger.log(
         `[viewer-discovery-preferences] ${JSON.stringify({

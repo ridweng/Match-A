@@ -11,6 +11,13 @@ export const runtimeConfig = {
   baseUrl: env.API_BASE_URL,
   adminBaseUrl: env.ADMIN_BASE_URL || "",
   frontendBaseUrl: env.FRONTEND_BASE_URL,
+  cors: {
+    allowedOrigins: env.CORS_ALLOWED_ORIGINS,
+    adminAllowedOrigins: env.ADMIN_CORS_ALLOWED_ORIGINS,
+  },
+  rateLimit: {
+    generalMax: env.RATE_LIMIT_GENERAL_MAX,
+  },
   frontendRedirectUri: env.AUTH_FRONTEND_REDIRECT_URI,
   minimumAge: env.AUTH_MINIMUM_AGE,
   accessTtlMinutes: env.AUTH_ACCESS_TTL_MINUTES,
@@ -23,6 +30,7 @@ export const runtimeConfig = {
     enabled: env.ADMIN_DASHBOARD_ENABLED,
     username: env.ADMIN_BASIC_AUTH_USERNAME,
     password: env.ADMIN_BASIC_AUTH_PASSWORD,
+    allowedCidrs: env.ADMIN_ALLOWED_CIDRS,
     baseUrl: env.ADMIN_BASE_URL || "",
   },
   email: {

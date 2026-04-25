@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { z } from "zod";
 
 function parseUrlOrNull(value: string) {
@@ -32,6 +33,17 @@ function hasForbiddenPublicPort(url: URL) {
   return true;
 }
 
+function looksLikePlaceholder(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized.startsWith("<") ||
+    normalized.includes("change-me") ||
+    normalized.includes("example-password") ||
+    normalized.includes("placeholder")
+  );
+}
+
 const booleanLikeSchema = z
   .union([z.boolean(), z.string(), z.number()])
   .optional()
@@ -53,6 +65,16 @@ const integerLikeSchema = z
     return Number.isFinite(parsed) ? parsed : undefined;
   });
 
+const csvSchema = z
+  .string()
+  .optional()
+  .transform((value) =>
+    String(value || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+  );
+
 const envSchema = z
   .object({
     APP_NAME: z.string().trim().min(1).default("Matcha"),
@@ -62,13 +84,17 @@ const envSchema = z
       .default("debug"),
     APP_PORT: integerLikeSchema.default(8082),
     API_BASE_URL: z.string().trim().url().default("http://127.0.0.1:8082"),
+    DATABASE_URL: z.string().trim().optional(),
     ADMIN_BASE_URL: z.string().trim().url().optional(),
     FRONTEND_BASE_URL: z.string().trim().default("http://localhost:8080"),
+    CORS_ALLOWED_ORIGINS: csvSchema.default(""),
+    ADMIN_CORS_ALLOWED_ORIGINS: csvSchema.default(""),
+    RATE_LIMIT_GENERAL_MAX: integerLikeSchema.default(300),
     AUTH_FRONTEND_REDIRECT_URI: z
       .string()
       .trim()
       .default("matcha:///auth-callback"),
-    AUTH_SESSION_SECRET: z.string().trim().min(1).default("matcha-dev-secret"),
+    AUTH_SESSION_SECRET: z.string().trim().min(1),
     AUTH_MINIMUM_AGE: integerLikeSchema.default(18),
     AUTH_ACCESS_TTL_MINUTES: integerLikeSchema.default(43200),
     AUTH_REFRESH_TTL_DAYS: integerLikeSchema.default(30),
@@ -82,6 +108,7 @@ const envSchema = z
     ADMIN_DASHBOARD_ENABLED: booleanLikeSchema.default(false),
     ADMIN_BASIC_AUTH_USERNAME: z.string().trim().default(""),
     ADMIN_BASIC_AUTH_PASSWORD: z.string().trim().default(""),
+    ADMIN_ALLOWED_CIDRS: csvSchema.default(""),
     SMTP_ENABLED: booleanLikeSchema.default(false),
     EMAIL_LOG_ONLY: booleanLikeSchema.default(false),
     SMTP_HOST: z.string().trim().default(""),
@@ -209,6 +236,66 @@ const envSchema = z
           });
         }
       }
+
+      if (
+        env.AUTH_SESSION_SECRET === "change-me" ||
+        looksLikePlaceholder(env.AUTH_SESSION_SECRET) ||
+        env.AUTH_SESSION_SECRET.length < 32
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["AUTH_SESSION_SECRET"],
+          message:
+            "AUTH_SESSION_SECRET must be a unique high-entropy value in production",
+        });
+      }
+
+      if (env.ADMIN_DASHBOARD_ENABLED) {
+        if (!env.ADMIN_BASIC_AUTH_USERNAME || !env.ADMIN_BASIC_AUTH_PASSWORD) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ADMIN_BASIC_AUTH_PASSWORD"],
+            message:
+              "ADMIN_BASIC_AUTH_USERNAME and ADMIN_BASIC_AUTH_PASSWORD are required when the admin dashboard is enabled",
+          });
+        }
+        if (
+          env.ADMIN_BASIC_AUTH_PASSWORD === "change-me-now" ||
+          looksLikePlaceholder(env.ADMIN_BASIC_AUTH_PASSWORD) ||
+          env.ADMIN_BASIC_AUTH_PASSWORD.length < 16
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ADMIN_BASIC_AUTH_PASSWORD"],
+            message:
+              "ADMIN_BASIC_AUTH_PASSWORD must be a unique high-entropy value in production",
+          });
+        }
+        if (!env.ADMIN_ALLOWED_CIDRS.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ADMIN_ALLOWED_CIDRS"],
+            message:
+              "ADMIN_ALLOWED_CIDRS is required in production when the admin dashboard is enabled",
+          });
+        }
+      }
+
+      if (!env.DATABASE_URL || looksLikePlaceholder(env.DATABASE_URL)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["DATABASE_URL"],
+          message: "DATABASE_URL must be set to a non-placeholder value in production",
+        });
+      }
+
+      if (env.SMTP_ENABLED && !env.EMAIL_LOG_ONLY && looksLikePlaceholder(env.SMTP_PASS)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SMTP_PASS"],
+          message: "SMTP_PASS must be a non-placeholder value when SMTP is enabled in production",
+        });
+      }
     }
   });
 
@@ -228,11 +315,17 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
       env.APP_LOG_LEVEL ?? (appEnv === "production" ? "warn" : "debug"),
     APP_PORT: appPort,
     API_BASE_URL: apiBaseUrl,
+    DATABASE_URL: env.DATABASE_URL ?? "",
     ADMIN_BASE_URL: env.ADMIN_BASE_URL ?? "",
     FRONTEND_BASE_URL: frontendBaseUrl,
+    CORS_ALLOWED_ORIGINS: env.CORS_ALLOWED_ORIGINS ?? "",
+    ADMIN_CORS_ALLOWED_ORIGINS: env.ADMIN_CORS_ALLOWED_ORIGINS ?? "",
+    RATE_LIMIT_GENERAL_MAX: env.RATE_LIMIT_GENERAL_MAX ?? "300",
     AUTH_FRONTEND_REDIRECT_URI:
       env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",
-    AUTH_SESSION_SECRET: env.AUTH_SESSION_SECRET ?? "matcha-dev-secret",
+    AUTH_SESSION_SECRET:
+      env.AUTH_SESSION_SECRET ??
+      (appEnv === "production" ? "" : crypto.randomBytes(32).toString("hex")),
     AUTH_MINIMUM_AGE: env.AUTH_MINIMUM_AGE ?? "18",
     AUTH_ACCESS_TTL_MINUTES: env.AUTH_ACCESS_TTL_MINUTES ?? "43200",
     AUTH_REFRESH_TTL_DAYS: env.AUTH_REFRESH_TTL_DAYS ?? "30",
@@ -248,6 +341,7 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     ADMIN_DASHBOARD_ENABLED: env.ADMIN_DASHBOARD_ENABLED ?? "false",
     ADMIN_BASIC_AUTH_USERNAME: env.ADMIN_BASIC_AUTH_USERNAME ?? "",
     ADMIN_BASIC_AUTH_PASSWORD: env.ADMIN_BASIC_AUTH_PASSWORD ?? "",
+    ADMIN_ALLOWED_CIDRS: env.ADMIN_ALLOWED_CIDRS ?? "",
     SMTP_ENABLED: env.SMTP_ENABLED ?? "false",
     EMAIL_LOG_ONLY: env.EMAIL_LOG_ONLY ?? "false",
     SMTP_HOST: env.SMTP_HOST ?? "",

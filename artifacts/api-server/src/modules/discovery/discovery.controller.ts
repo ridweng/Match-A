@@ -28,14 +28,14 @@ const discoveryDecisionBaseSchema = z.object({
     expectations: z.string().trim().max(120).nullable().optional(),
     language: z.string().trim().max(120).nullable().optional(),
     studies: z.string().trim().max(120).nullable().optional(),
-  }),
+  }).strict(),
   requestId: z.string().trim().max(128).optional(),
   cursor: z.string().trim().max(512).nullable().optional(),
   visibleProfilePublicIds: z.array(z.string().trim().min(1).max(64)).max(3).optional(),
   visibleProfileIds: z.array(z.coerce.number().int().positive()).max(3).optional(),
   queueVersion: z.coerce.number().int().positive().optional(),
   presentedPosition: z.coerce.number().int().positive().optional(),
-});
+}).strict();
 
 const discoveryDecisionSchema = discoveryDecisionBaseSchema.refine(
   (data) => data.targetProfilePublicId || data.targetProfileId,
@@ -62,23 +62,23 @@ const discoveryFiltersSchema = z.object({
   therianMode: z.enum(["exclude", "include", "only"]),
   ageMin: z.number().int().min(18).max(100),
   ageMax: z.number().int().min(18).max(100),
-});
+}).strict();
 
 const updateDiscoveryPreferencesSchema = z.object({
   filters: discoveryFiltersSchema.refine((value) => value.ageMin <= value.ageMax, {
     message: "INVALID_DISCOVERY_FILTER_RANGE",
   }),
-});
+}).strict();
 
 const discoveryFeedQuerySchema = z.object({
   cursor: z.string().trim().max(128).optional(),
   limit: z.coerce.number().int().min(1).max(60).optional(),
-});
+}).strict();
 
 const discoveryWindowQuerySchema = z.object({
   size: z.coerce.number().int().min(1).max(4).optional(),
   cursor: z.string().trim().max(512).optional(),
-});
+}).strict();
 
 @ApiTags(API_TAGS.discovery)
 @ApiBearerAuth(MATCHA_BEARER_AUTH)

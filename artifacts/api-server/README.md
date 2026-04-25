@@ -78,7 +78,7 @@ Recommended auth/runtime config:
 export PORT=8082
 export AUTH_BASE_URL="http://127.0.0.1:8082"
 export AUTH_FRONTEND_REDIRECT_URI="matcha:///auth-callback"
-export AUTH_SESSION_SECRET="change-me"
+export AUTH_SESSION_SECRET="<generate-a-strong-random-secret>"
 export AUTH_ACCESS_TTL_MINUTES=15
 export AUTH_REFRESH_TTL_DAYS=30
 ```
@@ -91,8 +91,8 @@ If you want the backend to create the local database automatically in local deve
 INSTALL=true
 DB_HOST=127.0.0.1
 DB_PORT=5432
-DB_USER=ignaciokaiser
-DB_PASSWORD=
+DB_USER=matcha
+DB_PASSWORD="<local-database-password>"
 DB_NAME=matcha
 DB_ADMIN_DB=postgres
 ```
@@ -181,10 +181,9 @@ GET /api/healthz/ready
 
 It returns `503` until required tables and baseline seed rows are present.
 
-The default seeded development account is:
-
-- email: `test@gmail.com`
-- password: `test`
+To seed a development account, set `SEED_DEFAULT_EMAIL` and
+`SEED_DEFAULT_PASSWORD` before running the seed script. The seed script does
+not create a default password unless both values are explicitly provided.
 
 ## Production build
 

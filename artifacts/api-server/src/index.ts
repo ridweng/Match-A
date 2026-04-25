@@ -1,8 +1,16 @@
 import "reflect-metadata";
+import crypto from "node:crypto";
 import type { Request, Response } from "express";
+import express from "express";
 import type { OpenAPIObject } from "@nestjs/swagger";
 import type { LogLevel } from "@nestjs/common";
 import { loadApiEnv } from "./config/env";
+import {
+  createAdminAccessMiddleware,
+  createCorsMiddleware,
+  createSecurityHeadersMiddleware,
+} from "./security/browser-security";
+import { createRateLimitMiddleware } from "./security/rate-limit";
 
 function isAdminAuthorized(authHeader: string | undefined, username: string, password: string) {
   const header = String(authHeader || "");
@@ -11,7 +19,14 @@ function isAdminAuthorized(authHeader: string | undefined, username: string, pas
   }
   const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
   const [providedUser, providedPassword] = decoded.split(":");
-  return providedUser === username && providedPassword === password;
+  const provided = `${providedUser || ""}:${providedPassword || ""}`;
+  const expected = `${username}:${password}`;
+  const providedBuffer = Buffer.from(provided);
+  const expectedBuffer = Buffer.from(expected);
+  return (
+    providedBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+  );
 }
 
 type RuntimeLogLevel = "error" | "warn" | "log" | "debug" | "verbose";
@@ -87,12 +102,55 @@ async function bootstrap() {
   muteNoisyConsoleOutputForProduction(runtimeConfig.nodeEnv);
 
   const app = await NestFactory.create(AppModule, {
-    cors: true,
+    bodyParser: false,
+    cors: false,
     logger: resolveNestLoggerLevels(runtimeConfig.logLevel),
   });
   app.setGlobalPrefix("api");
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set("trust proxy", 1);
+
+  const browserSecurityConfig = {
+    nodeEnv: runtimeConfig.nodeEnv,
+    apiBaseUrl: runtimeConfig.baseUrl,
+    frontendBaseUrl: runtimeConfig.frontendBaseUrl,
+    adminBaseUrl: runtimeConfig.admin.baseUrl,
+    publicCorsOrigins: runtimeConfig.cors.allowedOrigins,
+    adminCorsOrigins: runtimeConfig.cors.adminAllowedOrigins,
+    adminAllowedCidrs: runtimeConfig.admin.allowedCidrs,
+  };
+
+  expressApp.use(createSecurityHeadersMiddleware(browserSecurityConfig));
+  expressApp.use(createCorsMiddleware(browserSecurityConfig));
+  expressApp.use(createAdminAccessMiddleware(browserSecurityConfig));
+
+  expressApp.use(
+    "/api",
+    createRateLimitMiddleware({
+      keyPrefix: "api-general",
+      windowMs: 15 * 60 * 1000,
+      max: runtimeConfig.rateLimit.generalMax,
+    })
+  );
+  expressApp.use(
+    [
+      "/api/auth/sign-in",
+      "/api/auth/sign-up",
+      "/api/auth/refresh",
+      "/api/auth/password-reset/request",
+      "/api/auth/password-reset/confirm",
+      "/api/auth/verify-email/resend",
+    ],
+    createRateLimitMiddleware({
+      keyPrefix: "api-auth-strict",
+      windowMs: 15 * 60 * 1000,
+      max: 5,
+      keyGenerator: (req) => `${req.method}:${req.path}:${req.ip || "unknown"}`,
+    })
+  );
+
+  expressApp.use(express.json({ limit: "256kb", strict: true }));
+  expressApp.use(express.urlencoded({ extended: false, limit: "32kb" }));
   const openApiDocument: OpenAPIObject = createOpenApiDocument(app);
   const apiHost = normalizeHostValue(runtimeConfig.baseUrl);
   const adminHost = normalizeHostValue(runtimeConfig.admin.baseUrl || runtimeConfig.adminBaseUrl);
@@ -144,13 +202,14 @@ async function bootstrap() {
       return res.redirect("/api");
     }
 
+    const cspNonce = String(res.locals.cspNonce || "");
     res.type("html").send(`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Matcha Admin</title>
-    <style>
+    <style nonce="${cspNonce}">
       body { margin: 0; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:
         radial-gradient(circle at top, rgba(14,122,74,0.12), transparent 38%),
         linear-gradient(180deg, #eff6f0 0%, #f8faf8 100%); color: #17211b; min-height: 100vh; }
@@ -191,7 +250,7 @@ async function bootstrap() {
         </div>
       </div>
     </main>
-    <script>
+    <script nonce="${cspNonce}">
       const statusEl = document.getElementById("readiness-status");
       const metaEl = document.getElementById("readiness-meta");
       const checkNowButton = document.getElementById("check-now-button");

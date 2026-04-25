@@ -37,6 +37,7 @@ import {
   DEFAULT_DISCOVERY_FILTERS,
   deleteAccount as deleteAccountRequest,
   deleteProfilePhoto as deleteProfilePhotoRequest,
+  exchangeSocialHandoffCode,
   fetchProviderAvailability,
   getNextDiscoveryFeedWindow,
   getViewerBootstrap,
@@ -3927,10 +3928,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const login = useCallback(async () => {
+    const demoLoginEnabled =
+      process.env.NODE_ENV !== "production" &&
+      process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
+    if (!demoLoginEnabled) {
+      setAuthError("DEMO_AUTH_DISABLED");
+      return;
+    }
     setPostAuthRedirectRoute("/onboarding");
     await applySession({
-      accessToken: "demo-access-token",
-      refreshToken: "demo-refresh-token",
+      accessToken: `demo-access-${Math.random().toString(36).slice(2)}`,
+      refreshToken: `demo-refresh-${Math.random().toString(36).slice(2)}`,
       user: {
         id: 1,
         email: "demo@matcha.app",
@@ -4047,19 +4055,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       debugLog("[auth-callback] payload", {
         status: payload.status,
         provider: payload.provider,
-        code: payload.code,
+        hasHandoffCode: Boolean(payload.handoffCode),
         email: payload.email,
       });
 
       try {
-        if (
-          payload.status === "success" &&
-          payload.accessToken &&
-          payload.refreshToken
-        ) {
+        if (payload.status === "success" && payload.handoffCode) {
+          const session = await exchangeSocialHandoffCode(payload.handoffCode);
           const hydrated = await hydrateSessionFromTokens({
-            accessToken: payload.accessToken,
-            refreshToken: payload.refreshToken,
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken,
           });
           if (!hydrated.needsProfileCompletion && hydrated.onboardingState !== "complete") {
             await clearOnboardingResumeState().catch(() => {});

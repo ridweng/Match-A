@@ -69,6 +69,8 @@ type AuthUserSessionSnapshot = {
   profileImageCount: number;
 };
 
+type AuthSessionPayload = Awaited<ReturnType<AuthService["createSessionResponse"]>>;
+
 type VerificationTokenRow = UserRow & {
   token_id: number;
   user_id: number;
@@ -123,6 +125,45 @@ export class AuthService {
 
   private hashLookupValue(value: string) {
     return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+  }
+
+  private handoffEncryptionKey() {
+    return crypto
+      .createHash("sha256")
+      .update(runtimeConfig.sessionSecret)
+      .digest();
+  }
+
+  private encryptHandoffPayload(payload: AuthSessionPayload) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.handoffEncryptionKey(), iv);
+    const encrypted = Buffer.concat([
+      cipher.update(JSON.stringify(payload), "utf8"),
+      cipher.final(),
+    ]);
+    return {
+      encryptedPayload: encrypted.toString("base64"),
+      iv: iv.toString("base64"),
+      authTag: cipher.getAuthTag().toString("base64"),
+    };
+  }
+
+  private decryptHandoffPayload(row: {
+    encrypted_payload: string;
+    iv: string;
+    auth_tag: string;
+  }): AuthSessionPayload {
+    const decipher = crypto.createDecipheriv(
+      "aes-256-gcm",
+      this.handoffEncryptionKey(),
+      Buffer.from(row.iv, "base64")
+    );
+    decipher.setAuthTag(Buffer.from(row.auth_tag, "base64"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(row.encrypted_payload, "base64")),
+      decipher.final(),
+    ]);
+    return JSON.parse(decrypted.toString("utf8")) as AuthSessionPayload;
   }
 
   private genericEmailActionResponse(message: string) {
@@ -1355,6 +1396,65 @@ export class AuthService {
     return this.authPayload(user, accessToken, refreshToken, { snapshot });
   }
 
+  private async createSocialHandoffCode(provider: Provider, payload: AuthSessionPayload) {
+    const code = this.randomToken();
+    const encrypted = this.encryptHandoffPayload(payload);
+    await pool.query(
+      `INSERT INTO auth.social_handoff_codes
+        (code_hash, provider, encrypted_payload, iv, auth_tag, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        this.hashToken(code),
+        provider,
+        encrypted.encryptedPayload,
+        encrypted.iv,
+        encrypted.authTag,
+        new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+      ]
+    );
+    return code;
+  }
+
+  async exchangeSocialHandoffCode(code: string) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{
+        id: number;
+        encrypted_payload: string;
+        iv: string;
+        auth_tag: string;
+        expires_at: string | Date;
+        consumed_at: string | Date | null;
+      }>(
+        `SELECT id, encrypted_payload, iv, auth_tag, expires_at, consumed_at
+         FROM auth.social_handoff_codes
+         WHERE code_hash = $1
+         FOR UPDATE`,
+        [this.hashToken(code)]
+      );
+      const row = result.rows[0];
+      if (!row || row.consumed_at || new Date(row.expires_at).getTime() < Date.now()) {
+        await client.query("ROLLBACK");
+        return { error: "INVALID_SOCIAL_HANDOFF_CODE" as const };
+      }
+
+      await client.query(
+        `UPDATE auth.social_handoff_codes
+         SET consumed_at = NOW()
+         WHERE id = $1`,
+        [row.id]
+      );
+      await client.query("COMMIT");
+      return this.decryptHandoffPayload(row);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async authenticate(
     authorizationHeader: string | undefined,
     options?: {
@@ -1440,6 +1540,28 @@ export class AuthService {
     return new URL(pathname, `${runtimeConfig.frontendBaseUrl.replace(/\/+$/, "")}/`);
   }
 
+  private resolveSafeAuthRedirectUri(redirectUri: string | null | undefined) {
+    const fallback = runtimeConfig.frontendRedirectUri;
+    const candidate = String(redirectUri || fallback).trim();
+
+    try {
+      const parsed = new URL(candidate);
+      const fallbackUrl = new URL(fallback);
+      if (parsed.protocol === fallbackUrl.protocol) {
+        return parsed.toString();
+      }
+
+      const frontendBaseUrl = new URL(runtimeConfig.frontendBaseUrl);
+      if (parsed.origin === frontendBaseUrl.origin) {
+        return parsed.toString();
+      }
+    } catch {
+      return fallback;
+    }
+
+    return fallback;
+  }
+
   buildLoginUrl() {
     return this.buildFrontendUrl("/login").toString();
   }
@@ -1474,21 +1596,26 @@ export class AuthService {
     });
   }
 
-  async ensureDefaultAccount() {
-    const existing = await this.findUserByEmail("test@gmail.com");
+  async ensureDefaultAccount(input: { email: string; password: string }) {
+    const email = this.normalizeEmail(input.email);
+    if (!email || input.password.length < 8) {
+      throw new Error("INVALID_DEFAULT_ACCOUNT_SEED");
+    }
+
+    const existing = await this.findUserByEmail(email);
     if (existing) {
       return;
     }
-    const passwordHash = await this.hashPassword("test");
+    const passwordHash = await this.hashPassword(input.password);
     const user = await this.createEmailUser({
-      name: "Test User",
-      email: "test@gmail.com",
+      name: "Development User",
+      email,
       passwordHash,
       dateOfBirth: "2000-01-01",
       hasCompletedOnboarding: true,
     });
     await this.verifyUserEmail(user!.id);
-    console.log("[api-server] seeded default account: test@gmail.com / test");
+    this.logger.log("[api-server] seeded configured development account");
   }
 
   providerAvailability() {
@@ -1500,7 +1627,7 @@ export class AuthService {
   }
 
   providerUnavailable(provider: string, redirectUri: string) {
-    const target = new URL(redirectUri || runtimeConfig.frontendRedirectUri);
+    const target = new URL(this.resolveSafeAuthRedirectUri(redirectUri));
     target.searchParams.set("status", "error");
     target.searchParams.set("provider", provider);
     target.searchParams.set("code", "PROVIDER_UNAVAILABLE");
@@ -1694,7 +1821,7 @@ export class AuthService {
   buildSocialState(provider: Provider, redirectUri: string, mode: string) {
     return this.signState({
       provider,
-      redirectUri,
+      redirectUri: this.resolveSafeAuthRedirectUri(redirectUri),
       mode,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
@@ -2181,10 +2308,11 @@ export class AuthService {
     errorDescription?: string | null;
     redirectUri?: string | null;
   }) {
-    const redirectUriFromState = input.redirectUri || runtimeConfig.frontendRedirectUri;
+    const redirectUriFromState = this.resolveSafeAuthRedirectUri(input.redirectUri);
     const state = this.verifyState(input.state);
-    const redirectUri =
-      typeof state?.redirectUri === "string" ? state.redirectUri : redirectUriFromState;
+    const redirectUri = this.resolveSafeAuthRedirectUri(
+      typeof state?.redirectUri === "string" ? state.redirectUri : redirectUriFromState
+    );
     const target = new URL(redirectUri);
 
     if (!state || state.provider !== input.provider) {
@@ -2208,10 +2336,10 @@ export class AuthService {
       );
       const { user } = await this.upsertSocialIdentity(socialProfile);
       const payload = await this.createSessionResponse(user);
+      const handoffCode = await this.createSocialHandoffCode(input.provider, payload);
       target.searchParams.set("status", "success");
       target.searchParams.set("provider", input.provider);
-      target.searchParams.set("accessToken", payload.accessToken);
-      target.searchParams.set("refreshToken", payload.refreshToken);
+      target.searchParams.set("handoffCode", handoffCode);
       target.searchParams.set(
         "needsProfileCompletion",
         payload.needsProfileCompletion ? "true" : "false"

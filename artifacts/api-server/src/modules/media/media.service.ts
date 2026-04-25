@@ -23,6 +23,14 @@ type ProfilePhotoRow = {
   status: "pending" | "ready" | "deleted";
 };
 
+const ALLOWED_IMAGE_MIME_TYPES = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+  ["image/heic", "heic"],
+  ["image/heif", "heif"],
+]);
+
 @Injectable()
 export class MediaService {
   private readonly mediaRoot = path.join(
@@ -38,12 +46,11 @@ export class MediaService {
   }
 
   private getFileExtension(file: UploadedFile) {
-    const fromName = file.originalname.split(".").pop()?.trim().toLowerCase();
-    if (fromName) return fromName;
-    if (file.mimetype === "image/png") return "png";
-    if (file.mimetype === "image/webp") return "webp";
-    if (file.mimetype === "image/heic") return "heic";
-    return "jpg";
+    const extension = ALLOWED_IMAGE_MIME_TYPES.get(file.mimetype);
+    if (!extension) {
+      throw new Error("UNSUPPORTED_MEDIA_TYPE");
+    }
+    return extension;
   }
 
   private buildStorageKey(profileId: number, sortOrder: number, extension: string) {
@@ -51,7 +58,12 @@ export class MediaService {
   }
 
   private buildAbsolutePath(storageKey: string) {
-    return path.join(this.mediaRoot, storageKey);
+    const absolutePath = path.resolve(this.mediaRoot, storageKey);
+    const mediaRoot = path.resolve(this.mediaRoot);
+    if (absolutePath !== mediaRoot && !absolutePath.startsWith(`${mediaRoot}${path.sep}`)) {
+      throw new Error("INVALID_MEDIA_STORAGE_KEY");
+    }
+    return absolutePath;
   }
 
   private buildPublicUrl(mediaAssetId: number) {
@@ -134,6 +146,9 @@ export class MediaService {
   async uploadProfileImage(userId: number, sortOrder: number, file: UploadedFile) {
     if (!file?.buffer?.length) {
       throw new Error("MEDIA_FILE_REQUIRED");
+    }
+    if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) {
+      throw new Error("UNSUPPORTED_MEDIA_TYPE");
     }
 
     const profileId = await this.findProfileIdForUser(userId);

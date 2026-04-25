@@ -71,6 +71,20 @@
       "when": 1774974000000,
       "tag": "0009_user_onboarding_completion_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1774977600000,
+      "tag": "0010_actor_queue_public_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776240000000,
+      "tag": "0011_security_hardening",
+      "breakpoints": true
     }
   ]
 }

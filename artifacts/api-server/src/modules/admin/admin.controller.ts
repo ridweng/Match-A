@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, Param, Query, Req, Res } from "@nestjs/common";
 import { ApiExcludeController } from "@nestjs/swagger";
+import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import { runtimeConfig } from "../../config/runtime";
 import { AdminService } from "./admin.service";
@@ -97,9 +98,13 @@ export class AdminController {
 
     const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
     const [username, password] = decoded.split(":");
+    const provided = Buffer.from(`${username || ""}:${password || ""}`);
+    const expected = Buffer.from(
+      `${runtimeConfig.admin.username}:${runtimeConfig.admin.password}`
+    );
     if (
-      username !== runtimeConfig.admin.username ||
-      password !== runtimeConfig.admin.password
+      provided.length !== expected.length ||
+      !crypto.timingSafeEqual(provided, expected)
     ) {
       res.setHeader("WWW-Authenticate", 'Basic realm="Matcha Admin"');
       res.status(401).send("Unauthorized");

@@ -57,6 +57,20 @@ export class MediaController {
   @UseInterceptors(
     FileInterceptor("file", {
       limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, callback) => {
+        const allowedTypes = new Set([
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "image/heic",
+          "image/heif",
+        ]);
+        if (!allowedTypes.has(file.mimetype)) {
+          callback(new Error("UNSUPPORTED_MEDIA_TYPE"), false);
+          return;
+        }
+        callback(null, true);
+      },
     })
   )
   async uploadProfileImage(
@@ -82,6 +96,11 @@ export class MediaController {
           return res
             .status(HttpStatus.BAD_REQUEST)
             .json({ error: "MEDIA_FILE_REQUIRED" });
+        }
+        if (error.message === "UNSUPPORTED_MEDIA_TYPE") {
+          return res
+            .status(HttpStatus.BAD_REQUEST)
+            .json({ error: "UNSUPPORTED_MEDIA_TYPE" });
         }
         return this.sendAuthError(res, error);
       }

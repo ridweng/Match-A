@@ -14,6 +14,8 @@ async function main() {
   await goalsService.seedCatalog();
 
   if ((process.env.NODE_ENV || "development") !== "production") {
+    const defaultEmail = String(process.env.SEED_DEFAULT_EMAIL || "").trim();
+    const defaultPassword = String(process.env.SEED_DEFAULT_PASSWORD || "");
     const emailServiceStub = {
       sendWelcomeEmail: async () => undefined,
       sendVerificationEmail: async () => undefined,
@@ -26,8 +28,13 @@ async function main() {
         logOnly: true,
       }),
     } as unknown as EmailService;
-    const authService = new AuthService(goalsService, emailServiceStub);
-    await authService.ensureDefaultAccount();
+    if (defaultEmail && defaultPassword) {
+      const authService = new AuthService(goalsService, emailServiceStub);
+      await authService.ensureDefaultAccount({
+        email: defaultEmail,
+        password: defaultPassword,
+      });
+    }
   }
 
   console.log("[api-server] seed complete");

@@ -91,9 +91,8 @@ export type AuthCallbackPayload = {
   status?: string;
   provider?: AuthCallbackProvider | string;
   code?: string;
+  handoffCode?: string;
   message?: string;
-  accessToken?: string;
-  refreshToken?: string;
   needsProfileCompletion: boolean;
   email?: string;
 };
@@ -402,10 +401,15 @@ export type ServerHealthCheckResult = {
   checkedAt: string;
 };
 
-const DEMO_EMAIL = "test@gmail.com";
-const DEMO_PASSWORD = "test";
-const DEMO_ACCESS_TOKEN = "demo-access-token";
-const DEMO_REFRESH_TOKEN = "demo-refresh-token";
+const DEMO_AUTH_ENABLED =
+  process.env.NODE_ENV !== "production" &&
+  process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
+const DEMO_EMAIL = (
+  process.env.EXPO_PUBLIC_DEMO_EMAIL || "demo@example.invalid"
+).trim().toLowerCase();
+const DEMO_PASSWORD = process.env.EXPO_PUBLIC_DEMO_PASSWORD || "";
+const DEMO_ACCESS_TOKEN = `demo-access-${Math.random().toString(36).slice(2)}`;
+const DEMO_REFRESH_TOKEN = `demo-refresh-${Math.random().toString(36).slice(2)}`;
 const DEMO_USER: AuthUser = {
   id: 1,
   email: DEMO_EMAIL,
@@ -559,13 +563,18 @@ class ApiError extends Error {
 
 function isDemoCredentials(input: { email: string; password: string }) {
   return (
+    DEMO_AUTH_ENABLED &&
+    DEMO_PASSWORD.length > 0 &&
     input.email.trim().toLowerCase() === DEMO_EMAIL &&
     input.password === DEMO_PASSWORD
   );
 }
 
 function isDemoToken(token: string | null | undefined) {
-  return token === DEMO_ACCESS_TOKEN || token === DEMO_REFRESH_TOKEN;
+  return (
+    DEMO_AUTH_ENABLED &&
+    (token === DEMO_ACCESS_TOKEN || token === DEMO_REFRESH_TOKEN)
+  );
 }
 
 function getBaseUrl() {
@@ -796,9 +805,8 @@ function parseAuthCallbackUrl(url: string) {
     status: query.status,
     provider: query.provider,
     code: query.code,
+    handoffCode: query.handoffCode,
     message: query.message,
-    accessToken: query.accessToken,
-    refreshToken: query.refreshToken,
     needsProfileCompletion: query.needsProfileCompletion === "true",
     email: query.email,
   } satisfies AuthCallbackPayload;
@@ -945,6 +953,13 @@ export async function refreshSession(
   return request<AuthSessionResponse>("/api/auth/refresh", {
     method: "POST",
     body: { refreshToken },
+  });
+}
+
+export async function exchangeSocialHandoffCode(code: string) {
+  return request<AuthSessionResponse>("/api/auth/social/exchange", {
+    method: "POST",
+    body: { code },
   });
 }
 
@@ -1843,20 +1858,11 @@ export async function signInWithProvider(
   }
 
   const callback = parseAuthCallbackUrl(result.url);
-  if (callback.status !== "success" || !callback.accessToken || !callback.refreshToken) {
+  if (callback.status !== "success" || !callback.handoffCode) {
     throw new ApiError(callback.code || "SOCIAL_AUTH_FAILED", callback.message);
   }
 
-  const me = await getMe(callback.accessToken);
-  return {
-    status: "authenticated" as const,
-    accessToken: callback.accessToken,
-    refreshToken: callback.refreshToken,
-    user: me.user,
-    needsProfileCompletion: me.needsProfileCompletion,
-    onboardingState: me.onboardingState,
-    hasCompletedOnboarding: me.hasCompletedOnboarding,
-  };
+  return exchangeSocialHandoffCode(callback.handoffCode);
 }
 
 export function extractAuthCallback(url: string) {

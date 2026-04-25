@@ -33,6 +33,7 @@
     "docker:aws:logs": "docker compose --env-file .env -f docker-compose.aws.yml logs -f api",
     "docker:aws:ps": "docker compose --env-file .env -f docker-compose.aws.yml ps",
     "docker:aws:down": "docker compose --env-file .env -f docker-compose.aws.yml down",
+    "security:secrets": "sh scripts/secret-scan.sh",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
