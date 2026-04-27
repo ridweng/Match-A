@@ -10,12 +10,30 @@ services:
       - "5432:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - matcha_internal
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - matcha_internal
 
   mailpit:
     image: axllent/mailpit:v1.20
     ports:
       - "1025:1025"
       - "8025:8025"
+    networks:
+      - matcha_internal
 
   api:
     build:
@@ -23,6 +41,7 @@ services:
       dockerfile: artifacts/api-server/Dockerfile
     depends_on:
       - postgres
+      - redis
       - mailpit
     ports:
       - "8082:8082"
@@ -45,6 +64,10 @@ services:
       AUTH_EMAIL_VERIFICATION_TTL_MINUTES: ${AUTH_EMAIL_VERIFICATION_TTL_MINUTES:-1440}
       AUTH_PASSWORD_RESET_URL_BASE: ${AUTH_PASSWORD_RESET_URL_BASE}
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RATE_LIMIT_REDIS_ENABLED: ${RATE_LIMIT_REDIS_ENABLED:-true}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_DEFAULT_TTL_SECONDS: ${CACHE_DEFAULT_TTL_SECONDS:-60}
       SMTP_ENABLED: ${SMTP_ENABLED:-true}
       EMAIL_LOG_ONLY: ${EMAIL_LOG_ONLY:-false}
       SMTP_HOST: ${SMTP_HOST:-mailpit}
@@ -66,3 +89,9 @@ services:
       sh -lc "pnpm db:migrate &&
       pnpm db:seed &&
       node artifacts/api-server/dist/index.cjs"
+    networks:
+      - matcha_internal
+
+networks:
+  matcha_internal:
+    internal: true

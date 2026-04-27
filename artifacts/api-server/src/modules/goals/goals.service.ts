@@ -1,5 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { CacheService } from "../cache/cache.service";
+import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { cacheKeys } from "../cache/cache.keys";
 import { rebuildDiscoveryProjectionsForActor } from "../discovery/discovery.projections";
 import {
   DEFAULT_GOAL_TEMPLATES,
@@ -121,6 +124,8 @@ type GoalsUnlockState = {
 @Injectable()
 export class GoalsService {
   private readonly thresholdDefault = 30;
+
+  constructor(private readonly cacheService: CacheService) {}
 
   private toIsoTimestamp(input: string | Date | null | undefined) {
     if (!input) {
@@ -292,7 +297,7 @@ export class GoalsService {
   }
 
   async markGoalsUnlockSeen(userId: number, client?: DbClient) {
-    return this.withClient(client, async (dbClient) => {
+    const result = await this.withClient(client, async (dbClient) => {
       await dbClient.query(
         `UPDATE goals.user_unlock_state
          SET goals_unlock_message_seen_at = COALESCE(goals_unlock_message_seen_at, NOW()),
@@ -303,6 +308,10 @@ export class GoalsService {
 
       return this.getGoalsUnlockState(userId, dbClient, { justUnlocked: false });
     });
+    if (!client) {
+      await this.invalidateUserGoalCaches(userId);
+    }
+    return result;
   }
 
   private async findProfileId(userId: number, client: DbClient) {
@@ -1236,6 +1245,17 @@ export class GoalsService {
   }
 
   async getUserGoals(userId: number, client?: DbClient) {
+    if (!client) {
+      return this.cacheService.getOrSet(
+        cacheKeys.goals(userId),
+        CACHE_TTL_SECONDS.goals,
+        () => this.loadUserGoals(userId)
+      );
+    }
+    return this.loadUserGoals(userId, client);
+  }
+
+  private async loadUserGoals(userId: number, client?: DbClient) {
     return this.withClient(client, async (dbClient) => {
       const result = await dbClient.query<GoalTaskViewRow>(
         `SELECT
@@ -1294,6 +1314,7 @@ export class GoalsService {
         await this.rebuildUserProgress(userId, dbClient);
         const nextGoals = await this.getUserGoals(userId, dbClient);
         await dbClient.query("COMMIT");
+        await this.invalidateUserGoalCaches(userId);
         return nextGoals;
       } catch (error) {
         await dbClient.query("ROLLBACK");
@@ -1373,11 +1394,21 @@ export class GoalsService {
         await this.rebuildUserProgress(userId, dbClient);
         const nextGoals = await this.getUserGoals(userId, dbClient);
         await dbClient.query("COMMIT");
+        await this.invalidateUserGoalCaches(userId);
         return nextGoals;
       } catch (error) {
         await dbClient.query("ROLLBACK");
         throw error;
       }
     });
+  }
+
+  private async invalidateUserGoalCaches(userId: number) {
+    await Promise.all([
+      this.cacheService.delete(cacheKeys.goals(userId)),
+      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+    ]);
   }
 }

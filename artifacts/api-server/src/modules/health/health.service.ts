@@ -1,8 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { CacheService } from "../cache/cache.service";
 
 export type ReadinessStatus = {
   dbConnected: boolean;
+  cache: ReturnType<CacheService["getStatus"]>;
   missingRelations: string[];
   missingColumns: string[];
   seededCategoryCount: number;
@@ -44,8 +46,16 @@ const REQUIRED_COLUMNS = [
 
 @Injectable()
 export class HealthService {
+  constructor(
+    @Inject(CacheService) private readonly cacheService: CacheService
+  ) {}
+
   async checkLiveness() {
     return { status: "ok" as const };
+  }
+
+  getCacheStatus() {
+    return this.cacheService.getStatus();
   }
 
   async checkSchemaStatus() {
@@ -116,6 +126,7 @@ export class HealthService {
 
     return {
       dbConnected: true,
+      cache: this.cacheService.getStatus(),
       missingRelations,
       missingColumns,
       seededCategoryCount,

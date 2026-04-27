@@ -1,5 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { CacheService } from "../cache/cache.service";
+import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { cacheKeys } from "../cache/cache.keys";
 
 type TableRole = "source" | "projection" | "ops";
 type EdgeType = "fk" | "flow";
@@ -636,6 +639,22 @@ const CURATED_FLOW_EDGES: DatabaseGraphEdge[] = [
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(private readonly cacheService: CacheService) {}
+
+  private async measure<T>(name: string, callback: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await callback();
+    } finally {
+      const durationMs = Date.now() - startedAt;
+      if (durationMs >= 250) {
+        this.logger.log(`[admin-metrics] ${JSON.stringify({ name, durationMs })}`);
+      }
+    }
+  }
+
   private relationNameFromKey(key: DatabaseTableKey) {
     return key;
   }
@@ -1275,7 +1294,19 @@ export class AdminService {
     return warnings;
   }
 
-  async getDatabaseView(): Promise<DatabaseView> {
+  async getDatabaseView(options?: { bypassCache?: boolean }): Promise<DatabaseView> {
+    if (options?.bypassCache) {
+      return this.loadDatabaseView();
+    }
+    return this.cacheService.getOrSet(
+      cacheKeys.adminDatabaseView(),
+      CACHE_TTL_SECONDS.adminMetrics,
+      () => this.loadDatabaseView()
+    );
+  }
+
+  private async loadDatabaseView(): Promise<DatabaseView> {
+    return this.measure("database-view", async () => {
     const keys = APPROVED_TABLE_SPECS.map((spec) => spec.key);
     const presentRelations = await this.loadPresentRelations(keys);
     const missingRequiredRelations = APPROVED_TABLE_SPECS.filter(
@@ -1311,9 +1342,29 @@ export class AdminService {
       metricGroups,
       tableStats,
     };
+    });
   }
 
-  async getOverview(filters?: OverviewFilters): Promise<OverviewView> {
+  async getOverview(
+    filters?: OverviewFilters,
+    options?: { bypassCache?: boolean }
+  ): Promise<OverviewView> {
+    const normalizedFilters = {
+      timeframe: this.normalizeOverviewTimeframe(filters?.timeframe),
+      country: this.normalizeOverviewCountry(filters?.country),
+    };
+    if (options?.bypassCache) {
+      return this.loadOverview(normalizedFilters);
+    }
+    return this.cacheService.getOrSet(
+      cacheKeys.adminOverview(normalizedFilters),
+      CACHE_TTL_SECONDS.adminMetrics,
+      () => this.loadOverview(normalizedFilters)
+    );
+  }
+
+  private async loadOverview(filters: OverviewFilters): Promise<OverviewView> {
+    return this.measure("overview", async () => {
     const repairedBackfillCount = await this.repairLegacyActivatedUsers();
     const normalizedTimeframe = this.normalizeOverviewTimeframe(filters?.timeframe);
     const selectedTimeframe = normalizedTimeframe;
@@ -1690,9 +1741,42 @@ export class AdminService {
         "media tables attach uploaded assets to profiles but do not drive discovery/goals projections directly.",
       ],
     };
+    });
   }
 
-  async getUsers(filters?: UserListFilters) {
+  async getUsers(filters?: UserListFilters, options?: { bypassCache?: boolean }) {
+    const normalizedFilters = this.normalizeUserFilters(filters);
+    if (options?.bypassCache) {
+      return this.loadUsers(normalizedFilters);
+    }
+    return this.cacheService.getOrSet(
+      cacheKeys.adminUsers(normalizedFilters),
+      CACHE_TTL_SECONDS.adminMetrics,
+      () => this.loadUsers(normalizedFilters)
+    );
+  }
+
+  private normalizeUserFilters(filters?: UserListFilters): UserListFilters {
+    return {
+      q: String(filters?.q || "").trim(),
+      kind: filters?.kind === "user" || filters?.kind === "dummy" ? filters.kind : "all",
+      activation:
+        filters?.activation === "activated" || filters?.activation === "not_activated"
+          ? filters.activation
+          : "all",
+      genderIdentity: String(filters?.genderIdentity || "").trim(),
+      syntheticGroup: String(filters?.syntheticGroup || "").trim(),
+      dummyBatchKey: String(filters?.dummyBatchKey || "").trim(),
+      generationVersion:
+        typeof filters?.generationVersion === "number" &&
+        Number.isFinite(filters.generationVersion)
+          ? filters.generationVersion
+          : null,
+    };
+  }
+
+  private async loadUsers(filters?: UserListFilters) {
+    return this.measure("users", async () => {
     await this.repairLegacyActivatedUsers();
     const normalizedSearch = `%${String(filters?.q || "").trim().toLowerCase()}%`;
     const hasSearch = Boolean(String(filters?.q || "").trim());
@@ -1818,9 +1902,22 @@ export class AdminService {
     );
 
     return result.rows;
+    });
   }
 
-  async getUserFilterOptions(): Promise<UserFilterOptions> {
+  async getUserFilterOptions(options?: { bypassCache?: boolean }): Promise<UserFilterOptions> {
+    if (options?.bypassCache) {
+      return this.loadUserFilterOptions();
+    }
+    return this.cacheService.getOrSet(
+      cacheKeys.adminUserFilterOptions(),
+      CACHE_TTL_SECONDS.adminMetrics,
+      () => this.loadUserFilterOptions()
+    );
+  }
+
+  private async loadUserFilterOptions(): Promise<UserFilterOptions> {
+    return this.measure("user-filter-options", async () => {
     const [genderResult, syntheticGroupResult, batchResult, generationResult] =
       await Promise.all([
         pool.query<{ value: string }>(
@@ -1857,6 +1954,7 @@ export class AdminService {
         .map((row) => Number(row.value))
         .filter((value) => Number.isFinite(value)),
     };
+    });
   }
 
   async getUserDetail(identifier: string) {

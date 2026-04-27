@@ -680,7 +680,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     
     if (isDiscoveryDecision && options.method === "POST") {
       const payload = options.body as any;
-      console.log("[api] [request] discovery decision request", {
+      debugDiscoveryLog("api_decision_request", {
         path,
         method: options.method,
         action: payload?.action,
@@ -748,7 +748,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const latencyMs = Date.now() - requestStartedAt;
   
   if (!response.ok) {
-    console.log("[api] request error response", {
+    debugLog("[api] request error response", {
       path,
       status: response.status,
       error: data.error,
@@ -758,7 +758,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     
     if (isDiscoveryDecision) {
       const payload = options.body as any;
-      console.log("[api] [response] discovery decision failed", {
+      debugDiscoveryLog("api_decision_failed", {
         path,
         status: response.status,
         latencyMs,
@@ -782,7 +782,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   
   if (isDiscoveryDecision) {
     const payload = options.body as any;
-    console.log("[api] [response] discovery decision success", {
+    debugDiscoveryLog("api_decision_success", {
       path,
       status: response.status,
       latencyMs,
@@ -1423,7 +1423,7 @@ export async function refreshDiscoveryFeed(
   const windowPath = `/api/discovery/window${
     limit ? `?size=${encodeURIComponent(String(limit))}` : ""
   }`;
-  console.log("[api] requesting discovery window", {
+  debugDiscoveryLog("api_discovery_window_request", {
     path: windowPath,
     limit: limit ?? null,
     requestId: options.headers?.["X-Matcha-Request-Id"] ?? null,
@@ -1434,7 +1434,7 @@ export async function refreshDiscoveryFeed(
     headers: options.headers,
   });
 
-  console.log("[api] discovery window loaded", {
+  debugDiscoveryLog("api_discovery_window_loaded", {
     path: windowPath,
     queueVersion: response.queueVersion ?? null,
     policyVersion: response.policyVersion ?? null,
@@ -1488,7 +1488,7 @@ export async function likeDiscoveryProfile(
   accessToken: string,
   payload: Omit<DiscoveryDecisionRequestPayload, "action">
 ): Promise<DiscoveryLikeResponse> {
-  console.log("[api] sending decision to server", {
+  debugDiscoveryLog("api_like_decision_send", {
     action: "like",
     targetProfileId: payload.targetProfileId,
     targetProfilePublicId: payload.targetProfilePublicId ?? null,
@@ -1624,7 +1624,7 @@ export async function passDiscoveryProfile(
   accessToken: string,
   payload: Omit<DiscoveryDecisionRequestPayload, "action">
 ): Promise<DiscoveryLikeResponse> {
-  console.log("[api] sending decision to server", {
+  debugDiscoveryLog("api_pass_decision_send", {
     action: "pass",
     targetProfileId: payload.targetProfileId,
     targetProfilePublicId: payload.targetProfilePublicId ?? null,

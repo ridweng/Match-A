@@ -268,6 +268,11 @@ export const profilesTable = coreSchema.table(
   (table) => ({
     publicIdUnique: uniqueIndex("core_profiles_public_id_unique").on(table.publicId),
     userIdUnique: uniqueIndex("core_profiles_user_id_unique").on(table.userId),
+    kindDiscoverableIndex: index("core_profiles_kind_discoverable_idx").on(
+      table.kind,
+      table.isDiscoverable,
+      table.id
+    ),
   })
 );
 
@@ -454,17 +459,28 @@ export const profileCategoryValuesTable = coreSchema.table(
   })
 );
 
-export const profileDummyMetadataTable = coreSchema.table("profile_dummy_metadata", {
-  profileId: bigint("profile_id", { mode: "number" })
-    .primaryKey()
-    .references(() => profilesTable.id, { onDelete: "cascade" }),
-  dummyBatchKey: varchar("dummy_batch_key", { length: 64 }).notNull(),
-  syntheticGroup: varchar("synthetic_group", { length: 32 }).notNull(),
-  syntheticVariant: varchar("synthetic_variant", { length: 64 }).notNull(),
-  generationVersion: integer("generation_version").notNull().default(1),
-  seedSource: varchar("seed_source", { length: 64 }).notNull().default("seed"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const profileDummyMetadataTable = coreSchema.table(
+  "profile_dummy_metadata",
+  {
+    profileId: bigint("profile_id", { mode: "number" })
+      .primaryKey()
+      .references(() => profilesTable.id, { onDelete: "cascade" }),
+    dummyBatchKey: varchar("dummy_batch_key", { length: 64 }).notNull(),
+    syntheticGroup: varchar("synthetic_group", { length: 32 }).notNull(),
+    syntheticVariant: varchar("synthetic_variant", { length: 64 }).notNull(),
+    generationVersion: integer("generation_version").notNull().default(1),
+    seedSource: varchar("seed_source", { length: 64 }).notNull().default("seed"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    dummyBatchGenerationIndex: index(
+      "core_profile_dummy_metadata_batch_generation_idx"
+    ).on(table.dummyBatchKey, table.generationVersion),
+    dummySyntheticGroupIndex: index("core_profile_dummy_metadata_group_idx").on(
+      table.syntheticGroup
+    ),
+  })
+);
 
 export const goalCategoriesTable = catalogSchema.table(
   "goal_categories",
@@ -710,20 +726,28 @@ export const userCategoryTargetProgressTable = goalsSchema.table(
   })
 );
 
-export const userGoalProjectionMetaTable = goalsSchema.table("user_goal_projection_meta", {
-  userId: bigint("user_id", { mode: "number" })
-    .primaryKey()
-    .references(() => usersTable.id, { onDelete: "cascade" }),
-  lastSourceEventId: bigint("last_source_event_id", { mode: "number" }).references(
-    () => profileInteractionsTable.id,
-    { onDelete: "set null" }
-  ),
-  lastRecomputedAt: timestamp("last_recomputed_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  lastRuleVersion: integer("last_rule_version").notNull().default(1),
-  rebuildStatus: varchar("rebuild_status", { length: 32 }).notNull().default("ready"),
-});
+export const userGoalProjectionMetaTable = goalsSchema.table(
+  "user_goal_projection_meta",
+  {
+    userId: bigint("user_id", { mode: "number" })
+      .primaryKey()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    lastSourceEventId: bigint("last_source_event_id", { mode: "number" }).references(
+      () => profileInteractionsTable.id,
+      { onDelete: "set null" }
+    ),
+    lastRecomputedAt: timestamp("last_recomputed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastRuleVersion: integer("last_rule_version").notNull().default(1),
+    rebuildStatus: varchar("rebuild_status", { length: 32 }).notNull().default("ready"),
+  },
+  (table) => ({
+    projectionStatusRecomputedIndex: index(
+      "goals_user_goal_projection_meta_status_recomputed_idx"
+    ).on(table.rebuildStatus, table.lastRecomputedAt),
+  })
+);
 
 export const userUnlockStateTable = goalsSchema.table("user_unlock_state", {
   userId: bigint("user_id", { mode: "number" })
@@ -782,6 +806,9 @@ export const profileInteractionsTable = discoverySchema.table(
     profileInteractionActorCreatedIndex: index(
       "discovery_profile_interactions_actor_created_idx"
     ).on(table.actorProfileId, table.createdAt),
+    profileInteractionCreatedTypeActorIndex: index(
+      "discovery_profile_interactions_created_type_actor_idx"
+    ).on(table.createdAt, table.interactionType, table.actorProfileId),
   })
 );
 
@@ -1048,6 +1075,11 @@ export const mediaAssetsTable = mediaSchema.table(
   (table) => ({
     mediaStorageKeyUnique: uniqueIndex("media_assets_storage_key_unique").on(
       table.storageKey
+    ),
+    mediaOwnerStatusUpdatedIndex: index("media_assets_owner_status_updated_idx").on(
+      table.ownerProfileId,
+      table.status,
+      table.updatedAt
     ),
   })
 );

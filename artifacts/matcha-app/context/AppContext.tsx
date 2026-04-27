@@ -3192,7 +3192,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (recoveryEmail) {
         try {
           await authResendVerificationEmail(recoveryEmail);
-          console.log("[onboarding-auth] verification_resend_requested", {
+          debugLog("[onboarding-auth] verification_resend_requested", {
             requestId: requestId || null,
             email: recoveryEmail,
           });
@@ -3261,7 +3261,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           throw error;
         }
 
-        console.log("[onboarding-auth] session_refresh_started", {
+        debugLog("[onboarding-auth] session_refresh_started", {
           requestId: requestId || null,
           label,
           error: error.code,
@@ -3281,7 +3281,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await applySession(refreshedSession, {
             restoreOnboardingDraft: true,
           });
-          console.log("[onboarding-auth] session_refresh_succeeded", {
+          debugLog("[onboarding-auth] session_refresh_succeeded", {
             requestId: requestId || null,
             label,
             userId: refreshedSession.user.id,
@@ -4834,7 +4834,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const requestId = createOnboardingAttemptId();
       setAuthBusy(true);
       setAuthError(null);
-      console.log("[onboarding-auth] onboarding_submit_started", {
+      debugLog("[onboarding-auth] onboarding_submit_started", {
         requestId,
         hasPhotos: data.photos.length > 0,
       });
@@ -4876,7 +4876,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
 
         await clearOnboardingResumeState();
-        console.log("[onboarding-auth] onboarding_complete_succeeded", {
+        debugLog("[onboarding-auth] onboarding_complete_succeeded", {
           requestId,
         });
         return true;
@@ -5867,7 +5867,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           requestId: string;
           targetProfileId: number;
         } | null;
-        console.log("[decision] response match check", {
+        debugLog("[decision] response match check", {
           pendingRequestId: currentPendingDecision?.requestId,
           responseRequestId,
           pendingTargetId: currentPendingDecision?.targetProfileId,
@@ -6021,7 +6021,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           requestId: responseRequestId,
         };
       } catch (error: any) {  
-        console.log("[decision] CATCH BLOCK HIT", {
+        debugLog("[decision] CATCH BLOCK HIT", {
           errorCode: error?.code,
           errorMessage: error?.message,
           errorStatus: error?.status,
@@ -6251,7 +6251,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       profile: Pick<DiscoveryFeedProfileResponse, "id" | "publicId" | "categoryValues">,
       options?: DiscoveryDecisionOptions
     ) => {
-      console.log("[decision] submitDiscoveryDecision called", {
+      debugLog("[decision] submitDiscoveryDecision called", {
         action,
         hasAccessToken: Boolean(accessToken),
         isOnline: isOnlineRef.current,

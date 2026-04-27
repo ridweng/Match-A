@@ -1,6 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { AuthService } from "../auth/auth.service";
+import { CacheService } from "../cache/cache.service";
+import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { cacheKeys } from "../cache/cache.keys";
 import { DiscoveryService } from "../discovery/discovery.service";
 import { GoalsService } from "../goals/goals.service";
 import { MediaService } from "../media/media.service";
@@ -44,7 +47,8 @@ export class ViewerService {
     @Inject(AuthService) private readonly authService: AuthService,
     @Inject(GoalsService) private readonly goalsService: GoalsService,
     @Inject(DiscoveryService) private readonly discoveryService: DiscoveryService,
-    @Inject(MediaService) private readonly mediaService: MediaService
+    @Inject(MediaService) private readonly mediaService: MediaService,
+    @Inject(CacheService) private readonly cacheService: CacheService
   ) {}
 
   private async hasProfileCountryColumn() {
@@ -267,7 +271,16 @@ export class ViewerService {
     };
   }
 
-  async getProfile(userId: number) {
+  private async invalidateViewerCaches(userId: number) {
+    await Promise.all([
+      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
+      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+      this.cacheService.delete(cacheKeys.goals(userId)),
+      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+    ]);
+  }
+
+  private async loadProfile(userId: number) {
     const profileId = await this.findProfileId(userId);
     const hasProfileCountryColumn = await this.hasProfileCountryColumn();
     const [profileResult, languagesSpoken, interests, photos] = await Promise.all([
@@ -319,6 +332,14 @@ export class ViewerService {
         photos: photos.photos,
       }),
     };
+  }
+
+  async getProfile(userId: number) {
+    return this.cacheService.getOrSet(
+      cacheKeys.viewerProfile(userId),
+      CACHE_TTL_SECONDS.viewerProfile,
+      () => this.loadProfile(userId)
+    );
   }
 
   async updateProfile(
@@ -565,6 +586,7 @@ export class ViewerService {
       }
 
       await client.query("COMMIT");
+      await this.invalidateViewerCaches(userId);
       if (isLocationSyncOnly) {
         this.logger.log(
           `[viewer-location-sync-committed] ${JSON.stringify({
@@ -607,7 +629,7 @@ export class ViewerService {
     }
   }
 
-  async getBootstrap(userId: number) {
+  private async loadBootstrap(userId: number) {
     const user = await this.authService.findUserById(userId);
     if (!user) {
       throw new Error("USER_NOT_FOUND");
@@ -661,5 +683,13 @@ export class ViewerService {
       viewerVersion: freshness.viewerVersion,
       updatedAtByDomain: freshness.updatedAtByDomain,
     };
+  }
+
+  async getBootstrap(userId: number) {
+    return this.cacheService.getOrSet(
+      cacheKeys.viewerBootstrap(userId),
+      CACHE_TTL_SECONDS.viewerBootstrap,
+      () => this.loadBootstrap(userId)
+    );
   }
 }

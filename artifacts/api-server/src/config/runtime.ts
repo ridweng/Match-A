@@ -17,6 +17,8 @@ export const runtimeConfig = {
   },
   rateLimit: {
     generalMax: env.RATE_LIMIT_GENERAL_MAX,
+    redisEnabled: env.RATE_LIMIT_REDIS_ENABLED,
+    redisUrl: env.REDIS_URL,
   },
   frontendRedirectUri: env.AUTH_FRONTEND_REDIRECT_URI,
   minimumAge: env.AUTH_MINIMUM_AGE,

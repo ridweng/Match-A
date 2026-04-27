@@ -90,6 +90,10 @@ const envSchema = z
     CORS_ALLOWED_ORIGINS: csvSchema.default(""),
     ADMIN_CORS_ALLOWED_ORIGINS: csvSchema.default(""),
     RATE_LIMIT_GENERAL_MAX: integerLikeSchema.default(300),
+    RATE_LIMIT_REDIS_ENABLED: booleanLikeSchema.default(false),
+    REDIS_URL: z.string().trim().default(""),
+    CACHE_ENABLED: booleanLikeSchema.default(false),
+    CACHE_DEFAULT_TTL_SECONDS: integerLikeSchema.default(60),
     AUTH_FRONTEND_REDIRECT_URI: z
       .string()
       .trim()
@@ -321,6 +325,11 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     CORS_ALLOWED_ORIGINS: env.CORS_ALLOWED_ORIGINS ?? "",
     ADMIN_CORS_ALLOWED_ORIGINS: env.ADMIN_CORS_ALLOWED_ORIGINS ?? "",
     RATE_LIMIT_GENERAL_MAX: env.RATE_LIMIT_GENERAL_MAX ?? "300",
+    RATE_LIMIT_REDIS_ENABLED:
+      env.RATE_LIMIT_REDIS_ENABLED ?? (env.REDIS_URL ? "true" : "false"),
+    REDIS_URL: env.REDIS_URL ?? "",
+    CACHE_ENABLED: env.CACHE_ENABLED ?? (env.REDIS_URL ? "true" : "false"),
+    CACHE_DEFAULT_TTL_SECONDS: env.CACHE_DEFAULT_TTL_SECONDS ?? "60",
     AUTH_FRONTEND_REDIRECT_URI:
       env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",
     AUTH_SESSION_SECRET:

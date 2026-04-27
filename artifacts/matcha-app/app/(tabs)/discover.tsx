@@ -1318,7 +1318,12 @@ export default function DiscoverScreen() {
 
   const swipeRight = useCallback(
     (origin: SwipeCommitOrigin = "button") => {
-      console.log("[swipe] swipeRight called", { canInteract, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating });
+      debugDiscoveryLog("swipe_right_called", {
+        canInteract,
+        frontProfile: frontProfile?.id,
+        logicalActiveProfileId,
+        isDeckAnimating,
+      });
       return commitDiscoverySwipe("right", origin);
     },
     [commitDiscoverySwipe, canInteract, frontProfile?.id, logicalActiveProfileId, isDeckAnimating],
@@ -1326,7 +1331,12 @@ export default function DiscoverScreen() {
 
   const swipeLeft = useCallback(
     (origin: SwipeCommitOrigin = "button") => {
-      console.log("[swipe] swipeLeft called", { canInteract, frontProfile: frontProfile?.id, logicalActiveProfileId, isDeckAnimating });
+      debugDiscoveryLog("swipe_left_called", {
+        canInteract,
+        frontProfile: frontProfile?.id,
+        logicalActiveProfileId,
+        isDeckAnimating,
+      });
       return commitDiscoverySwipe("left", origin);
     },
     [commitDiscoverySwipe, canInteract, frontProfile?.id, logicalActiveProfileId, isDeckAnimating],

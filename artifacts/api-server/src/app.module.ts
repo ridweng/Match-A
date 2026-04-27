@@ -6,6 +6,7 @@ import { emailConfig } from "./config/email.config";
 import { validateApiEnv } from "./config/env.schema";
 import { AdminModule } from "./modules/admin/admin.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { CacheModule } from "./modules/cache/cache.module";
 import { DiscoveryModule } from "./modules/discovery/discovery.module";
 import { EmailModule } from "./modules/email/email.module";
 import { GoalsModule } from "./modules/goals/goals.module";
@@ -21,6 +22,7 @@ import { ViewerModule } from "./modules/viewer/viewer.module";
       load: [appConfig, authConfig, emailConfig],
       validate: validateApiEnv,
     }),
+    CacheModule,
     AdminModule,
     HealthModule,
     GoalsModule,

@@ -1,6 +1,9 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { runtimeConfig } from "../../config/runtime";
+import { CacheService } from "../cache/cache.service";
+import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { cacheKeys } from "../cache/cache.keys";
 import {
   diffPopularAttributeSnapshots,
   normalizePopularAttributeInput,
@@ -260,7 +263,10 @@ export class DiscoveryService {
 
   private readonly logger = new Logger(DiscoveryService.name);
 
-  constructor(@Inject(GoalsService) private readonly goalsService: GoalsService) {}
+  constructor(
+    @Inject(GoalsService) private readonly goalsService: GoalsService,
+    @Inject(CacheService) private readonly cacheService: CacheService
+  ) {}
 
   private logDecisionEvent(event: string, payload: Record<string, unknown>) {
     this.logger.log(`[discovery-decision] ${event} ${JSON.stringify(payload)}`);
@@ -574,6 +580,15 @@ export class DiscoveryService {
       ageMin: filters.ageMin,
       ageMax: filters.ageMax,
     });
+  }
+
+  private async invalidateDiscoveryCaches(userId: number, actorProfileId: number) {
+    await Promise.all([
+      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+      this.cacheService.delete(cacheKeys.goals(userId)),
+      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+    ]);
   }
 
   private normalizeProfileId(value: string | number | null | undefined): number | null {
@@ -1525,6 +1540,14 @@ export class DiscoveryService {
   }
 
   async getPreferences(userId: number) {
+    return this.cacheService.getOrSet(
+      cacheKeys.discoveryPreferences(userId),
+      CACHE_TTL_SECONDS.discoveryPreferences,
+      () => this.loadPreferences(userId)
+    );
+  }
+
+  private async loadPreferences(userId: number) {
     const actorProfileId = await this.findActorProfileId(userId);
     const client = await pool.connect();
     try {
@@ -1569,6 +1592,7 @@ export class DiscoveryService {
       })}`
     );
 
+    await this.invalidateDiscoveryCaches(userId, actorProfileId);
     return this.getPreferences(userId);
   }
 
@@ -1639,6 +1663,7 @@ export class DiscoveryService {
         })),
       };
       await client.query("COMMIT");
+      await this.invalidateDiscoveryCaches(userId, actorProfileId);
       return preferences;
     } catch (error) {
       await client.query("ROLLBACK");
@@ -1845,6 +1870,7 @@ export class DiscoveryService {
             replacementProfileId: replacement.replacementProfile?.id ?? null,
           });
           await client.query("COMMIT");
+          await this.invalidateDiscoveryCaches(userId, actorProfileId);
           this.logQueueEvent("decision_response", {
             actorId: actorProfileId,
             requestId: normalizedRequestId,
@@ -1937,6 +1963,7 @@ export class DiscoveryService {
           replacementProfileId: replacement.replacementProfile?.id ?? null,
         });
         await client.query("COMMIT");
+        await this.invalidateDiscoveryCaches(userId, actorProfileId);
         this.logQueueEvent("decision_response", {
           actorId: actorProfileId,
           requestId: normalizedRequestId,
@@ -2119,6 +2146,7 @@ export class DiscoveryService {
       });
 
       await client.query("COMMIT");
+      await this.invalidateDiscoveryCaches(userId, actorProfileId);
       this.logQueueEvent("decision_response", {
         actorId: actorProfileId,
         requestId: normalizedRequestId,

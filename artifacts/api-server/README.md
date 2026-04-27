@@ -100,12 +100,19 @@ DB_ADMIN_DB=postgres
 Optional:
 
 - SMTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
+- Redis: `REDIS_URL`, `RATE_LIMIT_REDIS_ENABLED`, `CACHE_ENABLED`, `CACHE_DEFAULT_TTL_SECONDS`
 - Social auth:
   - Google: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   - Facebook: `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`
   - Apple: `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`, `APPLE_SERVICE_ID`
 
 `INSTALL=true` only creates the database itself. It does not apply schema migrations or seed business data during API startup.
+
+## Redis fallback behavior
+
+Redis is optional and must stay on the private Docker network in production. When configured, the API uses it for distributed rate limiting and short-TTL read-model caching for admin metrics and safe per-user summaries. Redis is never the source of truth; Postgres remains authoritative for discovery queues, decisions, auth tokens, password reset tokens, email verification tokens, sessions, and all mutations.
+
+If `CACHE_ENABLED=false`, `RATE_LIMIT_REDIS_ENABLED=false`, `REDIS_URL` is blank, or Redis becomes unavailable, cache reads bypass Redis and rate limiting falls back to the existing Postgres counter table. The API should continue serving requests, with higher database load until Redis is restored.
 
 ## Database commands
 

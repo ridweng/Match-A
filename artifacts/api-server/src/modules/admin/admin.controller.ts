@@ -370,10 +370,15 @@ export class AdminController {
     @Req() req: Request,
     @Res() res: Response,
     @Query("timeframe") timeframe?: string,
-    @Query("country") country?: string
+    @Query("country") country?: string,
+    @Query("refresh") refresh?: string
   ) {
     if (!this.authorize(req, res)) return;
-    const overview = await this.adminService.getOverview({ timeframe, country });
+    const bypassCache = refresh === "1" || refresh === "true";
+    const overview = await this.adminService.getOverview(
+      { timeframe, country },
+      { bypassCache }
+    );
     const timeframeButtons = (Object.entries(OVERVIEW_TIMEFRAME_LABELS) as [
       OverviewTimeframe,
       string,
@@ -507,7 +512,7 @@ export class AdminController {
         `
           <h1>Matcha Admin</h1>
           <div class="actions">
-            <button class="button primary" onclick="window.location.reload()">Refresh</button>
+            <button class="button primary" onclick="const u=new URL(window.location.href);u.searchParams.set('refresh','1');window.location.href=u.toString()">Refresh</button>
             <a class="button" href="/api/admin/stats/overview${buildAdminQuery({
               timeframe: "1m",
               country: "all",
@@ -634,7 +639,8 @@ export class AdminController {
     @Query("genderIdentity") genderIdentity?: string,
     @Query("syntheticGroup") syntheticGroup?: string,
     @Query("dummyBatchKey") dummyBatchKey?: string,
-    @Query("generationVersion") generationVersion?: string
+    @Query("generationVersion") generationVersion?: string,
+    @Query("refresh") refresh?: string
   ) {
     if (!this.authorize(req, res)) return;
     const normalizedGenerationVersion = Number(generationVersion);
@@ -657,9 +663,10 @@ export class AdminController {
           ? normalizedGenerationVersion
           : null,
     } as const;
+    const bypassCache = refresh === "1" || refresh === "true";
     const [users, filterOptions] = await Promise.all([
-      this.adminService.getUsers(filters),
-      this.adminService.getUserFilterOptions(),
+      this.adminService.getUsers(filters, { bypassCache }),
+      this.adminService.getUserFilterOptions({ bypassCache }),
     ]);
 
     const genderOptions = [
@@ -713,7 +720,7 @@ export class AdminController {
         `
           <h1>Users</h1>
           <div class="actions">
-            <button class="button" onclick="window.location.reload()">Refresh</button>
+            <button class="button" onclick="const u=new URL(window.location.href);u.searchParams.set('refresh','1');window.location.href=u.toString()">Refresh</button>
           </div>
           <form method="get">
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
@@ -838,7 +845,7 @@ export class AdminController {
         `
           <h1>${escapeHtml(detail.profile.display_name || detail.profile.public_id)}</h1>
           <div class="actions">
-            <button class="button primary" onclick="window.location.reload()">Refresh</button>
+            <button class="button primary" onclick="const u=new URL(window.location.href);u.searchParams.set('refresh','1');window.location.href=u.toString()">Refresh</button>
             <a class="button" href="/api/admin/stats/users">Back to users</a>
           </div>
           <div class="meta">Last decision event: ${escapeHtml(
@@ -889,7 +896,8 @@ export class AdminController {
   async database(@Req() req: Request, @Res() res: Response) {
     if (!this.authorize(req, res)) return;
 
-    const view = await this.adminService.getDatabaseView();
+    const bypassCache = req.query.refresh === "1" || req.query.refresh === "true";
+    const view = await this.adminService.getDatabaseView({ bypassCache });
     const graphSize =
       req.query.graphSize === "wide" || req.query.graphSize === "current"
         ? (req.query.graphSize as DatabaseGraphSize)
@@ -999,7 +1007,7 @@ export class AdminController {
         `
           <h1>Database</h1>
           <div class="actions">
-            <button class="button primary" onclick="window.location.reload()">Refresh</button>
+            <button class="button primary" onclick="const u=new URL(window.location.href);u.searchParams.set('refresh','1');window.location.href=u.toString()">Refresh</button>
           </div>
           <div class="meta">Live DB-backed internal view of approved source/projection architecture. Each refresh reads current relation presence, current row counts, and current freshness directly from the database.</div>
           ${warningBanner}

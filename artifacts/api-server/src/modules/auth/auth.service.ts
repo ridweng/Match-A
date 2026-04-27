@@ -3,6 +3,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { CacheService } from "../cache/cache.service";
+import { cacheKeys } from "../cache/cache.keys";
 import { EmailDeliveryError } from "../email/email.types";
 import { EmailService } from "../email/email.service";
 import { GoalsService } from "../goals/goals.service";
@@ -96,7 +98,8 @@ export class AuthService {
 
   constructor(
     @Inject(GoalsService) private readonly goalsService: GoalsService,
-    @Inject(EmailService) private readonly emailService: EmailService
+    @Inject(EmailService) private readonly emailService: EmailService,
+    @Inject(CacheService) private readonly cacheService: CacheService
   ) {}
 
   private normalizeEmail(email: string) {
@@ -113,6 +116,16 @@ export class AuthService {
 
   private buildMediaAbsolutePath(storageKey: string) {
     return path.join(this.mediaRoot, storageKey);
+  }
+
+  private async invalidateUserStateCaches(userId: number) {
+    await Promise.all([
+      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
+      this.cacheService.delete(cacheKeys.goals(userId)),
+      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+    ]);
   }
 
   private randomToken() {
@@ -2187,6 +2200,7 @@ export class AuthService {
       }
     }
     const updatedUser = await this.updateUserProfile(auth.user.id, updates);
+    await this.invalidateUserStateCaches(auth.user.id);
     const user = (await this.ensureCanonicalOnboardingState(updatedUser)) || updatedUser;
     const snapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     const onboardingState = this.resolveCanonicalOnboardingStateFromSnapshot(
@@ -2211,6 +2225,7 @@ export class AuthService {
     });
     const beforeSnapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     const user = await this.completeUserOnboarding(auth.user.id);
+    await this.invalidateUserStateCaches(auth.user.id);
     const afterSnapshot = await this.getAuthUserSessionSnapshot(auth.user.id, auth.session.id);
     this.logAuthEvent("log", "onboarding_complete", {
       requestId: options?.requestId || null,
@@ -2252,6 +2267,7 @@ export class AuthService {
       source: "update_settings",
     });
     const settings = await this.upsertUserSettings(auth.user.id, updates);
+    await this.invalidateUserStateCaches(auth.user.id);
     return {
       settings: this.sanitizeSettings(settings),
     };

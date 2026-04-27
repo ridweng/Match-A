@@ -4,6 +4,9 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { runtimeConfig } from "../../config/runtime";
+import { CacheService } from "../cache/cache.service";
+import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { cacheKey, cacheKeys } from "../cache/cache.keys";
 
 type UploadedFile = {
   originalname: string;
@@ -33,6 +36,8 @@ const ALLOWED_IMAGE_MIME_TYPES = new Map([
 
 @Injectable()
 export class MediaService {
+  constructor(private readonly cacheService: CacheService) {}
+
   private readonly mediaRoot = path.join(
     process.cwd(),
     "artifacts",
@@ -112,6 +117,14 @@ export class MediaService {
   }
 
   async listProfileImagesByProfileId(profileId: number) {
+    return this.cacheService.getOrSet(
+      cacheKey("media", "profile-images", "profile", profileId),
+      CACHE_TTL_SECONDS.mediaMetadata,
+      () => this.loadProfileImagesByProfileId(profileId)
+    );
+  }
+
+  private async loadProfileImagesByProfileId(profileId: number) {
     const result = await pool.query<ProfilePhotoRow>(
       `SELECT
          pi.id AS profile_image_id,
@@ -241,6 +254,8 @@ export class MediaService {
         await rm(this.buildAbsolutePath(previousStorageKey), { force: true });
       }
 
+      await this.invalidateProfileImageCaches(userId, profileId);
+
       return {
         profileImageId: Number(profileImageInsert.rows[0].id),
         mediaAssetId,
@@ -295,6 +310,16 @@ export class MediaService {
     if (storageKey) {
       await rm(this.buildAbsolutePath(storageKey), { force: true });
     }
+    await this.invalidateProfileImageCaches(userId, profileId);
+  }
+
+  private async invalidateProfileImageCaches(userId: number, profileId: number) {
+    await Promise.all([
+      this.cacheService.delete(cacheKey("media", "profile-images", "profile", profileId)),
+      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
+      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+    ]);
   }
 
   async getPublicMediaFile(mediaAssetId: number) {

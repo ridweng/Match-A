@@ -81,6 +81,27 @@ function getRequestHost(req: Request) {
   return normalizeHostValue(forwardedHostHeader || hostHeader || req.hostname);
 }
 
+function createSlowRequestLogger(thresholdMs = 500) {
+  return (req: Request, res: Response, next: () => void) => {
+    const startedAt = Date.now();
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      if (durationMs < thresholdMs) {
+        return;
+      }
+      console.warn(
+        `[http-slow] ${JSON.stringify({
+          method: req.method,
+          path: req.path,
+          statusCode: res.statusCode,
+          durationMs,
+        })}`
+      );
+    });
+    next();
+  };
+}
+
 async function bootstrap() {
   loadApiEnv();
   const [
@@ -123,6 +144,7 @@ async function bootstrap() {
   expressApp.use(createSecurityHeadersMiddleware(browserSecurityConfig));
   expressApp.use(createCorsMiddleware(browserSecurityConfig));
   expressApp.use(createAdminAccessMiddleware(browserSecurityConfig));
+  expressApp.use(createSlowRequestLogger());
 
   expressApp.use(
     "/api",

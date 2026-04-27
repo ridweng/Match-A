@@ -1,16 +1,18 @@
 import "reflect-metadata";
 import { loadApiEnv } from "../config/env";
 import { AuthService } from "../modules/auth/auth.service";
+import { CacheService } from "../modules/cache/cache.service";
 import type { EmailService } from "../modules/email/email.service";
 import { GoalsService } from "../modules/goals/goals.service";
 import { HealthService } from "../modules/health/health.service";
 
 async function main() {
   loadApiEnv();
-  const healthService = new HealthService();
+  const cacheService = new CacheService();
+  const healthService = new HealthService(cacheService);
   await healthService.assertSchemaReady();
 
-  const goalsService = new GoalsService();
+  const goalsService = new GoalsService(cacheService);
   await goalsService.seedCatalog();
 
   if ((process.env.NODE_ENV || "development") !== "production") {
@@ -29,7 +31,7 @@ async function main() {
       }),
     } as unknown as EmailService;
     if (defaultEmail && defaultPassword) {
-      const authService = new AuthService(goalsService, emailServiceStub);
+      const authService = new AuthService(goalsService, emailServiceStub, cacheService);
       await authService.ensureDefaultAccount({
         email: defaultEmail,
         password: defaultPassword,

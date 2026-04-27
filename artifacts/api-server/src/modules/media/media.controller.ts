@@ -137,6 +137,7 @@ export class MediaController {
     if (!asset) {
       return res.status(HttpStatus.NOT_FOUND).json({ error: "MEDIA_NOT_FOUND" });
     }
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     res.type(asset.mimeType);
     return res.sendFile(asset.absolutePath);
   }

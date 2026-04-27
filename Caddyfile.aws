@@ -27,11 +27,13 @@
   }
 
   handle_path /app-assets/* {
+    header Cache-Control "public, max-age=31536000, immutable"
     root * /srv/app-assets
     file_server
   }
 
   handle {
+    header Cache-Control "no-cache"
     root * /srv/landing
     file_server
   }

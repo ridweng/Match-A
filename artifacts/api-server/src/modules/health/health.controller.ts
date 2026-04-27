@@ -38,6 +38,7 @@ export class HealthController {
       }
       throw new ServiceUnavailableException({
         dbConnected: false,
+        cache: this.healthService.getCacheStatus(),
         missingRelations: [],
         missingColumns: [],
         seededCategoryCount: 0,

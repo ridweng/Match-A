@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { pool } from "@workspace/db";
 import { loadApiEnv } from "../config/env";
+import { CacheService } from "../modules/cache/cache.service";
 import { GoalsService } from "../modules/goals/goals.service";
 import { HealthService } from "../modules/health/health.service";
 import { rebuildDiscoveryProjectionsForActor } from "../modules/discovery/discovery.projections";
@@ -457,10 +458,11 @@ async function rebuildAllUserProjections(goalsService: GoalsService) {
 
 async function main() {
   loadApiEnv();
-  const healthService = new HealthService();
+  const cacheService = new CacheService();
+  const healthService = new HealthService(cacheService);
   await healthService.assertSchemaReady();
 
-  const goalsService = new GoalsService();
+  const goalsService = new GoalsService(cacheService);
   await goalsService.seedCatalog();
 
   const beforeBatches = await getActiveBatchSummary();

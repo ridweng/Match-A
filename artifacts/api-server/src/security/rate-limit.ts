@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { createClient, type RedisClientType } from "redis";
 import { pool } from "@workspace/db";
+import { getCachedApiEnv } from "../config/env.schema";
+import { CACHE_FALLBACK_COOLDOWN_MS, CACHE_NAMESPACE } from "../modules/cache/cache.constants";
 
 type RateLimitOptions = {
   windowMs: number;
@@ -22,7 +25,11 @@ type RateLimitCounterRow = {
   reset_at: string | Date;
 };
 
-export class DatabaseRateLimiter {
+export interface RateLimiterBackend {
+  consume(key: string, options: { windowMs: number; max: number }): Promise<RateLimitResult>;
+}
+
+export class DatabaseRateLimiter implements RateLimiterBackend {
   async consume(key: string, options: { windowMs: number; max: number }): Promise<RateLimitResult> {
     const resetAt = new Date(Date.now() + options.windowMs);
     const result = await pool.query<RateLimitCounterRow>(
@@ -65,11 +72,144 @@ export class DatabaseRateLimiter {
   }
 }
 
-const sharedLimiter = new DatabaseRateLimiter();
-const identifierLimiter = new DatabaseRateLimiter();
+type RedisRateLimitClient = Pick<RedisClientType, "quit"> & {
+  isOpen?: boolean;
+  connect?: () => Promise<unknown>;
+  eval?: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>;
+};
+
+const RATE_LIMIT_SCRIPT = `
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+local ttl = redis.call('PTTL', KEYS[1])
+return { current, ttl }
+`;
+
+export class RedisRateLimiter implements RateLimiterBackend {
+  private client: RedisRateLimitClient | null = null;
+  private connectPromise: Promise<RedisRateLimitClient | null> | null = null;
+  private unavailableUntil = 0;
+  private warningLoggedAt = 0;
+
+  constructor(
+    private readonly options: {
+      redisUrl: string;
+      enabled: boolean;
+      fallback: RateLimiterBackend;
+      client?: RedisRateLimitClient | null;
+    }
+  ) {
+    if (options.client) {
+      this.client = options.client;
+    }
+  }
+
+  private logFallback(reason: string, error?: unknown) {
+    const now = Date.now();
+    if (now - this.warningLoggedAt < CACHE_FALLBACK_COOLDOWN_MS) {
+      return;
+    }
+    this.warningLoggedAt = now;
+    const message = error instanceof Error ? error.message : undefined;
+    console.warn(
+      `[rate-limit] fallback ${JSON.stringify({ reason, message: message || null })}`
+    );
+  }
+
+  private async getClient() {
+    if (!this.options.enabled || !this.options.redisUrl) {
+      return null;
+    }
+    if (Date.now() < this.unavailableUntil) {
+      return null;
+    }
+    if (this.client?.isOpen) {
+      return this.client;
+    }
+    if (this.client && this.options.client) {
+      return this.client;
+    }
+    if (!this.connectPromise) {
+      this.connectPromise = (async () => {
+        const client = createClient({ url: this.options.redisUrl }) as RedisRateLimitClient;
+        try {
+          await client.connect?.();
+          this.client = client;
+          return client;
+        } catch (error) {
+          this.unavailableUntil = Date.now() + CACHE_FALLBACK_COOLDOWN_MS;
+          this.logFallback("redis_unavailable", error);
+          await client.quit().catch(() => undefined);
+          this.client = null;
+          return null;
+        } finally {
+          this.connectPromise = null;
+        }
+      })();
+    }
+    return this.connectPromise;
+  }
+
+  async consume(key: string, options: { windowMs: number; max: number }) {
+    const client = await this.getClient();
+    if (!client?.eval) {
+      return this.options.fallback.consume(key, options);
+    }
+
+    try {
+      const redisKey = `${CACHE_NAMESPACE}:rate-limit:${key}`;
+      const result = (await client.eval(RATE_LIMIT_SCRIPT, {
+        keys: [redisKey],
+        arguments: [String(options.windowMs)],
+      })) as [number | string, number | string];
+      const count = Number(result?.[0] || 0);
+      const ttlMs = Number(result?.[1] || options.windowMs);
+      const resetAt = Date.now() + Math.max(ttlMs, 1);
+      const retryAfterSeconds = Math.max(1, Math.ceil(Math.max(ttlMs, 1) / 1000));
+
+      return {
+        allowed: count <= options.max,
+        limit: options.max,
+        remaining: Math.max(options.max - count, 0),
+        resetAt,
+        retryAfterSeconds,
+      };
+    } catch (error) {
+      this.unavailableUntil = Date.now() + CACHE_FALLBACK_COOLDOWN_MS;
+      this.logFallback("redis_consume_failed", error);
+      return this.options.fallback.consume(key, options);
+    }
+  }
+}
+
+function createRateLimiter() {
+  const dbLimiter = new DatabaseRateLimiter();
+  const env = getCachedApiEnv();
+  return new RedisRateLimiter({
+    enabled: env.RATE_LIMIT_REDIS_ENABLED,
+    redisUrl: env.REDIS_URL,
+    fallback: dbLimiter,
+  });
+}
+
+let sharedLimiter: RateLimiterBackend | null = null;
+let identifierLimiter: RateLimiterBackend | null = null;
+const pruneLimiter = new DatabaseRateLimiter();
+
+function getSharedLimiter() {
+  sharedLimiter ||= createRateLimiter();
+  return sharedLimiter;
+}
+
+function getIdentifierLimiter() {
+  identifierLimiter ||= createRateLimiter();
+  return identifierLimiter;
+}
 
 setInterval(() => {
-  void sharedLimiter.prune().catch(() => undefined);
+  void pruneLimiter.prune().catch(() => undefined);
 }, 5 * 60 * 1000).unref();
 
 export class RateLimitExceededError extends Error {
@@ -106,7 +246,7 @@ export function createRateLimitMiddleware(options: RateLimitOptions) {
     const rawKey = options.keyGenerator?.(req) || getClientIp(req);
     const key = `${options.keyPrefix}:${hashRateLimitValue(rawKey)}`;
     try {
-      const result = await sharedLimiter.consume(key, options);
+      const result = await getSharedLimiter().consume(key, options);
       setRateLimitHeaders(res, result);
 
       if (!result.allowed) {
@@ -130,7 +270,7 @@ export async function assertIdentifierRateLimit(input: {
   max: number;
 }) {
   const key = `identifier:${input.route}:${hashRateLimitValue(input.identifier)}`;
-  const result = await identifierLimiter.consume(key, {
+  const result = await getIdentifierLimiter().consume(key, {
     windowMs: input.windowMs,
     max: input.max,
   });
