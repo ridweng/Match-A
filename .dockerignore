@@ -33,3 +33,12 @@ node_modules
 tmp
 tmp/**
 *.log
+
+data/
+data/postgres/
+data/postgres/db/
+postgres-data/
+pgdata/
+*.log
+node_modules/
+.git/
