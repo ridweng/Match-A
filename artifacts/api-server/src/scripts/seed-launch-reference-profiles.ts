@@ -308,8 +308,13 @@ async function main() {
   }
 }
 
-main().catch(async (error) => {
-  console.error(error);
-  await pool.end().catch(() => {});
-  process.exit(1);
-});
+const isMainModule =
+  import.meta.url === new URL(process.argv[1] || "", "file://").href;
+
+if (isMainModule) {
+  main().catch(async (error) => {
+    console.error(error);
+    await pool.end().catch(() => {});
+    process.exit(1);
+  });
+}

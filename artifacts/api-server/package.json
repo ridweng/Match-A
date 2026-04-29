@@ -15,6 +15,7 @@
     "db:seed:dummy-users": "tsx ./src/scripts/seed-dummy-users.ts",
     "db:seed:launch-reference-profiles": "tsx ./src/scripts/seed-launch-reference-profiles.ts",
     "db:validate:launch-reference-profiles": "tsx ./src/scripts/validate-launch-reference-profiles.ts",
+    "db:refresh:launch-reference-profiles": "tsx ./src/scripts/refresh-launch-reference-profiles.ts",
     "db:seed:all": "pnpm seed && pnpm db:seed:dummy-users",
     "db:setup": "tsx ./src/scripts/db-setup.ts",
     "db:reset": "tsx ./src/scripts/db-reset.ts",
