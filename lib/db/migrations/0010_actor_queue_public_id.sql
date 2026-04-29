@@ -6,7 +6,7 @@ BEGIN;
 
 -- Step 1: Add target_profile_public_id column (nullable initially for backfill)
 ALTER TABLE discovery.actor_queue
-ADD COLUMN IF NOT EXIST target_profile_public_id VARCHAR(64);
+ADD COLUMN IF NOT EXISTS target_profile_public_id VARCHAR(64);
 
 -- Step 2: Backfill existing rows from core.profiles
 UPDATE discovery.actor_queue aq
