@@ -3,6 +3,7 @@ import { router, usePathname } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -216,11 +217,8 @@ function AdminLayout({
 
   return (
     <View style={styles.shell}>
-      <ScrollView
-        style={styles.sidebarScroll}
-        contentContainerStyle={styles.sidebarInner}
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={styles.sidebarScroll}>
+        <View style={styles.sidebarInner}>
         <View style={styles.brandMark}>
           <Text style={styles.brandMarkText}>M</Text>
         </View>
@@ -244,12 +242,10 @@ function AdminLayout({
             </Pressable>
           ))}
         </View>
-      </ScrollView>
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.contentInner}
-        showsVerticalScrollIndicator={true}
-      >
+        </View>
+      </View>
+      <View style={styles.content}>
+        <View style={styles.contentInner}>
         <View style={styles.topbar}>
           <View>
             <Text style={styles.kicker}>Protected dashboard</Text>
@@ -267,7 +263,8 @@ function AdminLayout({
           </View>
         </View>
         {children}
-      </ScrollView>
+        </View>
+      </View>
     </View>
   );
 }
@@ -664,10 +661,15 @@ const adminColors = {
 const styles = StyleSheet.create({
   shell: {
     minHeight: "100vh" as never,
-    height: "100vh" as never,
     backgroundColor: "#edf2e9",
     flexDirection: "row",
-    overflow: "hidden",
+    alignItems: "flex-start",
+    ...(Platform.OS === "web"
+      ? ({
+          overflowX: "clip",
+          overflowY: "visible",
+        } as never)
+      : {}),
   },
   sidebarScroll: {
     width: 270,
@@ -680,6 +682,13 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 36,
     gap: 0,
+    ...(Platform.OS === "web"
+      ? ({
+          position: "sticky",
+          top: 0,
+          minHeight: "100vh",
+        } as never)
+      : {}),
   },
   brandMark: {
     width: 46,
