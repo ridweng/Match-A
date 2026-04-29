@@ -114,6 +114,47 @@ export class AdminController {
     return true;
   }
 
+  private normalizeUsersFilters(input: {
+    q?: string;
+    kind?: string;
+    activation?: string;
+    threshold?: string;
+    genderIdentity?: string;
+    syntheticGroup?: string;
+    dummyBatchKey?: string;
+    generationVersion?: string;
+  }) {
+    const normalizedGenerationVersion = Number(input.generationVersion);
+
+    return {
+      q: input.q,
+      kind: input.kind === "user" || input.kind === "dummy" ? input.kind : "all",
+      activation:
+        input.activation === "activated" || input.activation === "not_activated"
+          ? input.activation
+          : input.threshold === "reached"
+            ? "activated"
+            : input.threshold === "pending"
+              ? "not_activated"
+              : "all",
+      genderIdentity: String(input.genderIdentity || "").trim(),
+      syntheticGroup: String(input.syntheticGroup || "").trim(),
+      dummyBatchKey: String(input.dummyBatchKey || "").trim(),
+      generationVersion:
+        Number.isFinite(normalizedGenerationVersion) && normalizedGenerationVersion > 0
+          ? normalizedGenerationVersion
+          : null,
+    } as const;
+  }
+
+  private sendAdminJson(res: Response, payload: unknown) {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      fetchedAt: new Date().toISOString(),
+      data: payload,
+    });
+  }
+
   private renderPage(title: string, body: string, options?: { autoRefreshMs?: number }) {
     return `<!doctype html>
 <html lang="en">
@@ -628,6 +669,24 @@ export class AdminController {
     );
   }
 
+  @Get("overview.json")
+  async overviewJson(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query("timeframe") timeframe?: string,
+    @Query("country") country?: string,
+    @Query("refresh") refresh?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const bypassCache = refresh === "1" || refresh === "true";
+    const overview = await this.adminService.getOverview(
+      { timeframe, country },
+      { bypassCache }
+    );
+
+    this.sendAdminJson(res, overview);
+  }
+
   @Get("users")
   async users(
     @Req() req: Request,
@@ -643,26 +702,16 @@ export class AdminController {
     @Query("refresh") refresh?: string
   ) {
     if (!this.authorize(req, res)) return;
-    const normalizedGenerationVersion = Number(generationVersion);
-    const filters = {
+    const filters = this.normalizeUsersFilters({
       q,
-      kind: kind === "user" || kind === "dummy" ? kind : "all",
-      activation:
-        activation === "activated" || activation === "not_activated"
-          ? activation
-          : threshold === "reached"
-            ? "activated"
-            : threshold === "pending"
-              ? "not_activated"
-              : "all",
-      genderIdentity: String(genderIdentity || "").trim(),
-      syntheticGroup: String(syntheticGroup || "").trim(),
-      dummyBatchKey: String(dummyBatchKey || "").trim(),
-      generationVersion:
-        Number.isFinite(normalizedGenerationVersion) && normalizedGenerationVersion > 0
-          ? normalizedGenerationVersion
-          : null,
-    } as const;
+      kind,
+      activation,
+      threshold,
+      genderIdentity,
+      syntheticGroup,
+      dummyBatchKey,
+      generationVersion,
+    });
     const bypassCache = refresh === "1" || refresh === "true";
     const [users, filterOptions] = await Promise.all([
       this.adminService.getUsers(filters, { bypassCache }),
@@ -775,6 +824,44 @@ export class AdminController {
         `
       )
     );
+  }
+
+  @Get("users.json")
+  async usersJson(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query("q") q?: string,
+    @Query("kind") kind?: string,
+    @Query("activation") activation?: string,
+    @Query("threshold") threshold?: string,
+    @Query("genderIdentity") genderIdentity?: string,
+    @Query("syntheticGroup") syntheticGroup?: string,
+    @Query("dummyBatchKey") dummyBatchKey?: string,
+    @Query("generationVersion") generationVersion?: string,
+    @Query("refresh") refresh?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const filters = this.normalizeUsersFilters({
+      q,
+      kind,
+      activation,
+      threshold,
+      genderIdentity,
+      syntheticGroup,
+      dummyBatchKey,
+      generationVersion,
+    });
+    const bypassCache = refresh === "1" || refresh === "true";
+    const [users, filterOptions] = await Promise.all([
+      this.adminService.getUsers(filters, { bypassCache }),
+      this.adminService.getUserFilterOptions({ bypassCache }),
+    ]);
+
+    this.sendAdminJson(res, {
+      filters,
+      filterOptions,
+      users,
+    });
   }
 
   @Get("users/:identifier")
@@ -1154,6 +1241,16 @@ export class AdminController {
         { autoRefreshMs: 15000 }
       )
     );
+  }
+
+  @Get("database.json")
+  async databaseJson(@Req() req: Request, @Res() res: Response) {
+    if (!this.authorize(req, res)) return;
+
+    const bypassCache = req.query.refresh === "1" || req.query.refresh === "true";
+    const view = await this.adminService.getDatabaseView({ bypassCache });
+
+    this.sendAdminJson(res, view);
   }
 
   @Get("api-docs")

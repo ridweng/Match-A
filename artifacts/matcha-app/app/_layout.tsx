@@ -30,12 +30,30 @@ import {
 } from "@/constants/routes";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { debugLog } from "@/utils/debug";
+import { isAdminWebSurface } from "@/utils/adminHost";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
+function AdminLayoutNav() {
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
+      <Stack.Screen name="admin" />
+    </Stack>
+  );
+}
+
 function RootLayoutNav() {
+  if (isAdminWebSurface()) {
+    return <AdminLayoutNav />;
+  }
+
+  return <MainLayoutNav />;
+}
+
+function MainLayoutNav() {
   const {
     authStatus,
     authBusy,
