@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
@@ -641,7 +641,11 @@ const CURATED_FLOW_EDGES: DatabaseGraphEdge[] = [
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
-  constructor(private readonly cacheService: CacheService) {}
+  constructor(
+    @Optional()
+    @Inject(CacheService)
+    private readonly cacheService?: CacheService
+  ) {}
 
   private async measure<T>(name: string, callback: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
@@ -652,6 +656,29 @@ export class AdminService {
       if (durationMs >= 250) {
         this.logger.log(`[admin-metrics] ${JSON.stringify({ name, durationMs })}`);
       }
+    }
+  }
+
+  private async getOrCompute<T>(
+    key: string,
+    ttlSeconds: number,
+    loader: () => Promise<T>
+  ): Promise<T> {
+    if (!this.cacheService) {
+      this.logger.warn(
+        `[admin-cache] unavailable ${JSON.stringify({ key, reason: "provider_missing" })}`
+      );
+      return loader();
+    }
+
+    try {
+      return await this.cacheService.getOrSet(key, ttlSeconds, loader);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      this.logger.warn(
+        `[admin-cache] fallback ${JSON.stringify({ key, reason: "cache_error", message })}`
+      );
+      return loader();
     }
   }
 
@@ -1298,7 +1325,7 @@ export class AdminService {
     if (options?.bypassCache) {
       return this.loadDatabaseView();
     }
-    return this.cacheService.getOrSet(
+    return this.getOrCompute(
       cacheKeys.adminDatabaseView(),
       CACHE_TTL_SECONDS.adminMetrics,
       () => this.loadDatabaseView()
@@ -1356,7 +1383,7 @@ export class AdminService {
     if (options?.bypassCache) {
       return this.loadOverview(normalizedFilters);
     }
-    return this.cacheService.getOrSet(
+    return this.getOrCompute(
       cacheKeys.adminOverview(normalizedFilters),
       CACHE_TTL_SECONDS.adminMetrics,
       () => this.loadOverview(normalizedFilters)
@@ -1749,7 +1776,7 @@ export class AdminService {
     if (options?.bypassCache) {
       return this.loadUsers(normalizedFilters);
     }
-    return this.cacheService.getOrSet(
+    return this.getOrCompute(
       cacheKeys.adminUsers(normalizedFilters),
       CACHE_TTL_SECONDS.adminMetrics,
       () => this.loadUsers(normalizedFilters)
@@ -1909,7 +1936,7 @@ export class AdminService {
     if (options?.bypassCache) {
       return this.loadUserFilterOptions();
     }
-    return this.cacheService.getOrSet(
+    return this.getOrCompute(
       cacheKeys.adminUserFilterOptions(),
       CACHE_TTL_SECONDS.adminMetrics,
       () => this.loadUserFilterOptions()
