@@ -35,13 +35,25 @@ ALTER TABLE discovery.actor_queue
 ALTER COLUMN target_profile_public_id SET NOT NULL;
 
 -- Step 5: Add index for efficient lookups by public_id
-CREATE INDEX actor_queue_target_public_id_idx
+CREATE INDEX IF NOT EXISTS actor_queue_target_public_id_idx
 ON discovery.actor_queue(target_profile_public_id);
 
 -- Step 6: Add hydration_level column for 3-slot deck support
 ALTER TABLE discovery.actor_queue
-ADD COLUMN hydration_level VARCHAR(16) DEFAULT 'full'
-CHECK (hydration_level IN ('full', 'partial', 'metadata'));
+ADD COLUMN IF NOT EXISTS hydration_level VARCHAR(16) DEFAULT 'full';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'actor_queue_hydration_level_check'
+  ) THEN
+    ALTER TABLE discovery.actor_queue
+    ADD CONSTRAINT actor_queue_hydration_level_check
+    CHECK (hydration_level IN ('full', 'partial', 'metadata'));
+  END IF;
+END $$;
 
 -- Step 7: Set hydration levels based on position for existing rows
 UPDATE discovery.actor_queue
