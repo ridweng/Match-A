@@ -101,6 +101,15 @@ The handoff code is hashed at rest, expires after two minutes, and is consumed o
 
 Rate limits use the shared Postgres table `security.rate_limit_counters`, so counters survive process restarts and work across multiple API instances. Strict login-related limits remain `5` attempts per `15` minutes.
 
+For targeted inspection or reset during development/testing, use the API server helper instead of `FLUSHDB`:
+
+```bash
+pnpm --filter @workspace/api-server rate-limit:inspect --route=sign-up --email=user@example.com --ip=203.0.113.10
+pnpm --filter @workspace/api-server rate-limit:reset --route=sign-up --email=user@example.com --ip=203.0.113.10
+```
+
+The helper inspects and clears only the matching MatchA keys in Postgres and, when enabled, Redis.
+
 ## Secret Safeguards
 
 Run the local secret guard before committing:

@@ -11,6 +11,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "docs:openapi": "tsx ./src/scripts/generate-openapi.ts",
     "docs:lint": "redocly lint ../../docs/api/openapi.json",
+    "rate-limit:inspect": "tsx ./src/scripts/rate-limit-tool.ts inspect",
+    "rate-limit:reset": "tsx ./src/scripts/rate-limit-tool.ts reset",
     "seed": "tsx ./src/scripts/seed.ts",
     "db:seed:dummy-users": "tsx ./src/scripts/seed-dummy-users.ts",
     "db:seed:launch-reference-profiles": "tsx ./src/scripts/seed-launch-reference-profiles.ts",

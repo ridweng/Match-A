@@ -20,6 +20,7 @@ import { API_TAGS } from "../../docs/openapi/tags";
 import {
   RateLimitExceededError,
   assertIdentifierRateLimit,
+  logRateLimitHit,
 } from "../../security/rate-limit";
 import {
   normalizedEmailSchema,
@@ -138,12 +139,25 @@ export class AuthController {
       route,
       identifier,
       windowMs: 15 * 60 * 1000,
-      max: 5,
+      max: 13,
     });
   }
 
-  private sendRateLimitError(res: Response, error: RateLimitExceededError) {
-    res.setHeader("Retry-After", String(error.retryAfterSeconds));
+  private sendRateLimitError(
+    req: Request,
+    res: Response,
+    error: RateLimitExceededError
+  ) {
+    res.setHeader("Retry-After", String(error.details.retryAfterSeconds));
+    logRateLimitHit({
+      limiterName: error.details.limiterName,
+      keyType: error.details.keyType,
+      storageKey: error.details.key,
+      retryAfterSeconds: error.details.retryAfterSeconds,
+      requestPath: req.originalUrl?.split("?")[0] || req.path,
+      requestMethod: req.method,
+      requestIp: this.getClientIp(req),
+    });
     return res.status(429).json({
       error: "TOO_MANY_REQUESTS",
       message: "Too many requests. Please try again later.",
@@ -158,7 +172,7 @@ export class AuthController {
 
   @Post("sign-up")
   @ApiOperation({ summary: "Create a new email and password account" })
-  async signUp(@Body() body: unknown, @Res() res: Response) {
+  async signUp(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signUpSchema.parse(body);
       await this.assertAuthIdentifierLimit("sign-up", input.email);
@@ -176,7 +190,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_SIGN_UP_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res
@@ -209,7 +223,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_SIGN_IN_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res
@@ -236,7 +250,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_REFRESH_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res
@@ -305,7 +319,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_VERIFY_RESEND_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res
@@ -354,7 +368,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_PASSWORD_RESET_REQUEST_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res
@@ -386,7 +400,7 @@ export class AuthController {
 
   @Post("password-reset/confirm")
   @ApiOperation({ summary: "Finish the password reset flow with a new password" })
-  async confirmPasswordReset(@Body() body: unknown, @Res() res: Response) {
+  async confirmPasswordReset(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = passwordResetConfirmSchema.parse(body);
       await this.assertAuthIdentifierLimit("password-reset-confirm", input.token);
@@ -400,7 +414,7 @@ export class AuthController {
         return this.sendZodError(res, "INVALID_PASSWORD_RESET_CONFIRM_PAYLOAD", error);
       }
       if (error instanceof RateLimitExceededError) {
-        return this.sendRateLimitError(res, error);
+        return this.sendRateLimitError(req, res, error);
       }
       console.error(error);
       return res

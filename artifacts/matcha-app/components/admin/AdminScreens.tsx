@@ -619,7 +619,8 @@ function AdminLayout({
 }) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
-  const isNarrow = width < 980;
+  const isMobile = width < 760;
+  const isCompactSidebar = width >= 760 && width < 1180;
   const active = pathname === "/" ? "/admin" : pathname;
 
   const navItems = [
@@ -629,27 +630,48 @@ function AdminLayout({
   ] as const;
 
   return (
-    <View style={[styles.shell, isNarrow && styles.shellNarrow]}>
+    <View style={[styles.shell, isMobile && styles.shellMobile]}>
       <ScrollView
-        style={[styles.sidebarScroll, isNarrow && styles.sidebarScrollNarrow]}
-        contentContainerStyle={styles.sidebarInner}
-        showsVerticalScrollIndicator
+        horizontal={isMobile}
+        style={[
+          styles.sidebarScroll,
+          isCompactSidebar && styles.sidebarScrollCompact,
+          isMobile && styles.sidebarScrollMobile,
+        ]}
+        contentContainerStyle={[
+          styles.sidebarInner,
+          isCompactSidebar && styles.sidebarInnerCompact,
+          isMobile && styles.sidebarInnerMobile,
+        ]}
+        showsVerticalScrollIndicator={!isMobile}
+        showsHorizontalScrollIndicator={false}
       >
-        <View style={styles.brandMark}>
-          <Text style={styles.brandMarkText}>M</Text>
+        <View style={[styles.brandHeader, isMobile && styles.brandHeaderMobile]}>
+          <View style={styles.brandMark}>
+            <Text style={styles.brandMarkText}>M</Text>
+          </View>
+          <View style={styles.brandCopy}>
+            <Text style={styles.brandTitle}>MatchA</Text>
+            <Text style={styles.brandSubtitle}>Admin</Text>
+          </View>
         </View>
-        <Text style={styles.brandTitle}>MatchA Admin</Text>
-        <Text style={styles.brandSubtitle}>Internal operations</Text>
-        <View style={styles.nav}>
+        <View style={[styles.nav, isMobile && styles.navMobile]}>
           {navItems.map((item) => (
             <Pressable
               key={item.path}
               onPress={() => router.push(item.path as never)}
-              style={[styles.navItem, active === item.path && styles.navItemActive]}
+              style={({ pressed, hovered }) => [
+                styles.navItem,
+                isCompactSidebar && styles.navItemCompact,
+                isMobile && styles.navItemMobile,
+                hovered && active !== item.path && styles.navItemHover,
+                pressed && styles.navItemPressed,
+                active === item.path && styles.navItemActive,
+              ]}
             >
               <Feather
                 name={item.icon}
-                size={17}
+                size={15}
                 color={active === item.path ? Colors.ivory : adminColors.muted}
               />
               <Text style={[styles.navLabel, active === item.path && styles.navLabelActive]}>
@@ -661,7 +683,11 @@ function AdminLayout({
       </ScrollView>
       <ScrollView
         style={styles.content}
-        contentContainerStyle={styles.contentInner}
+        contentContainerStyle={[
+          styles.contentInner,
+          isCompactSidebar && styles.contentInnerCompact,
+          isMobile && styles.contentInnerMobile,
+        ]}
         showsVerticalScrollIndicator
       >
         <View style={styles.topbar}>
@@ -1590,62 +1616,109 @@ const styles = StyleSheet.create({
     backgroundColor: "#edf2e9",
     flexDirection: "row",
   },
-  shellNarrow: {
+  shellMobile: {
     flexDirection: "column",
   },
   sidebarScroll: {
-    width: 270,
+    width: 212,
     flexShrink: 0,
     backgroundColor: Colors.background,
     borderRightWidth: 1,
     borderRightColor: Colors.border,
   },
-  sidebarScrollNarrow: {
+  sidebarScrollCompact: {
+    width: 188,
+  },
+  sidebarScrollMobile: {
     width: "100%" as never,
-    maxHeight: 240,
+    maxHeight: 92,
     borderRightWidth: 0,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
   sidebarInner: {
-    padding: 24,
-    paddingBottom: 36,
-    gap: 0,
+    padding: 16,
+    paddingBottom: 20,
+    gap: 16,
+  },
+  sidebarInnerCompact: {
+    paddingHorizontal: 12,
+  },
+  sidebarInnerMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    paddingRight: 18,
+    gap: 12,
+  },
+  brandHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  brandHeaderMobile: {
+    minWidth: 116,
   },
   brandMark: {
-    width: 46,
-    height: 46,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.primary,
-    marginBottom: 14,
   },
   brandMarkText: {
     color: Colors.ivory,
-    fontSize: 22,
+    fontSize: 17,
     fontWeight: "800",
+  },
+  brandCopy: {
+    minWidth: 0,
   },
   brandTitle: {
     color: Colors.ivory,
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: "800",
   },
   brandSubtitle: {
     color: Colors.textSecondary,
-    marginTop: 4,
-    marginBottom: 26,
+    marginTop: 1,
+    fontSize: 12,
+    fontWeight: "700",
   },
   nav: {
-    gap: 10,
+    gap: 6,
+  },
+  navMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   navItem: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 13,
-    borderRadius: 14,
+    gap: 9,
+    minHeight: 40,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 11,
+  },
+  navItemCompact: {
+    paddingHorizontal: 9,
+  },
+  navItemMobile: {
+    minWidth: 112,
+    justifyContent: "center",
+    backgroundColor: Colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  navItemHover: {
+    backgroundColor: Colors.backgroundSecondary,
+  },
+  navItemPressed: {
+    opacity: 0.82,
   },
   navItemActive: {
     backgroundColor: Colors.surface,
@@ -1653,6 +1726,7 @@ const styles = StyleSheet.create({
   navLabel: {
     color: adminColors.muted,
     fontWeight: "700",
+    fontSize: 13,
   },
   navLabelActive: {
     color: Colors.ivory,
@@ -1662,9 +1736,16 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   contentInner: {
-    padding: 28,
+    padding: 24,
     paddingBottom: 64,
     gap: 20,
+  },
+  contentInnerCompact: {
+    paddingHorizontal: 20,
+  },
+  contentInnerMobile: {
+    padding: 16,
+    paddingBottom: 40,
   },
   topbar: {
     flexDirection: "row",

@@ -3329,7 +3329,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return true;
     } catch (e: any) {
       debugWarn("[auth] pending verification auto-login failed", e?.code || e?.message);
-      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
       setAuthError(code);
       setSignInPrefill(pendingVerificationEmail);
       resetPendingVerificationState();
@@ -3563,7 +3563,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               reason: error instanceof Error ? error.message : "unknown",
             });
             if (error instanceof ApiError && error.code === "NETWORK_REQUEST_FAILED") {
-              setAuthError(toReadableAuthError(error.code));
+              setAuthError(toReadableAuthError(error));
             }
             resetClientState();
             await clearStoredSessionTokens();
@@ -3965,7 +3965,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         syncPostAuthRedirectFromResolvedState();
         return true;
       } catch (e: any) {
-        const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
         if (code === "EMAIL_VERIFICATION_REQUIRED") {
           const normalizedEmail = input.email.trim();
           setPendingVerificationEmail(normalizedEmail);
@@ -4015,7 +4015,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return true;
       } catch (e: any) {
-        const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
         setAuthError(code);
         return false;
       } finally {
@@ -4036,7 +4036,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         syncPostAuthRedirectFromResolvedState();
         return true;
       } catch (e: any) {
-        const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
         setAuthError(code);
         return false;
       } finally {
@@ -4094,7 +4094,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
         return false;
       } catch (e: any) {
-        const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+        const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
         setAuthError(code);
         if (payload.email) {
           setSignInPrefill(payload.email);
@@ -4137,7 +4137,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setVerificationStatus("pending");
       return "pending";
     } catch (e: any) {
-      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
       setAuthError(code);
       setVerificationStatus("pending");
       return null;
@@ -4158,7 +4158,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setVerificationStatus("pending");
       return true;
     } catch (e: any) {
-      const code = e instanceof ApiError ? toReadableAuthError(e.code) : "UNKNOWN_ERROR";
+      const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
       setAuthError(code);
       setVerificationStatus("pending");
       return false;

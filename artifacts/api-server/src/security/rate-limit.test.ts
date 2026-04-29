@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RedisRateLimiter, type RateLimiterBackend } from "./rate-limit";
+import {
+  RedisRateLimiter,
+  collectRateLimitKeyDescriptors,
+  type RateLimiterBackend,
+} from "./rate-limit";
 
 class FakeFallbackLimiter implements RateLimiterBackend {
   calls = 0;
@@ -79,4 +83,21 @@ test("Redis rate limiter falls back when disabled or unavailable", async () => {
   });
   await failing.consume("api:test", { windowMs: 900_000, max: 5 });
   assert.equal(failingFallback.calls, 1);
+});
+
+test("rate-limit tool derives targeted sign-up keys", () => {
+  const descriptors = collectRateLimitKeyDescriptors({
+    route: "sign-up",
+    email: "Tester@Example.com",
+    ip: "203.0.113.10",
+  });
+
+  assert.equal(descriptors.length, 3);
+  assert.deepEqual(
+    descriptors.map((entry) => entry.limiterName),
+    ["api-general", "api-auth-strict", "auth-identifier"]
+  );
+  assert.match(descriptors[0]!.storageKey, /^api-general:/);
+  assert.match(descriptors[1]!.storageKey, /^api-auth-strict:/);
+  assert.match(descriptors[2]!.storageKey, /^identifier:sign-up:/);
 });

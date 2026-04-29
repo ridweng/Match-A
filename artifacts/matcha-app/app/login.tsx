@@ -39,6 +39,10 @@ const { width } = Dimensions.get("window");
 const INITIAL_VERIFICATION_POLL_MS = 60_000;
 const VERIFICATION_POLL_INCREMENT_MS = 30_000;
 const AUTH_KEYBOARD_VERTICAL_OFFSET_IOS = 16;
+const PASSWORD_POLICY_MESSAGE = {
+  es: "La contraseña debe tener al menos 8 caracteres, una letra y un número.",
+  en: "Password must be at least 8 characters and include one letter and one number.",
+};
 
 const providerMeta: Array<{
   provider: AuthProvider;
@@ -52,6 +56,14 @@ const providerMeta: Array<{
 ];
 
 function translateAuthError(code: string | null, t: (es: string, en: string) => string) {
+  if (code?.startsWith("TOO_MANY_REQUESTS:")) {
+    const retryAfterSeconds = Number(code.split(":")[1] || 0);
+    const retryAfterMinutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    return t(
+      `Demasiados intentos. Inténtalo de nuevo en ${retryAfterMinutes} min.`,
+      `Too many attempts. Try again in ${retryAfterMinutes} min.`
+    );
+  }
   switch (code) {
     case "EMAIL_ALREADY_IN_USE":
       return t("Este correo ya está registrado.", "This email is already registered.");
@@ -90,6 +102,11 @@ function translateAuthError(code: string | null, t: (es: string, en: string) => 
       return t(
         "Tu sesión expiró. Inicia sesión de nuevo para continuar con tu onboarding.",
         "Your session expired. Sign in again to continue your onboarding."
+      );
+    case "TOO_MANY_REQUESTS":
+      return t(
+        "Demasiados intentos. Inténtalo de nuevo en unos minutos.",
+        "Too many attempts. Try again in a few minutes."
       );
     case "AUTH_CANCELLED":
       return t("Autenticación cancelada.", "Authentication cancelled.");
@@ -285,11 +302,11 @@ export default function LoginScreen() {
       );
       return false;
     }
-    if (password.length < 8) {
+    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
       setLocalError(
         t(
-          "La contraseña debe tener al menos 8 caracteres.",
-          "Password must be at least 8 characters."
+          PASSWORD_POLICY_MESSAGE.es,
+          PASSWORD_POLICY_MESSAGE.en
         )
       );
       return false;
@@ -726,7 +743,7 @@ export default function LoginScreen() {
                       label={t("Contraseña", "Password")}
                       value={password}
                       onChangeText={setPassword}
-                      placeholder={t("Mínimo 8 caracteres", "At least 8 characters")}
+                      placeholder={t("8+ caracteres, letra y número", "8+ chars, letter and number")}
                       secureTextEntry
                     />
 

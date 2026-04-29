@@ -537,10 +537,12 @@ const MEDIA_UPLOAD_REQUEST_TIMEOUT_MS = 60_000;
 
 class ApiError extends Error {
   code: string;
+  retryAfterSeconds: number | null;
 
-  constructor(code: string, message?: string) {
+  constructor(code: string, message?: string, options?: { retryAfterSeconds?: number | null }) {
     super(message || code);
     this.code = code;
+    this.retryAfterSeconds = options?.retryAfterSeconds ?? null;
   }
 }
 
@@ -738,11 +740,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const latencyMs = Date.now() - requestStartedAt;
   
   if (!response.ok) {
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : null;
     debugLog("[api] request error response", {
       path,
       status: response.status,
       error: data.error,
       message: data.message,
+      retryAfterSeconds:
+        typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds
+          : null,
       body: JSON.stringify(data).slice(0, 300),
     });
     
@@ -766,8 +774,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       method: options.method || "GET",
       status: response.status,
       error: data.error || "REQUEST_FAILED",
+      retryAfterSeconds:
+        typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds
+          : null,
     });
-    throw new ApiError(data.error || "REQUEST_FAILED", data.message || data.error);
+    throw new ApiError(data.error || "REQUEST_FAILED", data.message || data.error, {
+      retryAfterSeconds:
+        typeof retryAfterSeconds === "number" && Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds
+          : null,
+    });
   }
   
   if (isDiscoveryDecision) {
@@ -1582,7 +1599,9 @@ export function extractAuthCallback(url: string) {
   return parseAuthCallbackUrl(url);
 }
 
-export function toReadableAuthError(code: string) {
+export function toReadableAuthError(codeOrError: string | ApiError) {
+  const code =
+    typeof codeOrError === "string" ? codeOrError : codeOrError.code;
   switch (code) {
     case "EMAIL_ALREADY_IN_USE":
       return "EMAIL_ALREADY_IN_USE";
@@ -1610,6 +1629,13 @@ export function toReadableAuthError(code: string) {
       return "PROVIDER_UNAVAILABLE";
     case "SESSION_EXPIRED":
       return "SESSION_EXPIRED";
+    case "TOO_MANY_REQUESTS": {
+      const retryAfterSeconds =
+        typeof codeOrError === "string" ? null : codeOrError.retryAfterSeconds;
+      return retryAfterSeconds && retryAfterSeconds > 0
+        ? `TOO_MANY_REQUESTS:${retryAfterSeconds}`
+        : "TOO_MANY_REQUESTS";
+    }
     default:
       return code || "UNKNOWN_ERROR";
   }

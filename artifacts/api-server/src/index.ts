@@ -150,6 +150,8 @@ async function bootstrap() {
     "/api",
     createRateLimitMiddleware({
       keyPrefix: "api-general",
+      limiterName: "api-general",
+      keyType: "ip",
       windowMs: 15 * 60 * 1000,
       max: runtimeConfig.rateLimit.generalMax,
     })
@@ -165,9 +167,12 @@ async function bootstrap() {
     ],
     createRateLimitMiddleware({
       keyPrefix: "api-auth-strict",
+      limiterName: "api-auth-strict",
+      keyType: "route-ip",
       windowMs: 15 * 60 * 1000,
       max: 5,
-      keyGenerator: (req) => `${req.method}:${req.path}:${req.ip || "unknown"}`,
+      keyGenerator: (req) =>
+        `${req.method}:${req.baseUrl || req.path}:${req.ip || "unknown"}`,
     })
   );
 

@@ -23,6 +23,11 @@ import {
 
 type ResetTokenStatus = "checking" | "valid" | "invalid";
 
+const PASSWORD_POLICY_MESSAGE = {
+  es: "La nueva contraseña debe tener al menos 8 caracteres, una letra y un número.",
+  en: "The new password must be at least 8 characters and include one letter and one number.",
+};
+
 function getResetTokenMessage(
   code: string | null,
   t: (es: string, en: string) => string
@@ -181,11 +186,11 @@ export default function ResetPasswordScreen() {
       );
       return;
     }
-    if (password.length < 8) {
+    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
       setFormError(
         t(
-          "La nueva contraseña debe tener al menos 8 caracteres.",
-          "The new password must be at least 8 characters."
+          PASSWORD_POLICY_MESSAGE.es,
+          PASSWORD_POLICY_MESSAGE.en
         )
       );
       return;
@@ -289,7 +294,7 @@ export default function ResetPasswordScreen() {
             label={t("Nueva contraseña", "New password")}
             value={password}
             onChangeText={setPassword}
-            placeholder={t("Mínimo 8 caracteres", "At least 8 characters")}
+            placeholder={t("8+ caracteres, letra y número", "8+ chars, letter and number")}
             secureTextEntry
           />
           <AuthTextField
