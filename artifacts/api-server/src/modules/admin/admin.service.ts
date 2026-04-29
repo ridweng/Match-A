@@ -50,6 +50,48 @@ type UserFilterOptions = {
   generationVersions: number[];
 };
 
+type GeneratedBatchRow = {
+  batch_key: string;
+  generation_version: number;
+  profile_count: string;
+  female_count: string;
+  male_count: string;
+  other_count: string;
+  ready_media_count: string;
+  latest_created_at: string | Date | null;
+  latest_updated_at: string | Date | null;
+};
+
+type GeneratedBatchDeletePreview = {
+  batchKey: string;
+  generationVersion: number;
+  profileCount: number;
+  femaleCount: number;
+  maleCount: number;
+  otherCount: number;
+  readyMediaCount: number;
+  deletedProfiles: number;
+  deletedDummyMetadata: number;
+  deletedMediaAssets: number;
+  deletedProfileImages: number;
+  deletedCategoryValues: number;
+  deletedLanguages: number;
+  deletedInterests: number;
+  deletedLocationHistory: number;
+  deletedDecisions: number;
+  deletedInteractions: number;
+  deletedQueueRows: number;
+  deletedActorStateRows: number;
+  deletedProjectionRows: number;
+  deletedUsers: number;
+  latestCreatedAt: string | null;
+  latestUpdatedAt: string | null;
+};
+
+type GeneratedBatchDeleteSummary = GeneratedBatchDeletePreview & {
+  deletedBatchKey: string;
+};
+
 type OverviewRealGenderRow = {
   gender_identity: string;
   profile_count: string;
@@ -679,6 +721,20 @@ export class AdminService {
         `[admin-cache] fallback ${JSON.stringify({ key, reason: "cache_error", message })}`
       );
       return loader();
+    }
+  }
+
+  private async invalidateAdminCaches() {
+    if (!this.cacheService) {
+      return;
+    }
+    try {
+      await this.cacheService.deleteByPrefix(cacheKeys.adminPrefix());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      this.logger.warn(
+        `[admin-cache] invalidate_failed ${JSON.stringify({ message })}`
+      );
     }
   }
 
@@ -2056,6 +2112,559 @@ export class AdminService {
         .filter((value) => Number.isFinite(value)),
     };
     });
+  }
+
+  async getGeneratedBatches(options?: { bypassCache?: boolean }) {
+    if (options?.bypassCache) {
+      return this.loadGeneratedBatches();
+    }
+    return this.getOrCompute(
+      cacheKeys.adminGeneratedBatches(),
+      CACHE_TTL_SECONDS.adminMetrics,
+      () => this.loadGeneratedBatches()
+    );
+  }
+
+  private async loadGeneratedBatches() {
+    return this.measure("generated-batches", async () => {
+      const result = await pool.query<GeneratedBatchRow>(
+        `WITH batch_profiles AS (
+           SELECT
+             p.id,
+             p.gender_identity,
+             p.created_at,
+             p.updated_at,
+             pdm.dummy_batch_key AS batch_key,
+             pdm.generation_version
+           FROM core.profiles p
+           JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+           WHERE p.kind = 'dummy'
+         ),
+         batch_media AS (
+           SELECT
+             bp.batch_key,
+             bp.generation_version,
+             COUNT(*) FILTER (WHERE ma.status = 'ready') AS ready_media_count,
+             MAX(ma.updated_at) AS latest_media_updated_at
+           FROM batch_profiles bp
+           LEFT JOIN media.media_assets ma ON ma.owner_profile_id = bp.id
+           GROUP BY bp.batch_key, bp.generation_version
+         )
+         SELECT
+           bp.batch_key,
+           bp.generation_version,
+           COUNT(*)::text AS profile_count,
+           COUNT(*) FILTER (WHERE LOWER(bp.gender_identity) = 'female')::text AS female_count,
+           COUNT(*) FILTER (WHERE LOWER(bp.gender_identity) = 'male')::text AS male_count,
+           COUNT(*) FILTER (
+             WHERE LOWER(bp.gender_identity) NOT IN ('female', 'male')
+           )::text AS other_count,
+           COALESCE(MAX(bm.ready_media_count), 0)::text AS ready_media_count,
+           MAX(bp.created_at) AS latest_created_at,
+           CASE
+             WHEN MAX(bm.latest_media_updated_at) IS NULL THEN MAX(bp.updated_at)
+             ELSE GREATEST(MAX(bp.updated_at), MAX(bm.latest_media_updated_at))
+           END AS latest_updated_at
+         FROM batch_profiles bp
+         LEFT JOIN batch_media bm
+           ON bm.batch_key = bp.batch_key
+          AND bm.generation_version = bp.generation_version
+         GROUP BY bp.batch_key, bp.generation_version
+         ORDER BY bp.generation_version DESC, bp.batch_key ASC`
+      );
+      return result.rows.map((row) => ({
+        batchKey: row.batch_key,
+        generationVersion: Number(row.generation_version),
+        profileCount: Number(row.profile_count || 0),
+        femaleCount: Number(row.female_count || 0),
+        maleCount: Number(row.male_count || 0),
+        otherCount: Number(row.other_count || 0),
+        readyMediaCount: Number(row.ready_media_count || 0),
+        latestCreatedAt:
+          row.latest_created_at instanceof Date
+            ? row.latest_created_at.toISOString()
+            : row.latest_created_at
+              ? new Date(row.latest_created_at).toISOString()
+              : null,
+        latestUpdatedAt:
+          row.latest_updated_at instanceof Date
+            ? row.latest_updated_at.toISOString()
+            : row.latest_updated_at
+              ? new Date(row.latest_updated_at).toISOString()
+              : null,
+      }));
+    });
+  }
+
+  async previewGeneratedBatchDelete(batchKey: string, generationVersion: number) {
+    return this.measure("generated-batch-delete-preview", async () => {
+      const result = await pool.query<{
+        profile_count: string;
+        female_count: string;
+        male_count: string;
+        other_count: string;
+        ready_media_count: string;
+        profile_rows: string;
+        dummy_metadata_rows: string;
+        media_asset_rows: string;
+        profile_image_rows: string;
+        category_value_rows: string;
+        language_rows: string;
+        interest_rows: string;
+        location_history_rows: string;
+        decision_rows: string;
+        interaction_rows: string;
+        queue_rows: string;
+        actor_state_rows: string;
+        projection_rows: string;
+        user_rows: string;
+        latest_created_at: string | Date | null;
+        latest_updated_at: string | Date | null;
+      }>(
+        `WITH batch AS (
+           SELECT p.id, p.user_id, p.public_id, p.gender_identity, p.created_at, p.updated_at
+           FROM core.profiles p
+           JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+           WHERE p.kind = 'dummy'
+             AND pdm.dummy_batch_key = $1
+             AND pdm.generation_version = $2
+         )
+         SELECT
+           COUNT(*)::text AS profile_count,
+           COUNT(*) FILTER (WHERE LOWER(gender_identity) = 'female')::text AS female_count,
+           COUNT(*) FILTER (WHERE LOWER(gender_identity) = 'male')::text AS male_count,
+           COUNT(*) FILTER (WHERE LOWER(gender_identity) NOT IN ('female', 'male'))::text AS other_count,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM media.media_assets ma
+             JOIN batch b ON b.id = ma.owner_profile_id
+             WHERE ma.status = 'ready'
+           ), '0') AS ready_media_count,
+           COUNT(*)::text AS profile_rows,
+           COALESCE((SELECT COUNT(*)::text FROM core.profile_dummy_metadata pdm JOIN batch b ON b.id = pdm.profile_id), '0') AS dummy_metadata_rows,
+           COALESCE((SELECT COUNT(*)::text FROM media.media_assets ma JOIN batch b ON b.id = ma.owner_profile_id), '0') AS media_asset_rows,
+           COALESCE((SELECT COUNT(*)::text FROM media.profile_images pi JOIN batch b ON b.id = pi.profile_id), '0') AS profile_image_rows,
+           COALESCE((SELECT COUNT(*)::text FROM core.profile_category_values pcv JOIN batch b ON b.id = pcv.profile_id), '0') AS category_value_rows,
+           COALESCE((SELECT COUNT(*)::text FROM core.profile_languages pl JOIN batch b ON b.id = pl.profile_id), '0') AS language_rows,
+           COALESCE((SELECT COUNT(*)::text FROM core.profile_interests pi JOIN batch b ON b.id = pi.profile_id), '0') AS interest_rows,
+           COALESCE((SELECT COUNT(*)::text FROM core.profile_location_history plh JOIN batch b ON b.id = plh.profile_id), '0') AS location_history_rows,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM discovery.profile_decisions d
+             WHERE EXISTS (
+               SELECT 1
+               FROM batch b
+               WHERE b.id = d.actor_profile_id
+                  OR b.id = d.target_profile_id
+                  OR b.public_id = d.target_profile_public_id
+             )
+           ), '0') AS decision_rows,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM discovery.profile_interactions i
+             WHERE EXISTS (
+               SELECT 1
+               FROM batch b
+               WHERE b.id = i.actor_profile_id
+                  OR b.id = i.target_profile_id
+                  OR b.public_id = i.target_profile_public_id
+             )
+           ), '0') AS interaction_rows,
+           COALESCE((
+             SELECT COUNT(*)::text
+             FROM discovery.actor_queue aq
+             WHERE EXISTS (
+               SELECT 1
+               FROM batch b
+               WHERE b.id = aq.actor_profile_id
+                  OR b.id = aq.target_profile_id
+                  OR b.public_id = aq.target_profile_public_id
+             )
+           ), '0') AS queue_rows,
+           COALESCE((SELECT COUNT(*)::text FROM discovery.actor_state ast JOIN batch b ON b.id = ast.actor_profile_id), '0') AS actor_state_rows,
+           COALESCE((
+             SELECT (
+               (SELECT COUNT(*) FROM discovery.filter_preferences fp JOIN batch b ON b.id = fp.actor_profile_id) +
+               (SELECT COUNT(*) FROM discovery.profile_preference_thresholds pth JOIN batch b ON b.id = pth.actor_profile_id) +
+               (SELECT COUNT(*) FROM discovery.popular_attribute_counts pac JOIN batch b ON b.id = pac.actor_profile_id) +
+               (SELECT COUNT(*) FROM discovery.popular_attribute_modes pam JOIN batch b ON b.id = pam.actor_profile_id) +
+               (SELECT COUNT(*) FROM discovery.discovery_change_messages dcm JOIN batch b ON b.id = dcm.actor_profile_id) +
+               (SELECT COUNT(*) FROM discovery.profile_reset_state prs JOIN batch b ON b.id = prs.actor_profile_id)
+             )::text
+           ), '0') AS projection_rows,
+           COALESCE((SELECT COUNT(*)::text FROM auth.users u JOIN batch b ON b.user_id = u.id), '0') AS user_rows,
+           MAX(created_at) AS latest_created_at,
+           MAX(updated_at) AS latest_updated_at
+         FROM batch`,
+        [batchKey, generationVersion]
+      );
+
+      const row = result.rows[0];
+      return {
+        batchKey,
+        generationVersion,
+        profileCount: Number(row?.profile_count || 0),
+        femaleCount: Number(row?.female_count || 0),
+        maleCount: Number(row?.male_count || 0),
+        otherCount: Number(row?.other_count || 0),
+        readyMediaCount: Number(row?.ready_media_count || 0),
+        deletedProfiles: Number(row?.profile_rows || 0),
+        deletedDummyMetadata: Number(row?.dummy_metadata_rows || 0),
+        deletedMediaAssets: Number(row?.media_asset_rows || 0),
+        deletedProfileImages: Number(row?.profile_image_rows || 0),
+        deletedCategoryValues: Number(row?.category_value_rows || 0),
+        deletedLanguages: Number(row?.language_rows || 0),
+        deletedInterests: Number(row?.interest_rows || 0),
+        deletedLocationHistory: Number(row?.location_history_rows || 0),
+        deletedDecisions: Number(row?.decision_rows || 0),
+        deletedInteractions: Number(row?.interaction_rows || 0),
+        deletedQueueRows: Number(row?.queue_rows || 0),
+        deletedActorStateRows: Number(row?.actor_state_rows || 0),
+        deletedProjectionRows: Number(row?.projection_rows || 0),
+        deletedUsers: Number(row?.user_rows || 0),
+        latestCreatedAt:
+          row?.latest_created_at instanceof Date
+            ? row.latest_created_at.toISOString()
+            : row?.latest_created_at
+              ? new Date(row.latest_created_at).toISOString()
+              : null,
+        latestUpdatedAt:
+          row?.latest_updated_at instanceof Date
+            ? row.latest_updated_at.toISOString()
+            : row?.latest_updated_at
+              ? new Date(row.latest_updated_at).toISOString()
+              : null,
+      } satisfies GeneratedBatchDeletePreview;
+    });
+  }
+
+  async deleteGeneratedBatch(
+    batchKey: string,
+    generationVersion: number,
+    confirmation: { confirmBatchKey: string; confirmGenerationVersion: number }
+  ) {
+    const normalizedBatchKey = String(batchKey || "").trim();
+    if (!normalizedBatchKey) {
+      throw new Error("BATCH_KEY_REQUIRED");
+    }
+    if (String(confirmation.confirmBatchKey || "").trim() !== normalizedBatchKey) {
+      throw new Error("BATCH_KEY_CONFIRMATION_MISMATCH");
+    }
+    if (Number(confirmation.confirmGenerationVersion) !== Number(generationVersion)) {
+      throw new Error("GENERATION_VERSION_CONFIRMATION_MISMATCH");
+    }
+
+    const preview = await this.previewGeneratedBatchDelete(batchKey, generationVersion);
+    if (preview.profileCount === 0) {
+      return {
+        ...preview,
+        deletedBatchKey: normalizedBatchKey,
+      } satisfies GeneratedBatchDeleteSummary;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const batch = await client.query<{ id: number; user_id: number | null; public_id: string }>(
+        `SELECT p.id, p.user_id, p.public_id
+         FROM core.profiles p
+         JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+         WHERE p.kind = 'dummy'
+           AND pdm.dummy_batch_key = $1
+           AND pdm.generation_version = $2
+         ORDER BY p.id ASC`,
+        [batchKey, generationVersion]
+      );
+      const profileIds = batch.rows.map((row) => row.id);
+      const publicIds = batch.rows.map((row) => row.public_id);
+      const userIds = batch.rows
+        .map((row) => Number(row.user_id))
+        .filter((value) => Number.isFinite(value) && value > 0);
+
+      if (profileIds.length > 0) {
+        await client.query(
+          `DELETE FROM discovery.actor_queue
+           WHERE actor_profile_id = ANY($1::bigint[])
+              OR target_profile_id = ANY($1::bigint[])
+              OR target_profile_public_id = ANY($2::varchar[])`,
+          [profileIds, publicIds]
+        );
+        await client.query(
+          `DELETE FROM discovery.profile_decisions
+           WHERE actor_profile_id = ANY($1::bigint[])
+              OR target_profile_id = ANY($1::bigint[])
+              OR target_profile_public_id = ANY($2::varchar[])`,
+          [profileIds, publicIds]
+        );
+        await client.query(
+          `DELETE FROM discovery.profile_interactions
+           WHERE actor_profile_id = ANY($1::bigint[])
+              OR target_profile_id = ANY($1::bigint[])
+              OR target_profile_public_id = ANY($2::varchar[])`,
+          [profileIds, publicIds]
+        );
+      }
+
+      if (userIds.length > 0) {
+        await client.query(`DELETE FROM auth.users WHERE id = ANY($1::bigint[])`, [userIds]);
+      }
+
+      await client.query(
+        `DELETE FROM core.profiles
+         WHERE id = ANY($1::bigint[])`,
+        [profileIds]
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    await this.invalidateAdminCaches();
+    return {
+      ...preview,
+      deletedBatchKey: normalizedBatchKey,
+    } satisfies GeneratedBatchDeleteSummary;
+  }
+
+  async getProfileDetail(publicId: string) {
+    const normalizedPublicId = String(publicId || "").trim();
+    if (!normalizedPublicId) {
+      return null;
+    }
+
+    const profileResult = await pool.query<{
+      profile_id: number;
+      user_id: number | null;
+      public_id: string;
+      display_name: string;
+      kind: "user" | "dummy";
+      profession: string;
+      bio: string;
+      content_locale: "es" | "en";
+      date_of_birth: string | null;
+      location: string;
+      country: string;
+      gender_identity: string;
+      pronouns: string;
+      personality: string;
+      relationship_goals: string;
+      education: string;
+      children_preference: string;
+      physical_activity: string;
+      alcohol_use: string;
+      tobacco_use: string;
+      political_interest: string;
+      religion_importance: string;
+      religion: string;
+      body_type: string;
+      height: string;
+      hair_color: string;
+      ethnicity: string;
+      is_discoverable: boolean;
+      created_at: string | Date;
+      updated_at: string | Date;
+      onboarding_status: string | null;
+      onboarding_completed_at: string | Date | null;
+      synthetic_group: string | null;
+      synthetic_variant: string | null;
+      dummy_batch_key: string | null;
+      generation_version: number | null;
+      total_likes: number | null;
+      total_passes: number | null;
+      threshold_reached: boolean | null;
+      likes_until_unlock: number | null;
+      threshold_reached_at: string | Date | null;
+      last_decision_event_at: string | Date | null;
+      last_recomputed_at: string | Date | null;
+      rebuild_status: string | null;
+      has_ready_media: boolean;
+      is_activated: boolean;
+      total_decisions: string;
+      last_interaction_at: string | Date | null;
+    }>(
+      `SELECT
+         p.id AS profile_id,
+         p.user_id,
+         p.public_id,
+         p.display_name,
+         p.kind,
+         p.profession,
+         p.bio,
+         p.content_locale,
+         p.date_of_birth,
+         p.location,
+         p.country,
+         p.gender_identity,
+         p.pronouns,
+         p.personality,
+         p.relationship_goals,
+         p.education,
+         p.children_preference,
+         p.physical_activity,
+         p.alcohol_use,
+         p.tobacco_use,
+         p.political_interest,
+         p.religion_importance,
+         p.religion,
+         p.body_type,
+         p.height,
+         p.hair_color,
+         p.ethnicity,
+         p.is_discoverable,
+         p.created_at,
+         p.updated_at,
+         o.status AS onboarding_status,
+         o.completed_at AS onboarding_completed_at,
+         pdm.synthetic_group,
+         pdm.synthetic_variant,
+         pdm.dummy_batch_key,
+         pdm.generation_version,
+         pth.total_likes,
+         pth.total_passes,
+         pth.threshold_reached,
+         pth.likes_until_unlock,
+         pth.threshold_reached_at,
+         pth.last_decision_event_at,
+         ugpm.last_recomputed_at,
+         ugpm.rebuild_status,
+         EXISTS (
+           SELECT 1
+           FROM media.profile_images pi
+           JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+           WHERE pi.profile_id = p.id
+             AND ma.status = 'ready'
+         ) AS has_ready_media,
+         CASE
+           WHEN o.status = 'completed'::onboarding_status
+            AND p.is_discoverable = true
+            AND EXISTS (
+              SELECT 1
+              FROM media.profile_images pi
+              JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+              WHERE pi.profile_id = p.id
+                AND ma.status = 'ready'
+            )
+           THEN true
+           ELSE false
+         END AS is_activated,
+         COALESCE((
+           SELECT COUNT(*)::text
+           FROM discovery.profile_interactions pi
+           WHERE pi.actor_profile_id = p.id
+         ), '0') AS total_decisions,
+         (
+           SELECT MAX(pi.created_at)
+           FROM discovery.profile_interactions pi
+           WHERE pi.actor_profile_id = p.id
+         ) AS last_interaction_at
+       FROM core.profiles p
+       LEFT JOIN core.user_onboarding o ON o.user_id = p.user_id
+       LEFT JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+       LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+       LEFT JOIN goals.user_goal_projection_meta ugpm ON ugpm.user_id = p.user_id
+       WHERE p.public_id = $1
+       LIMIT 1`,
+      [normalizedPublicId]
+    );
+
+    const profile = profileResult.rows[0];
+    if (!profile) {
+      return null;
+    }
+
+    const [images, languages, interests, categoryValues, recentDecisions] = await Promise.all([
+      pool.query<{
+        profile_image_id: number;
+        media_asset_id: number;
+        sort_order: number;
+        is_primary: boolean;
+        status: "pending" | "ready" | "deleted";
+        public_url: string | null;
+        mime_type: string;
+        width: number | null;
+        height: number | null;
+        updated_at: string | Date | null;
+      }>(
+        `SELECT
+           pi.id AS profile_image_id,
+           ma.id AS media_asset_id,
+           pi.sort_order,
+           pi.is_primary,
+           ma.status,
+           ma.public_url,
+           ma.mime_type,
+           ma.width,
+           ma.height,
+           ma.updated_at
+         FROM media.profile_images pi
+         JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+         WHERE pi.profile_id = $1
+         ORDER BY pi.sort_order ASC, pi.id ASC`,
+        [profile.profile_id]
+      ),
+      pool.query<{ language_code: string; position: number; is_primary: boolean }>(
+        `SELECT language_code, position, is_primary
+         FROM core.profile_languages
+         WHERE profile_id = $1
+         ORDER BY position ASC, language_code ASC`,
+        [profile.profile_id]
+      ),
+      pool.query<{ interest_code: string; position: number }>(
+        `SELECT interest_code, position
+         FROM core.profile_interests
+         WHERE profile_id = $1
+         ORDER BY position ASC, interest_code ASC`,
+        [profile.profile_id]
+      ),
+      pool.query<{ category_code: string; value_key: string; source: string }>(
+        `SELECT category_code, value_key, source
+         FROM core.profile_category_values
+         WHERE profile_id = $1
+         ORDER BY category_code ASC`,
+        [profile.profile_id]
+      ),
+      pool.query<RecentDecisionRow>(
+        `SELECT id, interaction_type, target_profile_public_id, created_at
+         FROM discovery.profile_interactions
+         WHERE actor_profile_id = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT 20`,
+        [profile.profile_id]
+      ),
+    ]);
+
+    return {
+      profile: {
+        ...profile,
+        total_decisions: Number(profile.total_decisions || 0),
+      },
+      images: images.rows.map((row) => ({
+        profileImageId: row.profile_image_id,
+        mediaAssetId: row.media_asset_id,
+        sortOrder: row.sort_order,
+        isPrimary: row.is_primary,
+        status: row.status,
+        publicUrl: row.public_url,
+        mimeType: row.mime_type,
+        width: row.width,
+        height: row.height,
+        updatedAt:
+          row.updated_at instanceof Date
+            ? row.updated_at.toISOString()
+            : row.updated_at
+              ? new Date(row.updated_at).toISOString()
+              : null,
+      })),
+      languages: languages.rows,
+      interests: interests.rows,
+      categoryValues: categoryValues.rows,
+      recentDecisions: recentDecisions.rows,
+    };
   }
 
   async getUserDetail(identifier: string) {

@@ -64,6 +64,9 @@ export const cacheKeys = {
   adminUsers(filters: unknown) {
     return cacheKey("admin", "users", cacheHash(filters));
   },
+  adminGeneratedBatches() {
+    return cacheKey("admin", "generated-batches");
+  },
   adminUserFilterOptions() {
     return cacheKey("admin", "user-filter-options");
   },
