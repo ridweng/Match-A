@@ -21,4 +21,11 @@ node_modules
 **/build
 tmp
 
-data/postgres/db
+data/postgres
+data/postgres/**
+data/media
+data/media/**
+.git
+node_modules
+.env
+*.log
