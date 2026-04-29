@@ -95,9 +95,9 @@ test("rate-limit tool derives targeted sign-up keys", () => {
   assert.equal(descriptors.length, 3);
   assert.deepEqual(
     descriptors.map((entry) => entry.limiterName),
-    ["api-general", "api-auth-strict", "auth-identifier"]
+    ["api-general", "auth-route-ip", "auth-identifier"]
   );
   assert.match(descriptors[0]!.storageKey, /^api-general:/);
-  assert.match(descriptors[1]!.storageKey, /^api-auth-strict:/);
+  assert.match(descriptors[1]!.storageKey, /^auth-route-ip:/);
   assert.match(descriptors[2]!.storageKey, /^identifier:sign-up:/);
 });

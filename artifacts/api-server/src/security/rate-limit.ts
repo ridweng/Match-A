@@ -14,7 +14,7 @@ type RateLimitOptions = {
   keyType?: "ip" | "route-ip" | "identifier";
 };
 
-type RateLimitResult = {
+export type RateLimitResult = {
   allowed: boolean;
   limit: number;
   remaining: number;
@@ -51,8 +51,11 @@ const AUTH_ROUTE_PATHS = {
   "sign-in": "/api/auth/sign-in",
   "sign-up": "/api/auth/sign-up",
   refresh: "/api/auth/refresh",
+  "verify-email-resend": "/api/auth/verify-email/resend",
   "password-reset/request": "/api/auth/password-reset/request",
+  "password-reset-request": "/api/auth/password-reset/request",
   "password-reset/confirm": "/api/auth/password-reset/confirm",
+  "password-reset-confirm": "/api/auth/password-reset/confirm",
   "verify-email/resend": "/api/auth/verify-email/resend",
 } as const;
 
@@ -256,6 +259,7 @@ setInterval(() => {
 export class RateLimitExceededError extends Error {
   constructor(
     readonly details: {
+      result: RateLimitResult;
       retryAfterSeconds: number;
       limiterName: string;
       keyType: "ip" | "route-ip" | "identifier";
@@ -318,9 +322,9 @@ export function describeStrictAuthRateLimitKey(input: {
   const routePath = resolveAuthRoutePath(input.route);
   const method = (input.method || "POST").toUpperCase();
   const rawValue = `${method}:${routePath}:${input.ip}`;
-  const storageKey = buildStorageKey("api-auth-strict", rawValue);
+  const storageKey = buildStorageKey("auth-route-ip", rawValue);
   return {
-    limiterName: "api-auth-strict",
+    limiterName: "auth-route-ip",
     keyType: "route-ip",
     storageKey,
     redisKey: toRedisStorageKey(storageKey),
@@ -534,7 +538,7 @@ export function logRateLimitHit(details: {
   );
 }
 
-function setRateLimitHeaders(
+export function setRateLimitHeaders(
   res: Response,
   result: RateLimitResult
 ) {
@@ -594,10 +598,42 @@ export async function assertIdentifierRateLimit(input: {
 
   if (!result.allowed) {
     throw new RateLimitExceededError({
+      result,
       retryAfterSeconds: result.retryAfterSeconds,
       limiterName: descriptor.limiterName,
       keyType: descriptor.keyType,
       key: descriptor.storageKey,
+    });
+  }
+}
+
+export async function assertRouteIpRateLimit(input: {
+  route: string;
+  ip: string;
+  windowMs: number;
+  max: number;
+  method?: string;
+}) {
+  const descriptor = describeStrictAuthRateLimitKey({
+    route: input.route,
+    ip: input.ip,
+    method: input.method,
+  });
+  const result = await getSharedLimiter().consume(descriptor.storageKey, {
+    windowMs: input.windowMs,
+    max: input.max,
+  });
+
+  if (!result.allowed) {
+    throw new RateLimitExceededError({
+      result,
+      retryAfterSeconds: result.retryAfterSeconds,
+      limiterName: descriptor.limiterName,
+      keyType: descriptor.keyType,
+      key: descriptor.storageKey,
+      requestIp: input.ip,
+      requestMethod: input.method,
+      requestPath: descriptor.routePath,
     });
   }
 }

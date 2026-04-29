@@ -17,6 +17,32 @@ export const runtimeConfig = {
   },
   rateLimit: {
     generalMax: env.RATE_LIMIT_GENERAL_MAX,
+    auth: {
+      signUp: {
+        ipMax: env.RATE_LIMIT_AUTH_SIGN_UP_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_SIGN_UP_IDENTIFIER_MAX,
+      },
+      signIn: {
+        ipMax: env.RATE_LIMIT_AUTH_SIGN_IN_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_SIGN_IN_IDENTIFIER_MAX,
+      },
+      refresh: {
+        ipMax: env.RATE_LIMIT_AUTH_REFRESH_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_REFRESH_IDENTIFIER_MAX,
+      },
+      verifyEmailResend: {
+        ipMax: env.RATE_LIMIT_AUTH_VERIFY_EMAIL_RESEND_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_VERIFY_EMAIL_RESEND_IDENTIFIER_MAX,
+      },
+      passwordResetRequest: {
+        ipMax: env.RATE_LIMIT_AUTH_PASSWORD_RESET_REQUEST_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_PASSWORD_RESET_REQUEST_IDENTIFIER_MAX,
+      },
+      passwordResetConfirm: {
+        ipMax: env.RATE_LIMIT_AUTH_PASSWORD_RESET_CONFIRM_IP_MAX,
+        identifierMax: env.RATE_LIMIT_AUTH_PASSWORD_RESET_CONFIRM_IDENTIFIER_MAX,
+      },
+    },
     redisEnabled: env.RATE_LIMIT_REDIS_ENABLED,
     redisUrl: env.REDIS_URL,
   },

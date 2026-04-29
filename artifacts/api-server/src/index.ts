@@ -156,25 +156,6 @@ async function bootstrap() {
       max: runtimeConfig.rateLimit.generalMax,
     })
   );
-  expressApp.use(
-    [
-      "/api/auth/sign-in",
-      "/api/auth/sign-up",
-      "/api/auth/refresh",
-      "/api/auth/password-reset/request",
-      "/api/auth/password-reset/confirm",
-      "/api/auth/verify-email/resend",
-    ],
-    createRateLimitMiddleware({
-      keyPrefix: "api-auth-strict",
-      limiterName: "api-auth-strict",
-      keyType: "route-ip",
-      windowMs: 15 * 60 * 1000,
-      max: 5,
-      keyGenerator: (req) =>
-        `${req.method}:${req.baseUrl || req.path}:${req.ip || "unknown"}`,
-    })
-  );
 
   expressApp.use(express.json({ limit: "256kb", strict: true }));
   expressApp.use(express.urlencoded({ extended: false, limit: "32kb" }));

@@ -15,12 +15,15 @@ import {
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { z, ZodError } from "zod";
 import type { Request, Response } from "express";
+import { runtimeConfig } from "../../config/runtime";
 import { AuthService, type Provider } from "./auth.service";
 import { API_TAGS } from "../../docs/openapi/tags";
 import {
   RateLimitExceededError,
+  assertRouteIpRateLimit,
   assertIdentifierRateLimit,
   logRateLimitHit,
+  setRateLimitHeaders,
 } from "../../security/rate-limit";
 import {
   normalizedEmailSchema,
@@ -134,12 +137,26 @@ export class AuthController {
     return res.status(HttpStatus.UNAUTHORIZED).json({ error: message });
   }
 
-  private async assertAuthIdentifierLimit(route: string, identifier: string) {
+  private async assertAuthIdentifierLimit(
+    route: string,
+    identifier: string,
+    max: number
+  ) {
     await assertIdentifierRateLimit({
       route,
       identifier,
       windowMs: 15 * 60 * 1000,
-      max: 13,
+      max,
+    });
+  }
+
+  private async assertAuthRouteIpLimit(req: Request, route: string, max: number) {
+    await assertRouteIpRateLimit({
+      route,
+      ip: this.getClientIp(req),
+      method: req.method,
+      windowMs: 15 * 60 * 1000,
+      max,
     });
   }
 
@@ -148,7 +165,7 @@ export class AuthController {
     res: Response,
     error: RateLimitExceededError
   ) {
-    res.setHeader("Retry-After", String(error.details.retryAfterSeconds));
+    setRateLimitHeaders(res, error.details.result);
     logRateLimitHit({
       limiterName: error.details.limiterName,
       keyType: error.details.keyType,
@@ -175,7 +192,12 @@ export class AuthController {
   async signUp(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signUpSchema.parse(body);
-      await this.assertAuthIdentifierLimit("sign-up", input.email);
+      await this.assertAuthRouteIpLimit(req, "sign-up", runtimeConfig.rateLimit.auth.signUp.ipMax);
+      await this.assertAuthIdentifierLimit(
+        "sign-up",
+        input.email,
+        runtimeConfig.rateLimit.auth.signUp.identifierMax
+      );
       const result = await this.authService.signUp(input);
       if ("error" in result) {
         const status =
@@ -204,7 +226,12 @@ export class AuthController {
   async signIn(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = signInSchema.parse(body);
-      await this.assertAuthIdentifierLimit("sign-in", input.email);
+      await this.assertAuthRouteIpLimit(req, "sign-in", runtimeConfig.rateLimit.auth.signIn.ipMax);
+      await this.assertAuthIdentifierLimit(
+        "sign-in",
+        input.email,
+        runtimeConfig.rateLimit.auth.signIn.identifierMax
+      );
       const result = await this.authService.signIn(input, {
         requestId: this.getRequestId(req),
       });
@@ -237,7 +264,12 @@ export class AuthController {
   async refresh(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const { refreshToken } = refreshSchema.parse(body);
-      await this.assertAuthIdentifierLimit("refresh", refreshToken);
+      await this.assertAuthRouteIpLimit(req, "refresh", runtimeConfig.rateLimit.auth.refresh.ipMax);
+      await this.assertAuthIdentifierLimit(
+        "refresh",
+        refreshToken,
+        runtimeConfig.rateLimit.auth.refresh.identifierMax
+      );
       const result = await this.authService.refresh(refreshToken, {
         requestId: this.getRequestId(req),
       });
@@ -307,7 +339,16 @@ export class AuthController {
   ) {
     try {
       const input = resendVerificationSchema.parse(body);
-      await this.assertAuthIdentifierLimit("verify-email-resend", input.email);
+      await this.assertAuthRouteIpLimit(
+        req,
+        "verify-email/resend",
+        runtimeConfig.rateLimit.auth.verifyEmailResend.ipMax
+      );
+      await this.assertAuthIdentifierLimit(
+        "verify-email/resend",
+        input.email,
+        runtimeConfig.rateLimit.auth.verifyEmailResend.identifierMax
+      );
       return res.json(
         await this.authService.resendVerificationEmail({
           email: input.email,
@@ -356,7 +397,16 @@ export class AuthController {
   ) {
     try {
       const input = passwordResetRequestSchema.parse(body);
-      await this.assertAuthIdentifierLimit("password-reset-request", input.email);
+      await this.assertAuthRouteIpLimit(
+        req,
+        "password-reset/request",
+        runtimeConfig.rateLimit.auth.passwordResetRequest.ipMax
+      );
+      await this.assertAuthIdentifierLimit(
+        "password-reset/request",
+        input.email,
+        runtimeConfig.rateLimit.auth.passwordResetRequest.identifierMax
+      );
       return res.json(
         await this.authService.requestPasswordReset({
           email: input.email,
@@ -403,7 +453,16 @@ export class AuthController {
   async confirmPasswordReset(@Req() req: Request, @Body() body: unknown, @Res() res: Response) {
     try {
       const input = passwordResetConfirmSchema.parse(body);
-      await this.assertAuthIdentifierLimit("password-reset-confirm", input.token);
+      await this.assertAuthRouteIpLimit(
+        req,
+        "password-reset/confirm",
+        runtimeConfig.rateLimit.auth.passwordResetConfirm.ipMax
+      );
+      await this.assertAuthIdentifierLimit(
+        "password-reset/confirm",
+        input.token,
+        runtimeConfig.rateLimit.auth.passwordResetConfirm.identifierMax
+      );
       const result = await this.authService.confirmPasswordReset(input);
       if ("error" in result) {
         return res.status(HttpStatus.BAD_REQUEST).json({ error: result.error });
