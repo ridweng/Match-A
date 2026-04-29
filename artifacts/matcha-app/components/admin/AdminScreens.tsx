@@ -216,7 +216,11 @@ function AdminLayout({
 
   return (
     <View style={styles.shell}>
-      <View style={styles.sidebar}>
+      <ScrollView
+        style={styles.sidebarScroll}
+        contentContainerStyle={styles.sidebarInner}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.brandMark}>
           <Text style={styles.brandMarkText}>M</Text>
         </View>
@@ -240,8 +244,12 @@ function AdminLayout({
             </Pressable>
           ))}
         </View>
-      </View>
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+      </ScrollView>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={styles.contentInner}
+        showsVerticalScrollIndicator={true}
+      >
         <View style={styles.topbar}>
           <View>
             <Text style={styles.kicker}>Protected dashboard</Text>
@@ -620,7 +628,7 @@ function AdminTable({
   }
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator>
+    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
       <View style={styles.table}>
         <View style={[styles.tableRow, styles.tableHeaderRow]}>
           {headers.map((header) => (
@@ -656,15 +664,22 @@ const adminColors = {
 const styles = StyleSheet.create({
   shell: {
     minHeight: "100vh" as never,
+    height: "100vh" as never,
     backgroundColor: "#edf2e9",
     flexDirection: "row",
+    overflow: "hidden",
   },
-  sidebar: {
+  sidebarScroll: {
     width: 270,
+    flexShrink: 0,
     backgroundColor: Colors.background,
-    padding: 24,
     borderRightWidth: 1,
     borderRightColor: Colors.border,
+  },
+  sidebarInner: {
+    padding: 24,
+    paddingBottom: 36,
+    gap: 0,
   },
   brandMark: {
     width: 46,
@@ -713,9 +728,11 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+    minWidth: 0,
   },
   contentInner: {
     padding: 28,
+    paddingBottom: 48,
     gap: 20,
   },
   topbar: {
