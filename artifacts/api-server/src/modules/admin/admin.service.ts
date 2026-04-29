@@ -1192,7 +1192,7 @@ export class AdminService {
     });
 
     if (canRead("core.profile_dummy_metadata")) {
-      const [batchCounts, dummyBreakdown] = await Promise.all([
+      const [batchCounts, dummyBreakdown, launchBatch] = await Promise.all([
         pool.query<{ label: string; value: string }>(
           `SELECT
              CONCAT(dummy_batch_key, ' / gen ', generation_version) AS label,
@@ -1210,6 +1210,63 @@ export class AdminService {
            GROUP BY 1
            ORDER BY 1 ASC`
         ),
+        pool.query<{
+          profile_count: string;
+          female_count: string;
+          male_count: string;
+          ready_media_count: string;
+          discoverable_count: string;
+          failing_count: string;
+          generation_version: number | null;
+          synthetic_variant: string | null;
+        }>(
+          `WITH batch AS (
+             SELECT
+               p.id,
+               p.kind,
+               p.gender_identity,
+               p.is_discoverable,
+               pdm.generation_version,
+               pdm.synthetic_variant
+             FROM core.profiles p
+             JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
+             WHERE pdm.dummy_batch_key = 'launch_reference_v1'
+           ),
+           quality AS (
+             SELECT
+               b.id,
+               COUNT(*) FILTER (WHERE ma.status = 'ready') AS ready_media_count,
+               COUNT(DISTINCT pcv.category_code) AS category_count,
+               COUNT(DISTINCT pl.language_code) AS language_count,
+               COUNT(DISTINCT fp.actor_profile_id) AS preference_count
+             FROM batch b
+             LEFT JOIN media.profile_images pi ON pi.profile_id = b.id
+             LEFT JOIN media.media_assets ma ON ma.id = pi.media_asset_id
+             LEFT JOIN core.profile_category_values pcv ON pcv.profile_id = b.id
+             LEFT JOIN core.profile_languages pl ON pl.profile_id = b.id
+             LEFT JOIN discovery.filter_preferences fp ON fp.actor_profile_id = b.id
+             GROUP BY b.id
+           )
+           SELECT
+             COUNT(*)::text AS profile_count,
+             COUNT(*) FILTER (WHERE b.gender_identity = 'female')::text AS female_count,
+             COUNT(*) FILTER (WHERE b.gender_identity = 'male')::text AS male_count,
+             COALESCE(SUM(q.ready_media_count), 0)::text AS ready_media_count,
+             COUNT(*) FILTER (WHERE b.is_discoverable = true)::text AS discoverable_count,
+             COUNT(*) FILTER (
+               WHERE b.kind <> 'dummy'
+                  OR b.gender_identity NOT IN ('female', 'male')
+                  OR b.is_discoverable IS NOT TRUE
+                  OR q.ready_media_count < 4
+                  OR q.category_count < 6
+                  OR q.language_count < 1
+                  OR q.preference_count < 1
+             )::text AS failing_count,
+             MAX(b.generation_version) AS generation_version,
+             MAX(b.synthetic_variant) AS synthetic_variant
+           FROM batch b
+           LEFT JOIN quality q ON q.id = b.id`
+        ),
       ]);
 
       groups.push({
@@ -1223,6 +1280,23 @@ export class AdminService {
             label: row.label,
             value: row.value,
           })),
+        ],
+      });
+
+      const launch = launchBatch.rows[0];
+      groups.push({
+        title: "Launch Reference Batch",
+        metrics: [
+          {
+            label: "launch_reference_v1 count",
+            value: launch?.profile_count || "0",
+            detail: `generationVersion: ${launch?.synthetic_variant || "famous_reference_synthetic_v1"}`,
+          },
+          { label: "Female profiles", value: launch?.female_count || "0" },
+          { label: "Male profiles", value: launch?.male_count || "0" },
+          { label: "Ready media records", value: launch?.ready_media_count || "0" },
+          { label: "Discoverable profiles", value: launch?.discoverable_count || "0" },
+          { label: "Profiles failing validation", value: launch?.failing_count || "0" },
         ],
       });
     }

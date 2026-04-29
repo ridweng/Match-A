@@ -19,6 +19,8 @@
     "db:migrate": "pnpm --dir lib/db migrate",
     "db:check": "pnpm --dir lib/db check",
     "db:seed": "pnpm --dir artifacts/api-server seed",
+    "db:seed:launch-reference-profiles": "pnpm --dir artifacts/api-server db:seed:launch-reference-profiles",
+    "db:validate:launch-reference-profiles": "pnpm --dir artifacts/api-server db:validate:launch-reference-profiles",
     "db:reset": "pnpm --dir artifacts/api-server db:reset",
     "db:rebuild": "pnpm db:reset && pnpm db:migrate && pnpm db:seed && pnpm db:rebuild:goals-projections && pnpm db:rebuild:discovery-projections",
     "db:rebuild:goals-projections": "pnpm --dir artifacts/api-server db:rebuild:goals-projections",
