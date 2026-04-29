@@ -20,3 +20,5 @@ node_modules
 **/android/app/build
 **/build
 tmp
+
+data/postgres/db
