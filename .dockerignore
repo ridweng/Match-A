@@ -1,5 +1,3 @@
-.git
-.DS_Store
 .env
 .env.*
 !.env.example
@@ -7,6 +5,14 @@
 **/.env
 **/.env.*
 !**/.env.example
+
+# Runtime data - never send to Docker build context
+/data/
+/data/**
+data
+data/**
+
+# Dependencies and build output
 node_modules
 **/node_modules
 **/dist
@@ -19,13 +25,11 @@ node_modules
 **/android/.gradle
 **/android/app/build
 **/build
-tmp
 
-data/postgres
-data/postgres/**
-data/media
-data/media/**
+# Git / OS / temp
 .git
-node_modules
-.env
+.git/**
+.DS_Store
+tmp
+tmp/**
 *.log
