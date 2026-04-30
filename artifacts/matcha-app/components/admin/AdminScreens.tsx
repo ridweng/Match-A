@@ -629,58 +629,67 @@ function AdminLayout({
     { label: "Database", path: "/admin/database", icon: "database" },
   ] as const;
 
+  const sidebarContent = (
+    <>
+      <View style={[styles.brandHeader, isMobile && styles.brandHeaderMobile]}>
+        <View style={styles.brandMark}>
+          <Text style={styles.brandMarkText}>M</Text>
+        </View>
+        <View style={styles.brandCopy}>
+          <Text style={styles.brandTitle}>MatchA</Text>
+          <Text style={styles.brandSubtitle}>Admin</Text>
+        </View>
+      </View>
+
+      <View style={[styles.nav, isMobile && styles.navMobile]}>
+        {navItems.map((item) => (
+          <Pressable
+            key={item.path}
+            onPress={() => router.push(item.path as never)}
+            style={({ pressed, hovered }) => [
+              styles.navItem,
+              isCompactSidebar && styles.navItemCompact,
+              isMobile && styles.navItemMobile,
+              hovered && active !== item.path && styles.navItemHover,
+              pressed && styles.navItemPressed,
+              active === item.path && styles.navItemActive,
+            ]}
+          >
+            <Feather
+              name={item.icon}
+              size={14}
+              color={active === item.path ? Colors.ivory : adminColors.muted}
+            />
+            <Text style={[styles.navLabel, active === item.path && styles.navLabelActive]}>
+              {item.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </>
+  );
+
   return (
     <View style={[styles.shell, isMobile && styles.shellMobile]}>
-      <ScrollView
-        horizontal={isMobile}
-        style={[
-          styles.sidebarScroll,
-          isCompactSidebar && styles.sidebarScrollCompact,
-          isMobile && styles.sidebarScrollMobile,
-        ]}
-        contentContainerStyle={[
-          styles.sidebarInner,
-          isCompactSidebar && styles.sidebarInnerCompact,
-          isMobile && styles.sidebarInnerMobile,
-        ]}
-        showsVerticalScrollIndicator={!isMobile}
-        showsHorizontalScrollIndicator={false}
-      >
-        <View style={[styles.brandHeader, isMobile && styles.brandHeaderMobile]}>
-          <View style={styles.brandMark}>
-            <Text style={styles.brandMarkText}>M</Text>
-          </View>
-          <View style={styles.brandCopy}>
-            <Text style={styles.brandTitle}>MatchA</Text>
-            <Text style={styles.brandSubtitle}>Admin</Text>
-          </View>
+      {isMobile ? (
+        <ScrollView
+          horizontal
+          style={styles.sidebarScrollMobile}
+          contentContainerStyle={styles.sidebarInnerMobile}
+          showsHorizontalScrollIndicator={false}
+        >
+          {sidebarContent}
+        </ScrollView>
+      ) : (
+        <View
+          style={[
+            styles.sidebarDesktop,
+            isCompactSidebar && styles.sidebarDesktopCompact,
+          ]}
+        >
+          {sidebarContent}
         </View>
-        <View style={[styles.nav, isMobile && styles.navMobile]}>
-          {navItems.map((item) => (
-            <Pressable
-              key={item.path}
-              onPress={() => router.push(item.path as never)}
-              style={({ pressed, hovered }) => [
-                styles.navItem,
-                isCompactSidebar && styles.navItemCompact,
-                isMobile && styles.navItemMobile,
-                hovered && active !== item.path && styles.navItemHover,
-                pressed && styles.navItemPressed,
-                active === item.path && styles.navItemActive,
-              ]}
-            >
-              <Feather
-                name={item.icon}
-                size={15}
-                color={active === item.path ? Colors.ivory : adminColors.muted}
-              />
-              <Text style={[styles.navLabel, active === item.path && styles.navLabelActive]}>
-                {item.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
+      )}
       <ScrollView
         style={styles.content}
         contentContainerStyle={[
@@ -889,6 +898,15 @@ function ProfileDetailDrawer({
                               source={{ uri: image.publicUrl }}
                               style={styles.galleryImage}
                               resizeMode="cover"
+                              onError={(event) => {
+                                if (Platform.OS === "web") {
+                                  console.warn("[admin-image] failed", {
+                                    mediaAssetId: image.mediaAssetId,
+                                    publicUrl: image.publicUrl,
+                                    error: event.nativeEvent,
+                                  });
+                                }
+                              }}
                             />
                           ) : (
                             <View style={[styles.galleryImage, styles.galleryImagePlaceholder]}>
@@ -901,8 +919,8 @@ function ProfileDetailDrawer({
                           <Text style={styles.galleryMeta}>
                             {image.status} · {image.mimeType}
                           </Text>
-                          <Text style={styles.galleryMeta}>
-                            {image.width ?? "—"}x{image.height ?? "—"} · {formatTimestamp(image.updatedAt)}
+                          <Text style={styles.galleryMeta} numberOfLines={2}>
+                            {image.publicUrl || "No public URL"}
                           </Text>
                         </View>
                       ))
@@ -1727,9 +1745,9 @@ const styles = StyleSheet.create({
   },
   title: {
     color: adminColors.ink,
-    fontSize: 38,
+    fontSize: 30,
     fontWeight: "900",
-    marginTop: 4,
+    marginTop: 3,
   },
   subtitle: {
     color: adminColors.muted,
@@ -2198,7 +2216,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   galleryCard: {
-    width: 220,
+    width: 190,
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: adminColors.border,
@@ -2208,7 +2226,7 @@ const styles = StyleSheet.create({
   },
   galleryImage: {
     width: "100%" as never,
-    aspectRatio: 0.78,
+    height: 244,
     borderRadius: 12,
     backgroundColor: "#e8eee9",
   },
@@ -2223,5 +2241,27 @@ const styles = StyleSheet.create({
   galleryMeta: {
     color: adminColors.muted,
     fontSize: 12,
+  },
+  sidebarDesktop: {
+    width: 156,
+    minWidth: 156,
+    maxWidth: 156,
+    flexBasis: 156,
+    flexGrow: 0,
+    flexShrink: 0,
+    backgroundColor: Colors.background,
+    borderRightWidth: 1,
+    borderRightColor: Colors.border,
+    padding: 10,
+    paddingBottom: 14,
+    gap: 10,
+  },
+
+  sidebarDesktopCompact: {
+    width: 148,
+    minWidth: 148,
+    maxWidth: 148,
+    flexBasis: 148,
+    paddingHorizontal: 8,
   },
 });

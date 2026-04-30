@@ -691,7 +691,7 @@ export class AdminService {
   ) {}
 
   private buildPublicMediaUrl(mediaAssetId: number) {
-    return `${runtimeConfig.baseUrl}/api/media/public/${mediaAssetId}`;
+    return `/api/media/public/${mediaAssetId}`;
   }
 
   private resolvePublicMediaUrl(mediaAssetId: number, publicUrl: string | null) {
