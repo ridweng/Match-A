@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
+import { runtimeConfig } from "../../config/runtime";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { cacheKeys } from "../cache/cache.keys";
@@ -688,6 +689,31 @@ export class AdminService {
     @Inject(CacheService)
     private readonly cacheService?: CacheService
   ) {}
+
+  private buildPublicMediaUrl(mediaAssetId: number) {
+    return `${runtimeConfig.baseUrl}/api/media/public/${mediaAssetId}`;
+  }
+
+  private resolvePublicMediaUrl(mediaAssetId: number, publicUrl: string | null) {
+    const trimmed = String(publicUrl || "").trim();
+    if (!trimmed) {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
+
+    if (trimmed.startsWith("/api/media/public/")) {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith("/api/media/public/")) {
+        return this.buildPublicMediaUrl(mediaAssetId);
+      }
+      return parsed.toString();
+    } catch {
+      return this.buildPublicMediaUrl(mediaAssetId);
+    }
+  }
 
   private async measure<T>(name: string, callback: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
@@ -2649,7 +2675,7 @@ export class AdminService {
         sortOrder: row.sort_order,
         isPrimary: row.is_primary,
         status: row.status,
-        publicUrl: row.public_url,
+        publicUrl: this.resolvePublicMediaUrl(row.media_asset_id, row.public_url),
         mimeType: row.mime_type,
         width: row.width,
         height: row.height,
