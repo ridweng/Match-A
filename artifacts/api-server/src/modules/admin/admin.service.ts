@@ -1290,7 +1290,7 @@ export class AdminService {
     });
 
     if (canRead("core.profile_dummy_metadata")) {
-      const [batchCounts, dummyBreakdown, launchBatch] = await Promise.all([
+      const [batchCounts, dummyBreakdown, launchBatches] = await Promise.all([
         pool.query<{ label: string; value: string }>(
           `SELECT
              CONCAT(dummy_batch_key, ' / gen ', generation_version) AS label,
@@ -1309,6 +1309,7 @@ export class AdminService {
            ORDER BY 1 ASC`
         ),
         pool.query<{
+          batch_key: string;
           profile_count: string;
           female_count: string;
           male_count: string;
@@ -1324,11 +1325,12 @@ export class AdminService {
                p.kind,
                p.gender_identity,
                p.is_discoverable,
+               pdm.dummy_batch_key,
                pdm.generation_version,
                pdm.synthetic_variant
              FROM core.profiles p
              JOIN core.profile_dummy_metadata pdm ON pdm.profile_id = p.id
-             WHERE pdm.dummy_batch_key = 'launch_reference_v1'
+             WHERE pdm.dummy_batch_key LIKE 'launch_reference_%'
            ),
            quality AS (
              SELECT
@@ -1346,6 +1348,7 @@ export class AdminService {
              GROUP BY b.id
            )
            SELECT
+             b.dummy_batch_key AS batch_key,
              COUNT(*)::text AS profile_count,
              COUNT(*) FILTER (WHERE b.gender_identity = 'female')::text AS female_count,
              COUNT(*) FILTER (WHERE b.gender_identity = 'male')::text AS male_count,
@@ -1355,7 +1358,7 @@ export class AdminService {
                WHERE b.kind <> 'dummy'
                   OR b.gender_identity NOT IN ('female', 'male')
                   OR b.is_discoverable IS NOT TRUE
-                  OR q.ready_media_count < 4
+                  OR q.ready_media_count < CASE WHEN b.dummy_batch_key = 'launch_reference_v2' THEN 2 ELSE 4 END
                   OR q.category_count < 6
                   OR q.language_count < 1
                   OR q.preference_count < 1
@@ -1363,7 +1366,9 @@ export class AdminService {
              MAX(b.generation_version) AS generation_version,
              MAX(b.synthetic_variant) AS synthetic_variant
            FROM batch b
-           LEFT JOIN quality q ON q.id = b.id`
+           LEFT JOIN quality q ON q.id = b.id
+           GROUP BY b.dummy_batch_key, b.generation_version
+           ORDER BY b.generation_version ASC, b.dummy_batch_key ASC`
         ),
       ]);
 
@@ -1381,21 +1386,35 @@ export class AdminService {
         ],
       });
 
-      const launch = launchBatch.rows[0];
       groups.push({
-        title: "Launch Reference Batch",
-        metrics: [
+        title: "Launch Reference Batches",
+        metrics: launchBatches.rows.flatMap((batch) => [
           {
-            label: "launch_reference_v1 count",
-            value: launch?.profile_count || "0",
-            detail: `generationVersion: ${launch?.synthetic_variant || "famous_reference_synthetic_v1"}`,
+            label: `${batch.batch_key} / gen ${batch.generation_version} profile_count`,
+            value: batch.profile_count || "0",
+            detail: `synthetic_variant: ${batch.synthetic_variant || "unknown"}`,
           },
-          { label: "Female profiles", value: launch?.female_count || "0" },
-          { label: "Male profiles", value: launch?.male_count || "0" },
-          { label: "Ready media records", value: launch?.ready_media_count || "0" },
-          { label: "Discoverable profiles", value: launch?.discoverable_count || "0" },
-          { label: "Profiles failing validation", value: launch?.failing_count || "0" },
-        ],
+          {
+            label: `${batch.batch_key} / gen ${batch.generation_version} female_count`,
+            value: batch.female_count || "0",
+          },
+          {
+            label: `${batch.batch_key} / gen ${batch.generation_version} male_count`,
+            value: batch.male_count || "0",
+          },
+          {
+            label: `${batch.batch_key} / gen ${batch.generation_version} ready_media_count`,
+            value: batch.ready_media_count || "0",
+          },
+          {
+            label: `${batch.batch_key} / gen ${batch.generation_version} discoverable_count`,
+            value: batch.discoverable_count || "0",
+          },
+          {
+            label: `${batch.batch_key} / gen ${batch.generation_version} failing_count`,
+            value: batch.failing_count || "0",
+          },
+        ]),
       });
     }
 

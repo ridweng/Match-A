@@ -799,7 +799,7 @@ export class DiscoveryService {
     if (profile.kind === "user" && profile.onboarding_status !== "completed") {
       return "not_activated";
     }
-    if (profile.kind === "user" && !profile.has_ready_media) {
+    if (!profile.has_ready_media) {
       return "missing_ready_media";
     }
     if (profile.kind === "dummy" && !profile.synthetic_group) {
@@ -1185,9 +1185,7 @@ export class DiscoveryService {
       const images = imagesByProfile.get(profile.id);
       const isDummyProfile = Boolean(profile.synthetic_group);
       const candidateBucket: DiscoveryCandidateBucket =
-        profile.kind === "user" || (isDummyProfile && Boolean(images && images.length > 0))
-          ? "real"
-          : "dummy";
+        profile.kind === "user" ? "real" : "dummy";
       const resolvedImages =
         images && images.length > 0
           ? images

@@ -1,6 +1,6 @@
 {
   "name": "workspace",
-  "version": "5.5",
+  "version": "6.2",
   "license": "MIT",
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
@@ -19,9 +19,13 @@
     "db:migrate": "pnpm --dir lib/db migrate",
     "db:check": "pnpm --dir lib/db check",
     "db:seed": "pnpm --dir artifacts/api-server seed",
+    "db:export:launch-reference-profiles:v2:images": "pnpm --dir artifacts/api-server db:export:launch-reference-profiles:v2:images",
     "db:seed:launch-reference-profiles": "pnpm --dir artifacts/api-server db:seed:launch-reference-profiles",
+    "db:seed:launch-reference-profiles:v2": "pnpm --dir artifacts/api-server db:seed:launch-reference-profiles:v2",
     "db:validate:launch-reference-profiles": "pnpm --dir artifacts/api-server db:validate:launch-reference-profiles",
+    "db:validate:launch-reference-profiles:v2": "pnpm --dir artifacts/api-server db:validate:launch-reference-profiles:v2",
     "db:refresh:launch-reference-profiles": "pnpm --dir artifacts/api-server db:refresh:launch-reference-profiles",
+    "db:refresh:launch-reference-profiles:v2": "pnpm --dir artifacts/api-server db:refresh:launch-reference-profiles:v2",
     "db:reset": "pnpm --dir artifacts/api-server db:reset",
     "db:rebuild": "pnpm db:reset && pnpm db:migrate && pnpm db:seed && pnpm db:rebuild:goals-projections && pnpm db:rebuild:discovery-projections",
     "db:rebuild:goals-projections": "pnpm --dir artifacts/api-server db:rebuild:goals-projections",

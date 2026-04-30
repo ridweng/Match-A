@@ -1,6 +1,6 @@
 {
   "name": "@workspace/api-server",
-  "version": "5.2.3",
+  "version": "6.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,9 +15,13 @@
     "rate-limit:reset": "tsx ./src/scripts/rate-limit-tool.ts reset",
     "seed": "tsx ./src/scripts/seed.ts",
     "db:seed:dummy-users": "tsx ./src/scripts/seed-dummy-users.ts",
+    "db:export:launch-reference-profiles:v2:images": "tsx ./src/scripts/export-launch-reference-v2-image-manifest.ts",
     "db:seed:launch-reference-profiles": "tsx ./src/scripts/seed-launch-reference-profiles.ts",
+    "db:seed:launch-reference-profiles:v2": "tsx ./src/scripts/seed-launch-reference-profiles-v2.ts",
     "db:validate:launch-reference-profiles": "tsx ./src/scripts/validate-launch-reference-profiles.ts",
+    "db:validate:launch-reference-profiles:v2": "tsx ./src/scripts/validate-launch-reference-profiles-v2.ts",
     "db:refresh:launch-reference-profiles": "tsx ./src/scripts/refresh-launch-reference-profiles.ts",
+    "db:refresh:launch-reference-profiles:v2": "tsx ./src/scripts/refresh-launch-reference-profiles-v2.ts",
     "db:seed:all": "pnpm seed && pnpm db:seed:dummy-users",
     "db:setup": "tsx ./src/scripts/db-setup.ts",
     "db:reset": "tsx ./src/scripts/db-reset.ts",
