@@ -7,6 +7,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  UnauthorizedException,
   Req,
   Res,
   UploadedFile,
@@ -36,9 +37,20 @@ export class MediaController {
   }
 
   private sendAuthError(res: Response, error: unknown) {
-    const message =
-      error instanceof Error && error.message ? error.message : "UNAUTHORIZED";
-    return res.status(HttpStatus.UNAUTHORIZED).json({ error: message });
+    if (error instanceof UnauthorizedException) {
+      const message =
+        error.message || error.getResponse?.()?.toString?.() || "UNAUTHORIZED";
+      return res.status(HttpStatus.UNAUTHORIZED).json({ error: message });
+    }
+    if (error instanceof Error && error.name === "UnauthorizedException") {
+      return res.status(HttpStatus.UNAUTHORIZED).json({
+        error: error.message || "UNAUTHORIZED",
+      });
+    }
+    console.error(error);
+    return res
+      .status(HttpStatus.INTERNAL_SERVER_ERROR)
+      .json({ error: "INTERNAL_SERVER_ERROR" });
   }
 
   @Get("profile-images")

@@ -1,8 +1,9 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { cacheKeys } from "../cache/cache.keys";
+import { getOrComputeWithCache, invalidateWithCache } from "../cache/cache.utils";
 import { rebuildDiscoveryProjectionsForActor } from "../discovery/discovery.projections";
 import {
   DEFAULT_GOAL_TEMPLATES,
@@ -124,8 +125,13 @@ type GoalsUnlockState = {
 @Injectable()
 export class GoalsService {
   private readonly thresholdDefault = 30;
+  private readonly logger = new Logger(GoalsService.name);
 
-  constructor(private readonly cacheService: CacheService) {}
+  constructor(
+    @Optional()
+    @Inject(CacheService)
+    private readonly cacheService?: CacheService
+  ) {}
 
   private toIsoTimestamp(input: string | Date | null | undefined) {
     if (!input) {
@@ -1246,11 +1252,14 @@ export class GoalsService {
 
   async getUserGoals(userId: number, client?: DbClient) {
     if (!client) {
-      return this.cacheService.getOrSet(
-        cacheKeys.goals(userId),
-        CACHE_TTL_SECONDS.goals,
-        () => this.loadUserGoals(userId)
-      );
+      return getOrComputeWithCache({
+        cacheService: this.cacheService,
+        logger: this.logger,
+        scope: "goals-cache",
+        key: cacheKeys.goals(userId),
+        ttlSeconds: CACHE_TTL_SECONDS.goals,
+        loader: () => this.loadUserGoals(userId),
+      });
     }
     return this.loadUserGoals(userId, client);
   }
@@ -1404,11 +1413,19 @@ export class GoalsService {
   }
 
   private async invalidateUserGoalCaches(userId: number) {
-    await Promise.all([
-      this.cacheService.delete(cacheKeys.goals(userId)),
-      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
-      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
-      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
-    ]);
+    await invalidateWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "goals-cache",
+      description: `user:${userId}`,
+      invalidate: async (cacheService) => {
+        await Promise.all([
+          cacheService.delete(cacheKeys.goals(userId)),
+          cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+          cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+          cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+        ]);
+      },
+    });
   }
 }

@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { AuthService } from "../auth/auth.service";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { cacheKeys } from "../cache/cache.keys";
+import { getOrComputeWithCache, invalidateWithCache } from "../cache/cache.utils";
 import { DiscoveryService } from "../discovery/discovery.service";
 import { GoalsService } from "../goals/goals.service";
 import { MediaService } from "../media/media.service";
@@ -48,7 +49,7 @@ export class ViewerService {
     @Inject(GoalsService) private readonly goalsService: GoalsService,
     @Inject(DiscoveryService) private readonly discoveryService: DiscoveryService,
     @Inject(MediaService) private readonly mediaService: MediaService,
-    @Inject(CacheService) private readonly cacheService: CacheService
+    @Optional() @Inject(CacheService) private readonly cacheService?: CacheService
   ) {}
 
   private async hasProfileCountryColumn() {
@@ -272,12 +273,20 @@ export class ViewerService {
   }
 
   private async invalidateViewerCaches(userId: number) {
-    await Promise.all([
-      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
-      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
-      this.cacheService.delete(cacheKeys.goals(userId)),
-      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
-    ]);
+    await invalidateWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "viewer-cache",
+      description: `user:${userId}`,
+      invalidate: async (cacheService) => {
+        await Promise.all([
+          cacheService.delete(cacheKeys.viewerProfile(userId)),
+          cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+          cacheService.delete(cacheKeys.goals(userId)),
+          cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+        ]);
+      },
+    });
   }
 
   private async loadProfile(userId: number) {
@@ -335,11 +344,14 @@ export class ViewerService {
   }
 
   async getProfile(userId: number) {
-    return this.cacheService.getOrSet(
-      cacheKeys.viewerProfile(userId),
-      CACHE_TTL_SECONDS.viewerProfile,
-      () => this.loadProfile(userId)
-    );
+    return getOrComputeWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "viewer-cache",
+      key: cacheKeys.viewerProfile(userId),
+      ttlSeconds: CACHE_TTL_SECONDS.viewerProfile,
+      loader: () => this.loadProfile(userId),
+    });
   }
 
   async updateProfile(
@@ -686,10 +698,13 @@ export class ViewerService {
   }
 
   async getBootstrap(userId: number) {
-    return this.cacheService.getOrSet(
-      cacheKeys.viewerBootstrap(userId),
-      CACHE_TTL_SECONDS.viewerBootstrap,
-      () => this.loadBootstrap(userId)
-    );
+    return getOrComputeWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "viewer-cache",
+      key: cacheKeys.viewerBootstrap(userId),
+      ttlSeconds: CACHE_TTL_SECONDS.viewerBootstrap,
+      loader: () => this.loadBootstrap(userId),
+    });
   }
 }

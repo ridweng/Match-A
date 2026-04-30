@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { runtimeConfig } from "../../config/runtime";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { cacheKey, cacheKeys } from "../cache/cache.keys";
+import { getOrComputeWithCache, invalidateWithCache } from "../cache/cache.utils";
 
 type UploadedFile = {
   originalname: string;
@@ -36,7 +37,13 @@ const ALLOWED_IMAGE_MIME_TYPES = new Map([
 
 @Injectable()
 export class MediaService {
-  constructor(private readonly cacheService: CacheService) {}
+  private readonly logger = new Logger(MediaService.name);
+
+  constructor(
+    @Optional()
+    @Inject(CacheService)
+    private readonly cacheService?: CacheService
+  ) {}
 
   private readonly mediaRoot = path.join(
     process.cwd(),
@@ -117,11 +124,14 @@ export class MediaService {
   }
 
   async listProfileImagesByProfileId(profileId: number) {
-    return this.cacheService.getOrSet(
-      cacheKey("media", "profile-images", "profile", profileId),
-      CACHE_TTL_SECONDS.mediaMetadata,
-      () => this.loadProfileImagesByProfileId(profileId)
-    );
+    return getOrComputeWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "media-cache",
+      key: cacheKey("media", "profile-images", "profile", profileId),
+      ttlSeconds: CACHE_TTL_SECONDS.mediaMetadata,
+      loader: () => this.loadProfileImagesByProfileId(profileId),
+    });
   }
 
   private async loadProfileImagesByProfileId(profileId: number) {
@@ -314,12 +324,20 @@ export class MediaService {
   }
 
   private async invalidateProfileImageCaches(userId: number, profileId: number) {
-    await Promise.all([
-      this.cacheService.delete(cacheKey("media", "profile-images", "profile", profileId)),
-      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
-      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
-      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
-    ]);
+    await invalidateWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "media-cache",
+      description: `user:${userId}:profile:${profileId}`,
+      invalidate: async (cacheService) => {
+        await Promise.all([
+          cacheService.delete(cacheKey("media", "profile-images", "profile", profileId)),
+          cacheService.delete(cacheKeys.viewerProfile(userId)),
+          cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+          cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+        ]);
+      },
+    });
   }
 
   async getPublicMediaFile(mediaAssetId: number) {

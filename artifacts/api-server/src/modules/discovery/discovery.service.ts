@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { runtimeConfig } from "../../config/runtime";
 import { CacheService } from "../cache/cache.service";
 import { CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { cacheKeys } from "../cache/cache.keys";
+import { getOrComputeWithCache, invalidateWithCache } from "../cache/cache.utils";
 import {
   diffPopularAttributeSnapshots,
   normalizePopularAttributeInput,
@@ -265,7 +266,7 @@ export class DiscoveryService {
 
   constructor(
     @Inject(GoalsService) private readonly goalsService: GoalsService,
-    @Inject(CacheService) private readonly cacheService: CacheService
+    @Optional() @Inject(CacheService) private readonly cacheService?: CacheService
   ) {}
 
   private logDecisionEvent(event: string, payload: Record<string, unknown>) {
@@ -583,12 +584,20 @@ export class DiscoveryService {
   }
 
   private async invalidateDiscoveryCaches(userId: number, actorProfileId: number) {
-    await Promise.all([
-      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
-      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
-      this.cacheService.delete(cacheKeys.goals(userId)),
-      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
-    ]);
+    await invalidateWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "discovery-cache",
+      description: `user:${userId}:actorProfile:${actorProfileId}`,
+      invalidate: async (cacheService) => {
+        await Promise.all([
+          cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+          cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+          cacheService.delete(cacheKeys.goals(userId)),
+          cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+        ]);
+      },
+    });
   }
 
   private normalizeProfileId(value: string | number | null | undefined): number | null {
@@ -1540,11 +1549,14 @@ export class DiscoveryService {
   }
 
   async getPreferences(userId: number) {
-    return this.cacheService.getOrSet(
-      cacheKeys.discoveryPreferences(userId),
-      CACHE_TTL_SECONDS.discoveryPreferences,
-      () => this.loadPreferences(userId)
-    );
+    return getOrComputeWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "discovery-cache",
+      key: cacheKeys.discoveryPreferences(userId),
+      ttlSeconds: CACHE_TTL_SECONDS.discoveryPreferences,
+      loader: () => this.loadPreferences(userId),
+    });
   }
 
   private async loadPreferences(userId: number) {

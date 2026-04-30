@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional, UnauthorizedException } from "@nestjs/common";
 import { pool } from "@workspace/db";
 import { CacheService } from "../cache/cache.service";
 import { cacheKeys } from "../cache/cache.keys";
+import { invalidateWithCache } from "../cache/cache.utils";
 import { EmailDeliveryError } from "../email/email.types";
 import { EmailService } from "../email/email.service";
 import { GoalsService } from "../goals/goals.service";
@@ -99,7 +100,7 @@ export class AuthService {
   constructor(
     @Inject(GoalsService) private readonly goalsService: GoalsService,
     @Inject(EmailService) private readonly emailService: EmailService,
-    @Inject(CacheService) private readonly cacheService: CacheService
+    @Optional() @Inject(CacheService) private readonly cacheService?: CacheService
   ) {}
 
   private normalizeEmail(email: string) {
@@ -119,13 +120,21 @@ export class AuthService {
   }
 
   private async invalidateUserStateCaches(userId: number) {
-    await Promise.all([
-      this.cacheService.delete(cacheKeys.viewerBootstrap(userId)),
-      this.cacheService.delete(cacheKeys.viewerProfile(userId)),
-      this.cacheService.delete(cacheKeys.goals(userId)),
-      this.cacheService.delete(cacheKeys.discoveryPreferences(userId)),
-      this.cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
-    ]);
+    await invalidateWithCache({
+      cacheService: this.cacheService,
+      logger: this.logger,
+      scope: "auth-cache",
+      description: `user:${userId}`,
+      invalidate: async (cacheService) => {
+        await Promise.all([
+          cacheService.delete(cacheKeys.viewerBootstrap(userId)),
+          cacheService.delete(cacheKeys.viewerProfile(userId)),
+          cacheService.delete(cacheKeys.goals(userId)),
+          cacheService.delete(cacheKeys.discoveryPreferences(userId)),
+          cacheService.deleteByPrefix(cacheKeys.adminPrefix()),
+        ]);
+      },
+    });
   }
 
   private randomToken() {
