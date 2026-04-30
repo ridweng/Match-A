@@ -10,6 +10,7 @@ type RateLimitOptions = {
   max: number;
   keyPrefix: string;
   keyGenerator?: (req: Request) => string;
+  skip?: (req: Request) => boolean;
   limiterName?: string;
   keyType?: "ip" | "route-ip" | "identifier";
 };
@@ -552,6 +553,10 @@ export function setRateLimitHeaders(
 
 export function createRateLimitMiddleware(options: RateLimitOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
+    if (options.skip?.(req)) {
+      return next();
+    }
+
     const rawKey = options.keyGenerator?.(req) || getClientIp(req);
     const key = buildStorageKey(options.keyPrefix, rawKey);
     try {

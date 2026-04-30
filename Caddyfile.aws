@@ -54,7 +54,7 @@
   }
 
   @adminOnly {
-    path /dashboard /api/admin* /api/docs* /api/reference /api/openapi.json
+    path /dashboard* /api/admin* /api/docs* /api/reference /api/openapi.json
   }
 
   handle @adminOnly {
@@ -86,23 +86,15 @@
   }
 
   handle @adminApi {
-    reverse_proxy api:8082
+    reverse_proxy admin-api:8083
   }
 
   @adminHealth {
     path /api/healthz/*
   }
 
-  @adminMedia {
-    path /api/media/public/*
-  }
-
-  handle @adminMedia {
-    reverse_proxy api:8082
-  }
-
   handle @adminHealth {
-    reverse_proxy api:8082
+    reverse_proxy admin-api:8083
   }
 
   handle {

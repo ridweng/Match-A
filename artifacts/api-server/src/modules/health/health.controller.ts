@@ -23,6 +23,12 @@ export class HealthController {
     return this.healthService.checkLiveness();
   }
 
+  @Get("live")
+  @ApiOperation({ summary: "Check API liveness" })
+  liveness() {
+    return this.healthService.checkLiveness();
+  }
+
   @Get("ready")
   @ApiOperation({ summary: "Check API readiness and backing dependencies" })
   async readiness() {

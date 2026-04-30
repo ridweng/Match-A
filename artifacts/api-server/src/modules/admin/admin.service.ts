@@ -691,27 +691,43 @@ export class AdminService {
   ) {}
 
   private buildPublicMediaUrl(mediaAssetId: number) {
-    return `/api/media/public/${mediaAssetId}`;
+    return `${runtimeConfig.baseUrl.replace(/\/+$/, "")}/api/media/public/${mediaAssetId}`;
   }
 
   private resolvePublicMediaUrl(mediaAssetId: number, publicUrl: string | null) {
+    const fallback = this.buildPublicMediaUrl(mediaAssetId);
     const trimmed = String(publicUrl || "").trim();
+
     if (!trimmed) {
-      return this.buildPublicMediaUrl(mediaAssetId);
+      return fallback;
+    }
+
+    if (
+      trimmed.includes("static.matcha.local") ||
+      trimmed.includes("/synthetic/") ||
+      trimmed.startsWith("synthetic/")
+    ) {
+      return fallback;
     }
 
     if (trimmed.startsWith("/api/media/public/")) {
-      return this.buildPublicMediaUrl(mediaAssetId);
+      return fallback;
     }
 
     try {
       const parsed = new URL(trimmed);
-      if (parsed.pathname.startsWith("/api/media/public/")) {
-        return this.buildPublicMediaUrl(mediaAssetId);
+
+      if (
+        parsed.hostname === "static.matcha.local" ||
+        parsed.pathname.includes("/synthetic/") ||
+        parsed.pathname.startsWith("/api/media/public/")
+      ) {
+        return fallback;
       }
+
       return parsed.toString();
     } catch {
-      return this.buildPublicMediaUrl(mediaAssetId);
+      return fallback;
     }
   }
 

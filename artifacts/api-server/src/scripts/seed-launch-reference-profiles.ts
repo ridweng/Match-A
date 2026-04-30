@@ -19,7 +19,7 @@ type DbClient = {
 };
 
 function mediaUrl(profile: LaunchReferenceProfile, sortOrder: number) {
-  return `https://static.matcha.local/synthetic/${LAUNCH_REFERENCE_BATCH_KEY}/${profile.publicId}/${sortOrder}.jpg`;
+  return "";
 }
 
 function categoryPayload(profile: LaunchReferenceProfile) {
@@ -183,7 +183,7 @@ async function upsertLaunchProfile(client: DbClient, profile: LaunchReferencePro
       [
         profileId,
         `synthetic/${LAUNCH_REFERENCE_BATCH_KEY}/${profile.publicId}/${sortOrder}.jpg`,
-        mediaUrl(profile, sortOrder),
+        "",
       ]
     );
     await client.query(

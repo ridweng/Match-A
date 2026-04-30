@@ -6,6 +6,7 @@ export const runtimeConfig = {
   appName: env.APP_NAME,
   port: env.APP_PORT,
   nodeEnv: env.APP_ENV,
+  serviceMode: env.APP_SERVICE_MODE,
   logLevel: env.APP_LOG_LEVEL,
   sessionSecret: env.AUTH_SESSION_SECRET,
   baseUrl: env.API_BASE_URL,
@@ -17,6 +18,8 @@ export const runtimeConfig = {
   },
   rateLimit: {
     generalMax: env.RATE_LIMIT_GENERAL_MAX,
+    adminMax: env.RATE_LIMIT_ADMIN_MAX,
+    adminWindowMs: env.RATE_LIMIT_ADMIN_WINDOW_MS,
     auth: {
       signUp: {
         ipMax: env.RATE_LIMIT_AUTH_SIGN_UP_IP_MAX,

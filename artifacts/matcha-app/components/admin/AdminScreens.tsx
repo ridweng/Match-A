@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams, usePathname } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -24,6 +24,17 @@ type ApiState<T> = {
   fetchedAt: string | null;
   data: T | null;
 };
+
+function resolveAdminDashboardPollMs() {
+  const parsed = Number(
+    process.env.EXPO_PUBLIC_ADMIN_DASHBOARD_POLL_MS ||
+      process.env.ADMIN_DASHBOARD_POLL_MS ||
+      30000
+  );
+  return Number.isFinite(parsed) && parsed >= 5000 ? parsed : 30000;
+}
+
+const DEFAULT_ADMIN_DASHBOARD_POLL_MS = resolveAdminDashboardPollMs();
 
 type Overview = {
   selectedTimeframe: string;
@@ -332,6 +343,7 @@ function useBodyScrollLock(locked: boolean) {
 }
 
 function useAdminApi<T>(path: string | null, pollMs?: number) {
+  const inFlightPathRef = useRef<string | null>(null);
   const [state, setState] = useState<ApiState<T>>({
     loading: true,
     refreshing: false,
@@ -340,7 +352,7 @@ function useAdminApi<T>(path: string | null, pollMs?: number) {
     data: null,
   });
 
-  const load = async (refresh = false) => {
+  const load = useCallback(async (refresh = false) => {
     if (!path) {
       setState({
         loading: false,
@@ -352,6 +364,14 @@ function useAdminApi<T>(path: string | null, pollMs?: number) {
       return;
     }
 
+    const requestPath = refresh
+      ? `${path}${path.includes("?") ? "&" : "?"}refresh=1`
+      : path;
+    if (!refresh && inFlightPathRef.current === requestPath) {
+      return;
+    }
+    inFlightPathRef.current = requestPath;
+
     setState((current) => ({
       ...current,
       loading: current.data ? false : true,
@@ -360,10 +380,7 @@ function useAdminApi<T>(path: string | null, pollMs?: number) {
     }));
 
     try {
-      const separator = path.includes("?") ? "&" : "?";
-      const payload = await fetchAdminJson<T>(
-        refresh ? `${path}${separator}refresh=1` : path
-      );
+      const payload = await fetchAdminJson<T>(requestPath);
       setState({
         loading: false,
         refreshing: false,
@@ -378,8 +395,12 @@ function useAdminApi<T>(path: string | null, pollMs?: number) {
         refreshing: false,
         error: error instanceof Error ? error.message : "Admin API request failed.",
       }));
+    } finally {
+      if (inFlightPathRef.current === requestPath) {
+        inFlightPathRef.current = null;
+      }
     }
-  };
+  }, [path]);
 
   useEffect(() => {
     void load(false);
@@ -387,10 +408,13 @@ function useAdminApi<T>(path: string | null, pollMs?: number) {
       return undefined;
     }
     const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
       void load(false);
     }, pollMs);
     return () => window.clearInterval(timer);
-  }, [path, pollMs]);
+  }, [load, path, pollMs]);
 
   return { ...state, refresh: () => load(true) };
 }
@@ -1107,7 +1131,7 @@ export function AdminOverviewScreen() {
   const apiPath = `/api/admin/stats/overview.json${buildQuery({ timeframe, country })}`;
   const { data, loading, error, fetchedAt, refreshing, refresh } = useAdminApi<Overview>(
     apiPath,
-    30000
+    DEFAULT_ADMIN_DASHBOARD_POLL_MS
   );
 
   return (
@@ -1256,7 +1280,7 @@ export function AdminUsersScreen() {
     kind,
     activation,
   })}`;
-  const usersState = useAdminApi<UsersPayload>(apiPath, 30000);
+  const usersState = useAdminApi<UsersPayload>(apiPath, DEFAULT_ADMIN_DASHBOARD_POLL_MS);
   const detailState = useAdminApi<ProfileDetail>(
     selectedPublicId ? `/api/admin/profiles/${encodeURIComponent(selectedPublicId)}` : null
   );
@@ -1347,10 +1371,13 @@ export function AdminUsersScreen() {
 }
 
 export function AdminDatabaseScreen() {
-  const databaseState = useAdminApi<DatabasePayload>("/api/admin/stats/database.json", 30000);
+  const databaseState = useAdminApi<DatabasePayload>(
+    "/api/admin/stats/database.json",
+    DEFAULT_ADMIN_DASHBOARD_POLL_MS
+  );
   const generatedBatchesState = useAdminApi<GeneratedBatchesPayload>(
     "/api/admin/generated-batches",
-    30000
+    DEFAULT_ADMIN_DASHBOARD_POLL_MS
   );
   const schemaWarnings = [
     ...(databaseState.data?.schemaStatus.missingRequiredRelations ?? []),
@@ -1647,6 +1674,13 @@ const styles = StyleSheet.create({
   sidebarScrollCompact: {
     width: 152,
   },
+  sidebarScrollMobile: {
+    width: "100%" as never,
+    flexGrow: 0,
+    backgroundColor: Colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
   sidebarInner: {
     padding: 10,
     paddingBottom: 14,
@@ -1655,6 +1689,12 @@ const styles = StyleSheet.create({
   sidebarInnerCompact: {
     paddingHorizontal: 8,
   },
+  sidebarInnerMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 10,
+    gap: 12,
+  },
   brandHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1662,6 +1702,13 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(245,243,238,0.08)",
+  },
+  brandHeaderMobile: {
+    borderBottomWidth: 0,
+    paddingBottom: 0,
+  },
+  brandCopy: {
+    minWidth: 72,
   },
   brandMark: {
     width: 28,
@@ -1690,6 +1737,9 @@ const styles = StyleSheet.create({
   nav: {
     gap: 4,
   },
+  navMobile: {
+    flexDirection: "row",
+  },
   navItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -1701,6 +1751,19 @@ const styles = StyleSheet.create({
   },
   navItemCompact: {
     paddingHorizontal: 7,
+  },
+  navItemMobile: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+  },
+  navItemHover: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  navItemPressed: {
+    opacity: 0.82,
+  },
+  navItemActive: {
+    backgroundColor: Colors.primary,
   },
   navLabel: {
     color: adminColors.muted,

@@ -44,6 +44,14 @@ function looksLikePlaceholder(value: string | null | undefined) {
   );
 }
 
+function normalizeServiceMode(value: string | null | undefined) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "api") {
+    return "public";
+  }
+  return normalized || "all";
+}
+
 const booleanLikeSchema = z
   .union([z.boolean(), z.string(), z.number()])
   .optional()
@@ -82,6 +90,7 @@ const envSchema = z
     APP_LOG_LEVEL: z
       .enum(["error", "warn", "log", "debug", "verbose"])
       .default("debug"),
+    APP_SERVICE_MODE: z.enum(["public", "admin", "all"]).default("all"),
     APP_PORT: integerLikeSchema.default(8082),
     API_BASE_URL: z.string().trim().url().default("http://127.0.0.1:8082"),
     DATABASE_URL: z.string().trim().optional(),
@@ -90,6 +99,8 @@ const envSchema = z
     CORS_ALLOWED_ORIGINS: csvSchema.default(""),
     ADMIN_CORS_ALLOWED_ORIGINS: csvSchema.default(""),
     RATE_LIMIT_GENERAL_MAX: integerLikeSchema.default(300),
+    RATE_LIMIT_ADMIN_MAX: integerLikeSchema.default(1200),
+    RATE_LIMIT_ADMIN_WINDOW_MS: integerLikeSchema.default(300000),
     RATE_LIMIT_AUTH_SIGN_UP_IP_MAX: integerLikeSchema.default(20),
     RATE_LIMIT_AUTH_SIGN_UP_IDENTIFIER_MAX: integerLikeSchema.default(10),
     RATE_LIMIT_AUTH_SIGN_IN_IP_MAX: integerLikeSchema.default(30),
@@ -329,6 +340,7 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     APP_ENV: appEnv,
     APP_LOG_LEVEL:
       env.APP_LOG_LEVEL ?? (appEnv === "production" ? "warn" : "debug"),
+    APP_SERVICE_MODE: normalizeServiceMode(env.APP_SERVICE_MODE ?? env.SERVER_ROLE),
     APP_PORT: appPort,
     API_BASE_URL: apiBaseUrl,
     DATABASE_URL: env.DATABASE_URL ?? "",
@@ -337,6 +349,8 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     CORS_ALLOWED_ORIGINS: env.CORS_ALLOWED_ORIGINS ?? "",
     ADMIN_CORS_ALLOWED_ORIGINS: env.ADMIN_CORS_ALLOWED_ORIGINS ?? "",
     RATE_LIMIT_GENERAL_MAX: env.RATE_LIMIT_GENERAL_MAX ?? "300",
+    RATE_LIMIT_ADMIN_MAX: env.RATE_LIMIT_ADMIN_MAX ?? "1200",
+    RATE_LIMIT_ADMIN_WINDOW_MS: env.RATE_LIMIT_ADMIN_WINDOW_MS ?? "300000",
     RATE_LIMIT_AUTH_SIGN_UP_IP_MAX: env.RATE_LIMIT_AUTH_SIGN_UP_IP_MAX ?? "20",
     RATE_LIMIT_AUTH_SIGN_UP_IDENTIFIER_MAX:
       env.RATE_LIMIT_AUTH_SIGN_UP_IDENTIFIER_MAX ?? "10",

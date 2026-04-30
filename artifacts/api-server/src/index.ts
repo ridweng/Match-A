@@ -10,7 +10,7 @@ import {
   createCorsMiddleware,
   createSecurityHeadersMiddleware,
 } from "./security/browser-security";
-import { createRateLimitMiddleware } from "./security/rate-limit";
+import { createRateLimitMiddleware, getClientIp } from "./security/rate-limit";
 
 function isAdminAuthorized(authHeader: string | undefined, username: string, password: string) {
   const header = String(authHeader || "");
@@ -102,6 +102,48 @@ function createSlowRequestLogger(thresholdMs = 500) {
   };
 }
 
+type AppServiceMode = "public" | "admin" | "all";
+
+function isAdminRoute(path: string) {
+  return (
+    path === "/" ||
+    path === "/dashboard" ||
+    path.startsWith("/dashboard/") ||
+    path === "/api/admin" ||
+    path.startsWith("/api/admin/") ||
+    path === "/api/docs" ||
+    path.startsWith("/api/docs/") ||
+    path === "/api/reference" ||
+    path === "/api/openapi.json"
+  );
+}
+
+function isHealthRoute(path: string) {
+  return path === "/api/healthz" || path.startsWith("/api/healthz/");
+}
+
+function getOriginalPath(req: Request) {
+  return req.originalUrl?.split("?")[0] || req.path || "";
+}
+
+function createServiceModeGate(serviceMode: AppServiceMode) {
+  return (req: Request, res: Response, next: () => void) => {
+    const path = getOriginalPath(req);
+
+    if (serviceMode === "public" && isAdminRoute(path)) {
+      res.status(404).send("Not found");
+      return;
+    }
+
+    if (serviceMode === "admin" && !isAdminRoute(path) && !isHealthRoute(path)) {
+      res.status(404).send("Not found");
+      return;
+    }
+
+    next();
+  };
+}
+
 async function bootstrap() {
   loadApiEnv();
   const [
@@ -144,6 +186,7 @@ async function bootstrap() {
   expressApp.use(createSecurityHeadersMiddleware(browserSecurityConfig));
   expressApp.use(createCorsMiddleware(browserSecurityConfig));
   expressApp.use(createAdminAccessMiddleware(browserSecurityConfig));
+  expressApp.use(createServiceModeGate(runtimeConfig.serviceMode));
   expressApp.use(createSlowRequestLogger());
 
   expressApp.use(
@@ -154,6 +197,29 @@ async function bootstrap() {
       keyType: "ip",
       windowMs: 15 * 60 * 1000,
       max: runtimeConfig.rateLimit.generalMax,
+      skip: (req) =>
+        runtimeConfig.serviceMode === "admin" ||
+        isAdminRoute(getOriginalPath(req)),
+    })
+  );
+  expressApp.use(
+    "/api/admin",
+    createRateLimitMiddleware({
+      keyPrefix: "admin-api",
+      limiterName: "admin-api",
+      keyType: "ip",
+      windowMs: runtimeConfig.rateLimit.adminWindowMs,
+      max: runtimeConfig.rateLimit.adminMax,
+      keyGenerator: (req) => {
+        const username =
+          typeof req.headers.authorization === "string" &&
+          req.headers.authorization.startsWith("Basic ")
+            ? Buffer.from(req.headers.authorization.slice("Basic ".length), "base64")
+                .toString("utf8")
+                .split(":")[0] || "anonymous"
+            : "anonymous";
+        return `${getClientIp(req)}:${username}`;
+      },
     })
   );
 
