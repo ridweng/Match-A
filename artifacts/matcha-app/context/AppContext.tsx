@@ -107,6 +107,7 @@ import {
   debugLog,
   debugWarn,
 } from "@/utils/debug";
+import { analytics, analyticsHeartbeatIntervalSeconds } from "@/utils/analytics";
 import {
   applyDecisionToQueue,
   assertDiscoveryQueueInvariants,
@@ -684,6 +685,33 @@ type AppContextType = {
   fetchNextDiscoveryWindow: () => Promise<boolean>;
   resetDiscoveryHistory: () => Promise<boolean>;
   armDiscoveryCursorStaleSimulation: () => void;
+  trackAnalyticsEvent: (
+    eventName: string,
+    payload?: {
+      screenName?: string | null;
+      areaName?: string | null;
+      durationMs?: number | null;
+      targetProfilePublicId?: string | null;
+      targetProfileKind?: "user" | "dummy" | "synthetic" | "unknown" | null;
+      targetProfileBatchKey?: string | null;
+      metadata?: Record<string, unknown> | null;
+    }
+  ) => void;
+  recordAnalyticsScreenTime: (input: {
+    screenName: string;
+    areaName?: string | null;
+    startedAt: string;
+    durationMs: number;
+    endedBy: "blur" | "background" | "logout" | "app_close" | "navigation";
+  }) => void;
+  recordAnalyticsProfileCardTime: (input: {
+    targetProfilePublicId: string;
+    shownAt: string;
+    visibleDurationMs: number;
+    decision: "like" | "pass" | "none";
+    openedInfo?: boolean;
+    photosViewed?: number;
+  }) => void;
   recordDiscoveryQueueTrace: (
     payload: Omit<DiscoveryQueueTraceLog, "actorId" | "traceSeq">
   ) => DiscoveryQueueTraceLog;
@@ -1521,6 +1549,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const userRef = useRef<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const accessTokenRef = useRef<string | null>(null);
+  const analyticsSessionIdRef = useRef<string | null>(null);
+  const analyticsHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [, setRefreshToken] = useState<string | null>(null);
   const refreshTokenRef = useRef<string | null>(null);
   const sessionRefreshPromiseRef = useRef<Promise<AuthSessionResponse> | null>(null);
@@ -3963,9 +3993,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await clearOnboardingResumeForFreshIncompleteSession(session);
         await applySession(session);
         syncPostAuthRedirectFromResolvedState();
+        analytics.track({ eventName: "login_success" }, {
+          accessToken: session.accessToken,
+          sessionId: analyticsSessionIdRef.current,
+        });
         return true;
       } catch (e: any) {
         const code = e instanceof ApiError ? toReadableAuthError(e) : "UNKNOWN_ERROR";
+        analytics.track({
+          eventName: code === "EMAIL_VERIFICATION_REQUIRED" ? "email_verification_required" : "login_failed",
+          metadata: { errorCode: code },
+        });
         if (code === "EMAIL_VERIFICATION_REQUIRED") {
           const normalizedEmail = input.email.trim();
           setPendingVerificationEmail(normalizedEmail);
@@ -4004,6 +4042,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (input: { name: string; email: string; password: string; dateOfBirth: string }) => {
       setAuthBusy(true);
       setAuthError(null);
+      analytics.track({ eventName: "sign_up_started" });
       try {
         const result = await authSignUp(input);
         if (result.status === "verification_pending") {
@@ -4012,6 +4051,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setPendingVerificationPassword(input.password);
           setSignInPrefill(result.email);
           setVerificationStatus("pending");
+          analytics.track({
+            eventName: "sign_up_completed",
+            metadata: { status: "verification_pending" },
+          });
+          analytics.track({ eventName: "email_verification_required" });
         }
         return true;
       } catch (e: any) {
@@ -4168,6 +4212,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [pendingVerificationEmail]);
 
   const logout = useCallback(async () => {
+    analytics.track(
+      { eventName: "logout_clicked" },
+      { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+    );
+    analytics.endSession(accessTokenRef.current, analyticsSessionIdRef.current, "logout");
+    analyticsSessionIdRef.current = null;
     try {
       if (accessToken) await authSignOut(accessToken);
     } catch {}
@@ -4621,6 +4671,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return false;
         }
         setNeedsProfileCompletionResolved(false);
+        analytics.track(
+          { eventName: "profile_completion_completed", screenName: "Complete profile" },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
         return true;
       } catch (e: any) {
         setAuthError(e?.message || "UNKNOWN_ERROR");
@@ -4834,6 +4888,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const requestId = createOnboardingAttemptId();
       setAuthBusy(true);
       setAuthError(null);
+      analytics.track(
+        { eventName: "onboarding_started", screenName: "Onboarding" },
+        { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+      );
       debugLog("[onboarding-auth] onboarding_submit_started", {
         requestId,
         hasPhotos: data.photos.length > 0,
@@ -4876,6 +4934,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
 
         await clearOnboardingResumeState();
+        analytics.track(
+          { eventName: "onboarding_completed", screenName: "Onboarding" },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
         debugLog("[onboarding-auth] onboarding_complete_succeeded", {
           requestId,
         });
@@ -4885,6 +4947,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           requestId,
           error: e?.code || e?.message || "UNKNOWN_ERROR",
         });
+        analytics.track(
+          {
+            eventName: "onboarding_save_failed",
+            screenName: "Onboarding",
+            metadata: { errorCode: e?.code || e?.message || "UNKNOWN_ERROR" },
+          },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
         setAuthError(e?.code || e?.message || "UNKNOWN_ERROR");
         return false;
       } finally {
@@ -5153,6 +5223,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       if (nextState === "background" || nextState === "inactive") {
         setLastBackgroundAt(now);
+        analytics.track(
+          { eventName: "app_backgrounded", metadata: { source: "app_lifecycle" } },
+          {
+            accessToken: accessTokenRef.current,
+            sessionId: analyticsSessionIdRef.current,
+          }
+        );
+        analytics.endSession(
+          accessTokenRef.current,
+          analyticsSessionIdRef.current,
+          "background"
+        );
+        analyticsSessionIdRef.current = null;
         return;
       }
 
@@ -5923,6 +6006,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           latencyMs,
           before,
         });
+        analytics.track(
+          {
+            eventName: action === "like" ? "profile_like" : "profile_pass",
+            screenName: "Discover",
+            targetProfilePublicId,
+            metadata: {
+              requestId: responseRequestId,
+              action,
+              latencyMs,
+              queueVersion: result.queueVersion ?? decisionContext.queueVersion,
+              policyVersion: result.policyVersion ?? decisionContext.policyVersion,
+            },
+          },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
+        analytics.track(
+          {
+            eventName: "discovery_decision_success",
+            screenName: "Discover",
+            targetProfilePublicId,
+            metadata: { requestId: responseRequestId, action, latencyMs },
+          },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
+        if (latencyMs > 1500) {
+          analytics.track(
+            {
+              eventName: "decision_latency_slow",
+              screenName: "Discover",
+              metadata: { requestId: responseRequestId, latencyMs },
+            },
+            { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+          );
+        }
         
         // Queue should advance if decision was applied OR if it was idempotent with a valid replacement
         const shouldAdvanceQueue = result.decisionApplied || (
@@ -6167,6 +6284,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             errorCode: error?.code ?? null,
           });
         }
+        analytics.track(
+          {
+            eventName: "discovery_decision_failed",
+            screenName: "Discover",
+            targetProfilePublicId,
+            metadata: {
+              requestId,
+              action,
+              errorCode: error?.code || "request_failed",
+            },
+          },
+          { accessToken: accessTokenRef.current, sessionId: analyticsSessionIdRef.current }
+        );
         return null;
       }
     },
@@ -6961,6 +7091,101 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const biometricLockRequired =
     accessState === "authenticated_locked" || accessState === "unlocking";
 
+  const trackAnalyticsEvent = useCallback<AppContextType["trackAnalyticsEvent"]>(
+    (eventName, payload = {}) => {
+      analytics.track(
+        {
+          eventName,
+          screenName: payload.screenName,
+          areaName: payload.areaName,
+          durationMs: payload.durationMs,
+          targetProfilePublicId: payload.targetProfilePublicId,
+          targetProfileKind: payload.targetProfileKind,
+          targetProfileBatchKey: payload.targetProfileBatchKey,
+          metadata: payload.metadata,
+        },
+        {
+          accessToken: accessTokenRef.current,
+          sessionId: analyticsSessionIdRef.current,
+        }
+      );
+    },
+    []
+  );
+
+  const recordAnalyticsScreenTime = useCallback<AppContextType["recordAnalyticsScreenTime"]>(
+    (input) => {
+      analytics.screenTime({
+        accessToken: accessTokenRef.current,
+        sessionId: analyticsSessionIdRef.current,
+        ...input,
+      });
+    },
+    []
+  );
+
+  const recordAnalyticsProfileCardTime = useCallback<AppContextType["recordAnalyticsProfileCardTime"]>(
+    (input) => {
+      analytics.profileCardTime({
+        accessToken: accessTokenRef.current,
+        sessionId: analyticsSessionIdRef.current,
+        targetProfileKind: "unknown",
+        decidedAt: new Date().toISOString(),
+        ...input,
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!analytics.enabled || authStatus !== "authenticated" || !accessToken || lastAppState !== "active") {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      if (!analyticsSessionIdRef.current) {
+        analyticsSessionIdRef.current = await analytics.startSession(accessToken);
+        analytics.track(
+          { eventName: "app_opened", metadata: { source: "app_lifecycle" } },
+          { accessToken, sessionId: analyticsSessionIdRef.current }
+        );
+        analytics.track(
+          { eventName: "session_started", metadata: { source: "app_lifecycle" } },
+          { accessToken, sessionId: analyticsSessionIdRef.current }
+        );
+      } else {
+        analytics.track(
+          { eventName: "app_foregrounded", metadata: { source: "app_lifecycle" } },
+          { accessToken, sessionId: analyticsSessionIdRef.current }
+        );
+      }
+      await analytics.flush(accessToken, analyticsSessionIdRef.current);
+      if (cancelled) return;
+      if (analyticsHeartbeatRef.current) {
+        clearInterval(analyticsHeartbeatRef.current);
+      }
+      analyticsHeartbeatRef.current = setInterval(() => {
+        analytics.heartbeat(accessTokenRef.current, analyticsSessionIdRef.current);
+        analytics.track(
+          { eventName: "session_heartbeat", metadata: { source: "app_lifecycle" } },
+          {
+            accessToken: accessTokenRef.current,
+            sessionId: analyticsSessionIdRef.current,
+          }
+        );
+      }, analyticsHeartbeatIntervalSeconds * 1000);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (analyticsHeartbeatRef.current) {
+        clearInterval(analyticsHeartbeatRef.current);
+        analyticsHeartbeatRef.current = null;
+      }
+    };
+  }, [accessToken, authStatus, lastAppState]);
+
   return (
     <AppContext.Provider
       value={{
@@ -7048,6 +7273,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         fetchNextDiscoveryWindow,
         resetDiscoveryHistory,
         armDiscoveryCursorStaleSimulation,
+        trackAnalyticsEvent,
+        recordAnalyticsScreenTime,
+        recordAnalyticsProfileCardTime,
         recordDiscoveryQueueTrace,
         profile,
         accountProfile,

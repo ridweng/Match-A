@@ -611,6 +611,7 @@ export default function GoalsScreen() {
     discoveryThreshold,
     popularAttributesByCategory,
     discoveryFeed,
+    trackAnalyticsEvent,
   } = useApp();
   const [activeFilter, setActiveFilter] = useState<GoalsFilter>("all");
   const [expandedCategory, setExpandedCategory] = useState<GoalCategory | null>(null);
@@ -642,6 +643,31 @@ export default function GoalsScreen() {
     });
     return map;
   }, [discoveryFeed.profiles]);
+
+  useEffect(() => {
+    trackAnalyticsEvent(goalsLocked ? "goals_locked_viewed" : "goals_tab_opened", {
+      screenName: goalsLocked ? "Locked Goals" : "Goals",
+      metadata: {
+        totalLikes: discoveryThreshold.totalLikes,
+        thresholdReached: discoveryThreshold.thresholdReached,
+      },
+    });
+    if (goalsLocked) {
+      trackAnalyticsEvent("threshold_progress_viewed", {
+        screenName: "Locked Goals",
+        metadata: {
+          likes: discoveryThreshold.totalLikes,
+          count: discoveryThreshold.likesUntilUnlock,
+        },
+      });
+    }
+  }, [
+    discoveryThreshold.likesUntilUnlock,
+    discoveryThreshold.thresholdReached,
+    discoveryThreshold.totalLikes,
+    goalsLocked,
+    trackAnalyticsEvent,
+  ]);
 
   const categoryModules = useMemo<CategoryModule[]>(() => {
     const goalsByCategory = new Map<GoalCategory, Goal[]>();
@@ -764,8 +790,12 @@ export default function GoalsScreen() {
   const handleCompleteTask = useCallback((goalId: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    trackAnalyticsEvent("goal_task_completed", {
+      screenName: "Goals",
+      metadata: { source: "task_complete" },
+    });
     completeGoalTask(goalId);
-  }, [completeGoalTask]);
+  }, [completeGoalTask, trackAnalyticsEvent]);
 
   const handleReorderTasks = useCallback(
     (category: GoalCategory, fromIndex: number, toIndex: number) => {

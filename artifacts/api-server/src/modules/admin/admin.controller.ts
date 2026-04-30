@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Query, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
 import { ApiExcludeController } from "@nestjs/swagger";
 import crypto from "node:crypto";
 import type { Request, Response } from "express";
@@ -208,6 +208,7 @@ export class AdminController {
           <a href="/api/admin/stats/overview">Overview</a>
           <a href="/api/admin/stats/users">Users</a>
           <a href="/api/admin/stats/database">Database</a>
+          <a href="/api/admin/stats/study">Study</a>
           <a href="/api/admin/stats/api-docs">API Docs</a>
         </div>
         <div
@@ -404,6 +405,212 @@ export class AdminController {
         ${nodeSvg}
       </svg>
     `;
+  }
+
+  @Get("study")
+  async study(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query("testRunId") testRunId?: string,
+    @Query("compareTestRunId") compareTestRunId?: string,
+    @Query("refresh") refresh?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const study = await this.adminService.getStudyDashboard({
+      testRunId: testRunId || null,
+      compareTestRunId: compareTestRunId || null,
+      bypassCache: refresh === "1" || refresh === "true",
+    });
+    const testRunOptions = [
+      renderOption("", "Auto-select active/latest", study.selectedTestRunId || ""),
+      ...study.testRuns.map((run: any) =>
+        renderOption(run.id, `${run.name} (${run.status})`, study.selectedTestRunId)
+      ),
+    ].join("");
+    const compareOptions = [
+      renderOption("", "No comparison", study.compareTestRunId || ""),
+      ...study.testRuns.map((run: any) =>
+        renderOption(run.id, `${run.name} (${run.status})`, study.compareTestRunId)
+      ),
+    ].join("");
+    const summaryCards = [
+      ["Participants", study.summary.participants],
+      ["Active users", study.summary.activeUsers],
+      ["Sessions", study.summary.totalSessions],
+      ["Total app time", `${Math.round(study.summary.totalActiveSeconds / 60)}m`],
+      ["Avg session", `${Math.round(study.summary.averageSessionSeconds / 60)}m`],
+      ["Decisions", study.summary.totalDiscoveryDecisions],
+      ["Likes", study.summary.likes],
+      ["Passes", study.summary.passes],
+      ["Like ratio", `${Math.round(study.summary.likeRatio * 100)}%`],
+      ["Reached 30 likes", study.summary.usersReaching30Likes],
+      ["Engaged", study.summary.engagedUsers],
+      ["Blocked/frustrated", study.summary.blockedFrustratedUsers],
+    ].map(([label, value]) => `<div class="card"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`).join("");
+    const scoreRows = study.scorecard.map((row: any) =>
+      `<tr><td>${escapeHtml(row.label)}</td><td><span class="pill">${escapeHtml(row.status)}</span></td></tr>`
+    ).join("");
+    const funnelRows = Object.entries(study.funnel).map(([key, value]) =>
+      `<tr><td>${escapeHtml(key.replace(/_/g, " "))}</td><td>${escapeHtml(value)}</td></tr>`
+    ).join("");
+    const screenRows = study.screenUsage.map((row: any) =>
+      `<tr><td>${escapeHtml(row.screen_name)}</td><td>${escapeHtml(row.area_name || "—")}</td><td>${escapeHtml(row.segments)}</td><td>${escapeHtml(Math.round(Number(row.total_ms || 0) / 60000))}m</td><td>${escapeHtml(Math.round(Number(row.average_ms || 0) / 1000))}s</td></tr>`
+    ).join("");
+    const eventRows = (title: string, rows: any[]) => `
+      <div class="card">
+        <h2>${escapeHtml(title)}</h2>
+        <table><thead><tr><th>Event</th><th>Count</th><th>Users</th></tr></thead><tbody>
+          ${rows.map((row) => `<tr><td>${escapeHtml(row.event_name)}</td><td>${escapeHtml(row.count)}</td><td>${escapeHtml(row.users)}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No events</td></tr>'}
+        </tbody></table>
+      </div>`;
+    const userRows = study.users.map((user: any) => `
+      <tr>
+        <td><a href="/api/admin/stats/study/users/${escapeHtmlAttribute(user.userId)}${study.selectedTestRunId ? `?testRunId=${escapeHtmlAttribute(study.selectedTestRunId)}` : ""}">${escapeHtml(user.label)}</a><div class="muted">${escapeHtml(user.publicId || user.userId)}</div></td>
+        <td><span class="pill">${escapeHtml(user.engagementStatus.replace(/_/g, " "))}</span></td>
+        <td>${escapeHtml(user.onboardingStatus)}</td>
+        <td>${escapeHtml(user.activationStatus)}</td>
+        <td>${escapeHtml(toIso(user.lastActive))}</td>
+        <td>${escapeHtml(user.sessionCount)}</td>
+        <td>${escapeHtml(Math.round(user.totalActiveSeconds / 60))}m</td>
+        <td>${escapeHtml(user.likes)}</td>
+        <td>${escapeHtml(user.passes)}</td>
+        <td>${escapeHtml(user.cardsViewed)}</td>
+        <td>${escapeHtml(user.reliabilityErrors)}</td>
+      </tr>
+    `).join("");
+    const comparisonData: any = study.comparison;
+    const comparison = comparisonData ? `
+      <div class="card" style="margin-bottom:16px;">
+        <h2>Test Comparison</h2>
+        <table><thead><tr><th>Metric</th><th>Selected</th><th>Compared</th></tr></thead><tbody>
+          ${["participants","averageSessionSeconds","totalDiscoveryDecisions","likes","passes","usersReaching30Likes","engagedUsers","blockedFrustratedUsers"].map((key) => `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(comparisonData.current[key])}</td><td>${escapeHtml(comparisonData.previous[key])}</td></tr>`).join("")}
+        </tbody></table>
+      </div>
+    ` : "";
+
+    res.send(this.renderPage("Study Analytics", `
+      <h1>Study Analytics</h1>
+      <div class="meta">Analytics API: ${escapeHtml(study.analyticsEnabled ? "enabled" : "disabled")} · Admin study: ${escapeHtml(study.analyticsAdminEnabled ? "enabled" : "disabled")}</div>
+      <div class="card" style="margin-bottom:16px;">
+        <h2>Test Management</h2>
+        <form method="get">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end;">
+            <label><div class="label">Selected test run</div><select name="testRunId" style="width:100%;padding:10px;border-radius:10px;border:1px solid #ccd5ce;">${testRunOptions}</select></label>
+            <label><div class="label">Compare with</div><select name="compareTestRunId" style="width:100%;padding:10px;border-radius:10px;border:1px solid #ccd5ce;">${compareOptions}</select></label>
+            <button class="button primary" type="submit">Apply</button>
+          </div>
+        </form>
+        <form method="post" action="/api/admin/stats/study/test-runs" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
+          <input name="name" placeholder="Test run name" required />
+          <input name="startsAt" type="datetime-local" required />
+          <input name="endsAt" type="datetime-local" />
+          <input name="notes" placeholder="Notes" />
+          <label class="muted"><input type="checkbox" name="includeAllRealUsers" checked /> Include all real users</label>
+          <button class="button primary" type="submit">Create test run</button>
+        </form>
+        ${study.selectedTestRunId ? `
+          <div class="actions">
+            <form method="post" action="/api/admin/stats/study/test-runs/${escapeHtmlAttribute(study.selectedTestRunId)}/activate"><button class="button primary">Activate</button></form>
+            <form method="post" action="/api/admin/stats/study/test-runs/${escapeHtmlAttribute(study.selectedTestRunId)}/pause"><button class="button">Pause</button></form>
+            <form method="post" action="/api/admin/stats/study/test-runs/${escapeHtmlAttribute(study.selectedTestRunId)}/complete"><button class="button">Complete</button></form>
+          </div>` : ""}
+      </div>
+      <div class="grid">${summaryCards}</div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr));">
+        <div class="card"><h2>Product Success Scorecard</h2><table><tbody>${scoreRows}</tbody></table></div>
+        <div class="card"><h2>Funnel</h2><table><tbody>${funnelRows}</tbody></table></div>
+      </div>
+      <div class="card" style="margin:16px 0;"><h2>Time and Screen Usage</h2><table><thead><tr><th>Screen</th><th>Area</th><th>Segments</th><th>Total</th><th>Average</th></tr></thead><tbody>${screenRows || '<tr><td colspan="5" class="muted">No screen time</td></tr>'}</tbody></table></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr));">${eventRows("Discovery Behaviour", study.discovery)}${eventRows("Goals Behaviour", study.goals)}${eventRows("Reliability / Friction", study.friction)}</div>
+      <div class="card" style="margin:16px 0;"><h2>User Table</h2><table><thead><tr><th>User</th><th>Engagement</th><th>Onboarding</th><th>Activation</th><th>Last active</th><th>Sessions</th><th>Time</th><th>Likes</th><th>Passes</th><th>Cards</th><th>Errors</th></tr></thead><tbody>${userRows || '<tr><td colspan="11" class="muted">No users in selected study run</td></tr>'}</tbody></table></div>
+      ${comparison}
+    `));
+  }
+
+  @Get("study/users/:userId")
+  async studyUserTimeline(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param("userId") userIdRaw: string,
+    @Query("testRunId") testRunId?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const userId = Number(userIdRaw);
+    if (!Number.isFinite(userId)) {
+      res.status(400).send("Invalid user id");
+      return;
+    }
+    const detail = await this.adminService.getStudyUserTimeline(userId, testRunId || null);
+    const rows = detail.timeline.map((item: any) =>
+      `<tr><td>${escapeHtml(toIso(item.at))}</td><td>${escapeHtml(item.kind)}</td><td>${escapeHtml(item.label)}</td><td>${escapeHtml(item.detail || "")}</td></tr>`
+    ).join("");
+    res.send(this.renderPage("Study User Timeline", `
+      <h1>User Timeline</h1>
+      <div class="actions"><a class="button" href="/api/admin/stats/study${testRunId ? `?testRunId=${escapeHtmlAttribute(testRunId)}` : ""}">Back to Study</a></div>
+      <div class="card"><h2>User ${escapeHtml(userId)}</h2><table><thead><tr><th>Time</th><th>Type</th><th>Activity</th><th>Detail</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No timeline events</td></tr>'}</tbody></table></div>
+    `));
+  }
+
+  @Post("study/test-runs")
+  async createStudyTestRun(@Req() req: Request, @Res() res: Response, @Body() body: any) {
+    if (!this.authorize(req, res)) return;
+    const startsAt = body?.startsAt ? new Date(body.startsAt).toISOString() : new Date().toISOString();
+    const endsAt = body?.endsAt ? new Date(body.endsAt).toISOString() : null;
+    const run = await this.adminService.createStudyTestRun({
+      name: String(body?.name || "Untitled study").trim(),
+      startsAt,
+      endsAt,
+      includeAllRealUsers: body?.includeAllRealUsers === "on" || body?.includeAllRealUsers === true,
+      notes: String(body?.notes || "").trim() || null,
+    });
+    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(run.id)}`);
+  }
+
+  @Post("study/test-runs/:id/activate")
+  async activateStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
+    if (!this.authorize(req, res)) return;
+    await this.adminService.setStudyTestRunStatus(id, "active");
+    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+  }
+
+  @Post("study/test-runs/:id/pause")
+  async pauseStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
+    if (!this.authorize(req, res)) return;
+    await this.adminService.setStudyTestRunStatus(id, "paused");
+    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+  }
+
+  @Post("study/test-runs/:id/complete")
+  async completeStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
+    if (!this.authorize(req, res)) return;
+    await this.adminService.setStudyTestRunStatus(id, "completed");
+    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+  }
+
+  @Post("study/test-runs/:id/update")
+  async updateStudyTestRun(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param("id") id: string,
+    @Body() body: any
+  ) {
+    if (!this.authorize(req, res)) return;
+    await this.adminService.updateStudyTestRun(id, {
+      name: body?.name ? String(body.name).trim() : undefined,
+      description: body?.description ? String(body.description).trim() : null,
+      startsAt: body?.startsAt ? new Date(body.startsAt).toISOString() : undefined,
+      endsAt: body?.endsAt ? new Date(body.endsAt).toISOString() : null,
+      includeAllRealUsers:
+        body?.includeAllRealUsers === undefined
+          ? undefined
+          : body.includeAllRealUsers === "on" || body.includeAllRealUsers === true,
+      includeDummyUsersAsActors:
+        body?.includeDummyUsersAsActors === undefined
+          ? undefined
+          : body.includeDummyUsersAsActors === "on" || body.includeDummyUsersAsActors === true,
+      notes: body?.notes ? String(body.notes).trim() : null,
+    });
+    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
   }
 
   @Get("overview")

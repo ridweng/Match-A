@@ -92,6 +92,13 @@
       "when": 1776243600000,
       "tag": "0012_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777507200000,
+      "tag": "0013_study_analytics",
+      "breakpoints": true
     }
   ]
 }

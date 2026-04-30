@@ -5,6 +5,7 @@ import { authConfig } from "./config/auth.config";
 import { emailConfig } from "./config/email.config";
 import { validateApiEnv } from "./config/env.schema";
 import { AdminModule } from "./modules/admin/admin.module";
+import { AnalyticsModule } from "./modules/analytics/analytics.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CacheModule } from "./modules/cache/cache.module";
 import { DiscoveryModule } from "./modules/discovery/discovery.module";
@@ -23,6 +24,7 @@ import { ViewerModule } from "./modules/viewer/viewer.module";
       validate: validateApiEnv,
     }),
     CacheModule,
+    AnalyticsModule,
     AdminModule,
     HealthModule,
     GoalsModule,

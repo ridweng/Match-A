@@ -3,6 +3,6 @@ export const API_TAGS = {
   discovery: "discovery",
   viewer: "viewer",
   media: "media",
+  analytics: "analytics",
   health: "health",
 } as const;
-

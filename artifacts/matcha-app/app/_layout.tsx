@@ -64,6 +64,8 @@ function MainLayoutNav() {
     t,
     goalsUnlockPromptVisible,
     dismissGoalsUnlockPrompt,
+    recordAnalyticsScreenTime,
+    trackAnalyticsEvent,
   } = useApp();
   const pathname = usePathname();
   const isAuthCallbackActive = pathname === AUTH_CALLBACK_ROUTE;
@@ -75,6 +77,7 @@ function MainLayoutNav() {
   const [shouldRenderLoadingScreen, setShouldRenderLoadingScreen] =
     useState(true);
   const lastRedirectRef = useRef<string | null>(null);
+  const screenSegmentRef = useRef<{ screenName: string; areaName: string | null; startedAt: number } | null>(null);
 
   useEffect(() => {
     if (loadingVisible) {
@@ -156,6 +159,42 @@ function MainLayoutNav() {
     resolvedAccessGate.route,
     shouldShowTabs,
   ]);
+
+  useEffect(() => {
+    const screenName = getAnalyticsScreenName(pathname);
+    const now = Date.now();
+    const current = screenSegmentRef.current;
+    if (current && current.screenName !== screenName) {
+      recordAnalyticsScreenTime({
+        screenName: current.screenName,
+        areaName: current.areaName,
+        startedAt: new Date(current.startedAt).toISOString(),
+        durationMs: now - current.startedAt,
+        endedBy: "navigation",
+      });
+    }
+    if (!current || current.screenName !== screenName) {
+      screenSegmentRef.current = { screenName, areaName: null, startedAt: now };
+      if (screenName === "Discover") trackAnalyticsEvent("discover_opened", { screenName });
+      if (screenName === "Goals") trackAnalyticsEvent("goals_tab_opened", { screenName });
+      if (screenName === "Onboarding") trackAnalyticsEvent("onboarding_step_viewed", { screenName, metadata: { route: pathname } });
+      if (screenName === "Complete profile") trackAnalyticsEvent("complete_profile_required", { screenName });
+      if (screenName === "Sign in") trackAnalyticsEvent("app_foregrounded", { screenName, metadata: { route: pathname } });
+    }
+
+    return () => {
+      const leaving = screenSegmentRef.current;
+      if (!leaving) return;
+      recordAnalyticsScreenTime({
+        screenName: leaving.screenName,
+        areaName: leaving.areaName,
+        startedAt: new Date(leaving.startedAt).toISOString(),
+        durationMs: Date.now() - leaving.startedAt,
+        endedBy: "blur",
+      });
+      screenSegmentRef.current = null;
+    };
+  }, [pathname, recordAnalyticsScreenTime, trackAnalyticsEvent]);
 
   return (
     <>
@@ -277,6 +316,19 @@ function MainLayoutNav() {
       ) : null}
     </>
   );
+}
+
+function getAnalyticsScreenName(pathname: string) {
+  if (pathname.includes("forgot-password")) return "Forgot password";
+  if (pathname.includes("reset-password")) return "Reset password";
+  if (pathname.includes("verify-email")) return "Email verification required";
+  if (pathname.includes("onboarding")) return "Onboarding";
+  if (pathname.includes("complete-profile")) return "Complete profile";
+  if (pathname.includes("discover")) return "Discover";
+  if (pathname.includes("goals")) return "Goals";
+  if (pathname.includes("profile")) return "Profile/settings";
+  if (pathname.includes("login")) return "Sign in";
+  return "App";
 }
 
 export default function RootLayout() {

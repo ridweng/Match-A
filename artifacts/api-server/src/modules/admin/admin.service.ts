@@ -2880,4 +2880,548 @@ export class AdminService {
       recentDecisions: recentDecisions.rows,
     };
   }
+
+  async createStudyTestRun(input: {
+    name: string;
+    description?: string | null;
+    startsAt: string;
+    endsAt?: string | null;
+    includeAllRealUsers?: boolean;
+    includeDummyUsersAsActors?: boolean;
+    notes?: string | null;
+  }) {
+    const result = await pool.query(
+      `INSERT INTO analytics.test_runs (
+        name, description, status, starts_at, ends_at,
+        include_all_real_users, include_dummy_users_as_actors, notes
+       ) VALUES ($1, $2, 'draft', $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        input.name,
+        input.description || null,
+        input.startsAt,
+        input.endsAt || null,
+        input.includeAllRealUsers ?? true,
+        input.includeDummyUsersAsActors ?? false,
+        input.notes || null,
+      ]
+    );
+    await this.cacheService?.deleteByPrefix(cacheKeys.adminPrefix()).catch(() => undefined);
+    return result.rows[0];
+  }
+
+  async updateStudyTestRun(
+    id: string,
+    input: {
+      name?: string;
+      description?: string | null;
+      startsAt?: string;
+      endsAt?: string | null;
+      includeAllRealUsers?: boolean;
+      includeDummyUsersAsActors?: boolean;
+      notes?: string | null;
+    }
+  ) {
+    const result = await pool.query(
+      `UPDATE analytics.test_runs
+       SET name = COALESCE($2, name),
+           description = $3,
+           starts_at = COALESCE($4, starts_at),
+           ends_at = $5,
+           include_all_real_users = COALESCE($6, include_all_real_users),
+           include_dummy_users_as_actors = COALESCE($7, include_dummy_users_as_actors),
+           notes = $8,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        input.name || null,
+        input.description ?? null,
+        input.startsAt || null,
+        input.endsAt ?? null,
+        input.includeAllRealUsers ?? null,
+        input.includeDummyUsersAsActors ?? null,
+        input.notes ?? null,
+      ]
+    );
+    await this.cacheService?.deleteByPrefix(cacheKeys.adminPrefix()).catch(() => undefined);
+    return result.rows[0] || null;
+  }
+
+  async setStudyTestRunStatus(id: string, status: "active" | "paused" | "completed") {
+    const result = await pool.query(
+      `UPDATE analytics.test_runs
+       SET status = $2,
+           updated_at = NOW(),
+           ends_at = CASE WHEN $2 = 'completed' AND ends_at IS NULL THEN NOW() ELSE ends_at END
+       WHERE id = $1
+       RETURNING *`,
+      [id, status]
+    );
+    await this.cacheService?.deleteByPrefix(cacheKeys.adminPrefix()).catch(() => undefined);
+    return result.rows[0] || null;
+  }
+
+  private testRunPredicate(testRunId: string | null, alias = "") {
+    const prefix = alias ? `${alias}.` : "";
+    return testRunId ? `${prefix}test_run_id = $1` : `${prefix}test_run_id IS NULL`;
+  }
+
+  async getStudyUserTimeline(userId: number, testRunId?: string | null) {
+    const params: unknown[] = [userId];
+    const testRunFilter = testRunId ? "AND test_run_id = $2" : "";
+    if (testRunId) params.push(testRunId);
+    const [events, screenTime, profileCards, sessions] = await Promise.all([
+      pool.query(
+        `SELECT occurred_at AS at, event_name, screen_name, area_name, duration_ms,
+                target_profile_kind, target_profile_batch_key, metadata
+         FROM analytics.app_events
+         WHERE user_id = $1 ${testRunFilter}
+         ORDER BY occurred_at ASC
+         LIMIT 500`,
+        params
+      ),
+      pool.query(
+        `SELECT started_at, ended_at, screen_name, area_name, duration_ms, ended_by
+         FROM analytics.screen_time_segments
+         WHERE user_id = $1 ${testRunFilter}
+         ORDER BY started_at ASC
+         LIMIT 500`,
+        params
+      ),
+      pool.query(
+        `SELECT shown_at, decided_at, visible_duration_ms, decision, target_profile_kind,
+                target_profile_batch_key, opened_info, photos_viewed
+         FROM analytics.profile_card_segments
+         WHERE user_id = $1 ${testRunFilter}
+         ORDER BY shown_at ASC
+         LIMIT 500`,
+        params
+      ),
+      pool.query(
+        `SELECT started_at, ended_at, duration_seconds, end_reason
+         FROM analytics.app_sessions
+         WHERE user_id = $1 ${testRunFilter}
+         ORDER BY started_at ASC
+         LIMIT 200`,
+        params
+      ),
+    ]);
+
+    const timeline = [
+      ...sessions.rows.map((row: any) => ({
+        at: row.started_at,
+        kind: "session",
+        label: "Session started",
+        detail: row.ended_at ? `ended ${toIsoString(row.ended_at)}` : "still open",
+      })),
+      ...events.rows.map((row: any) => ({
+        at: row.at,
+        kind: "event",
+        label: formatStudyTimelineEvent(row),
+        detail: row.screen_name || row.area_name || "",
+      })),
+      ...screenTime.rows.map((row: any) => ({
+        at: row.started_at,
+        kind: "screen_time",
+        label: `${row.screen_name}${row.area_name ? ` / ${row.area_name}` : ""} for ${formatDurationMs(Number(row.duration_ms || 0))}`,
+        detail: `ended by ${row.ended_by || "unknown"}`,
+      })),
+      ...profileCards.rows.map((row: any) => ({
+        at: row.shown_at,
+        kind: "profile_card",
+        label: `Viewed ${row.target_profile_kind || "unknown"} profile for ${formatDurationMs(Number(row.visible_duration_ms || 0))}`,
+        detail: row.decision ? `decision: ${row.decision}` : "",
+      })),
+    ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
+    return { userId, testRunId: testRunId || null, timeline };
+  }
+
+  async getStudyDashboard(input: {
+    testRunId?: string | null;
+    compareTestRunId?: string | null;
+    bypassCache?: boolean;
+  } = {}) {
+    const cacheKey = `${cacheKeys.adminPrefix()}study:${JSON.stringify(input)}`;
+    const ttl = Math.max(1, runtimeConfig.analytics.adminCacheTtlSeconds);
+    const loader = async () => this.loadStudyDashboard(input);
+    if (input.bypassCache || !this.cacheService || ttl <= 0) {
+      return loader();
+    }
+    return this.cacheService.getOrSet(cacheKey, ttl, loader);
+  }
+
+  private async loadStudyDashboard(input: {
+    testRunId?: string | null;
+    compareTestRunId?: string | null;
+  }) {
+    const testRuns = await pool.query(
+      `SELECT id, name, description, status, starts_at, ends_at, include_all_real_users,
+              include_dummy_users_as_actors, notes, created_at, updated_at
+       FROM analytics.test_runs
+       ORDER BY starts_at DESC, created_at DESC
+       LIMIT 50`
+    );
+    const selectedId =
+      input.testRunId ||
+      testRuns.rows.find((row: any) => row.status === "active")?.id ||
+      testRuns.rows[0]?.id ||
+      null;
+    const compareId = input.compareTestRunId || null;
+    const [users, screenUsage, discovery, goals, friction, funnel] = await Promise.all([
+      this.loadStudyUsers(selectedId),
+      this.loadStudyScreenUsage(selectedId),
+      this.loadStudyEventCounts(selectedId, [
+        "profile_card_shown", "profile_like", "profile_pass", "profile_info_opened",
+        "profile_photo_viewed", "discovery_queue_exhausted", "discovery_filter_opened",
+        "discovery_filter_changed",
+      ]),
+      this.loadStudyEventCounts(selectedId, [
+        "goals_locked_viewed", "threshold_unlock_modal_shown", "threshold_unlock_cta_clicked",
+        "goals_tab_opened", "goal_card_viewed", "goal_task_started", "goal_task_completed",
+        "goal_task_skipped",
+      ]),
+      this.loadStudyEventCounts(selectedId, [
+        "api_request_failed", "offline_detected", "server_unreachable", "auth_refresh_failed",
+        "media_load_failed", "decision_latency_slow", "image_load_latency_slow",
+        "onboarding_save_failed", "profile_save_failed", "discovery_decision_failed",
+        "discovery_queue_exhausted", "discovery_repeated_profile_anomaly",
+      ]),
+      this.loadStudyFunnel(selectedId),
+    ]);
+    const summary = buildStudySummary(users, discovery, goals, friction);
+    const comparison = compareId
+      ? {
+          current: summary,
+          previous: buildStudySummary(
+            await this.loadStudyUsers(compareId),
+            await this.loadStudyEventCounts(compareId, ["profile_like", "profile_pass"]),
+            [],
+            []
+          ),
+        }
+      : null;
+
+    return {
+      analyticsEnabled: runtimeConfig.analytics.enabled,
+      analyticsAdminEnabled: runtimeConfig.analytics.adminEnabled,
+      selectedTestRunId: selectedId,
+      compareTestRunId: compareId,
+      testRuns: testRuns.rows,
+      activeTestRun: testRuns.rows.find((row: any) => row.status === "active") || null,
+      summary,
+      scorecard: buildStudyScorecard(summary, funnel, friction),
+      funnel,
+      screenUsage,
+      discovery,
+      goals,
+      friction,
+      users,
+      comparison,
+    };
+  }
+
+  private async loadStudyUsers(testRunId: string | null) {
+    const params = testRunId ? [testRunId] : [];
+    const result = await pool.query(
+      `WITH sessions AS (
+         SELECT user_id,
+                COUNT(*)::int AS session_count,
+                COALESCE(SUM(COALESCE(active_duration_seconds, duration_seconds, 0)), 0)::int AS total_active_seconds,
+                COALESCE(AVG(NULLIF(duration_seconds, 0)), 0)::int AS avg_session_seconds,
+                MAX(last_heartbeat_at) AS last_active
+         FROM analytics.app_sessions
+         WHERE ${this.testRunPredicate(testRunId)}
+         GROUP BY user_id
+       ), events AS (
+         SELECT user_id,
+                COUNT(*) FILTER (WHERE event_name = 'profile_like')::int AS likes,
+                COUNT(*) FILTER (WHERE event_name = 'profile_pass')::int AS passes,
+                COUNT(*) FILTER (WHERE event_name = 'profile_card_shown')::int AS cards_viewed,
+                COUNT(*) FILTER (WHERE event_name = 'profile_info_opened')::int AS profile_info_opens,
+                COUNT(*) FILTER (WHERE event_name IN ('discovery_filter_opened','discovery_filter_changed'))::int AS filters_used,
+                COUNT(*) FILTER (WHERE event_name IN ('api_request_failed','server_unreachable','auth_refresh_failed','media_load_failed','discovery_decision_failed','onboarding_save_failed','profile_save_failed'))::int AS reliability_errors,
+                COUNT(*) FILTER (WHERE event_name = 'discover_opened')::int AS discover_opens,
+                COUNT(*) FILTER (WHERE event_name = 'goals_tab_opened')::int AS goals_opens,
+                MAX(occurred_at) AS last_event_at
+         FROM analytics.app_events
+         WHERE ${this.testRunPredicate(testRunId)}
+         GROUP BY user_id
+       ), screen AS (
+         SELECT user_id,
+                COALESCE(SUM(duration_ms) FILTER (WHERE screen_name = 'Discover'), 0)::bigint AS discover_time_ms,
+                COALESCE(SUM(duration_ms) FILTER (WHERE screen_name IN ('Goals','Locked Goals')), 0)::bigint AS goals_time_ms
+         FROM analytics.screen_time_segments
+         WHERE ${this.testRunPredicate(testRunId)}
+         GROUP BY user_id
+       ), active_users AS (
+         SELECT user_id FROM sessions UNION SELECT user_id FROM events
+       )
+       SELECT u.id AS user_id, u.email, u.created_at AS signup_date,
+              p.id AS profile_id, p.public_id, p.display_name, p.is_discoverable,
+              o.status AS onboarding_status,
+              COALESCE(s.session_count, 0) AS session_count,
+              COALESCE(s.total_active_seconds, 0) AS total_active_seconds,
+              COALESCE(s.avg_session_seconds, 0) AS avg_session_seconds,
+              GREATEST(COALESCE(s.last_active, 'epoch'::timestamptz), COALESCE(e.last_event_at, 'epoch'::timestamptz)) AS last_active,
+              COALESCE(e.likes, 0) AS likes,
+              COALESCE(e.passes, 0) AS passes,
+              COALESCE(e.cards_viewed, 0) AS cards_viewed,
+              COALESCE(e.profile_info_opens, 0) AS profile_info_opens,
+              COALESCE(e.filters_used, 0) AS filters_used,
+              COALESCE(e.reliability_errors, 0) AS reliability_errors,
+              COALESCE(e.discover_opens, 0) AS discover_opens,
+              COALESCE(e.goals_opens, 0) AS goals_opens,
+              COALESCE(screen.discover_time_ms, 0) AS discover_time_ms,
+              COALESCE(screen.goals_time_ms, 0) AS goals_time_ms,
+              COALESCE(pth.threshold_reached, false) AS threshold_reached
+       FROM active_users au
+       JOIN auth.users u ON u.id = au.user_id
+       LEFT JOIN core.profiles p ON p.user_id = u.id
+       LEFT JOIN core.user_onboarding o ON o.user_id = u.id
+       LEFT JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = p.id
+       LEFT JOIN sessions s ON s.user_id = u.id
+       LEFT JOIN events e ON e.user_id = u.id
+       LEFT JOIN screen ON screen.user_id = u.id
+       WHERE COALESCE(p.kind, 'user') = 'user'
+       ORDER BY last_active DESC NULLS LAST, u.created_at DESC`,
+      params
+    );
+    return result.rows.map((row: any) => {
+      const likes = Number(row.likes || 0);
+      const passes = Number(row.passes || 0);
+      const decisions = likes + passes;
+      const totalActiveSeconds = Number(row.total_active_seconds || 0);
+      const engagementStatus = classifyStudyEngagement({
+        sessions: Number(row.session_count || 0),
+        totalActiveSeconds,
+        decisions,
+        thresholdReached: Boolean(row.threshold_reached),
+        discoverOpens: Number(row.discover_opens || 0),
+        reliabilityErrors: Number(row.reliability_errors || 0),
+        onboardingStatus: row.onboarding_status,
+      });
+      return {
+        userId: Number(row.user_id),
+        profileId: row.profile_id ? Number(row.profile_id) : null,
+        publicId: row.public_id,
+        label: row.display_name || row.email || `User ${row.user_id}`,
+        signupDate: row.signup_date,
+        onboardingStatus: row.onboarding_status || "unknown",
+        activationStatus: row.is_discoverable ? "activated" : "not_activated",
+        engagementStatus,
+        lastActive: row.last_active,
+        sessionCount: Number(row.session_count || 0),
+        totalActiveSeconds,
+        averageSessionSeconds: Number(row.avg_session_seconds || 0),
+        discoverTimeMs: Number(row.discover_time_ms || 0),
+        goalsTimeMs: Number(row.goals_time_ms || 0),
+        likes,
+        passes,
+        likeRatio: decisions ? likes / decisions : 0,
+        cardsViewed: Number(row.cards_viewed || 0),
+        profileInfoOpens: Number(row.profile_info_opens || 0),
+        filtersUsed: Number(row.filters_used || 0),
+        thresholdReached: Boolean(row.threshold_reached),
+        goalsOpenedAfterThreshold: Boolean(row.threshold_reached) && Number(row.goals_opens || 0) > 0,
+        reliabilityErrors: Number(row.reliability_errors || 0),
+      };
+    });
+  }
+
+  private async loadStudyScreenUsage(testRunId: string | null) {
+    const params = testRunId ? [testRunId] : [];
+    const result = await pool.query(
+      `SELECT screen_name, COALESCE(area_name, '') AS area_name,
+              COUNT(*)::int AS segments,
+              COALESCE(SUM(duration_ms), 0)::bigint AS total_ms,
+              COALESCE(AVG(duration_ms), 0)::int AS average_ms
+       FROM analytics.screen_time_segments
+       WHERE ${this.testRunPredicate(testRunId)}
+       GROUP BY screen_name, area_name
+       ORDER BY total_ms DESC`,
+      params
+    );
+    return result.rows;
+  }
+
+  private async loadStudyEventCounts(testRunId: string | null, eventNames: string[]) {
+    const params: unknown[] = testRunId ? [testRunId, eventNames] : [eventNames];
+    const eventParam = testRunId ? "$2" : "$1";
+    const result = await pool.query(
+      `SELECT event_name, COUNT(*)::int AS count, COUNT(DISTINCT user_id)::int AS users
+       FROM analytics.app_events
+       WHERE ${this.testRunPredicate(testRunId)}
+         AND event_name = ANY(${eventParam}::text[])
+       GROUP BY event_name
+       ORDER BY event_name ASC`,
+      params
+    );
+    return result.rows;
+  }
+
+  private async loadStudyFunnel(testRunId: string | null) {
+    const params = testRunId ? [testRunId] : [];
+    const result = await pool.query(
+      `WITH participant_users AS (
+         SELECT DISTINCT user_id FROM (
+           SELECT user_id FROM analytics.app_sessions WHERE ${this.testRunPredicate(testRunId)}
+           UNION
+           SELECT user_id FROM analytics.app_events WHERE ${this.testRunPredicate(testRunId)}
+         ) u
+       ), real_users AS (
+         SELECT u.id, p.id AS profile_id, p.is_discoverable, o.status AS onboarding_status, u.email_verified
+         FROM participant_users pu
+         JOIN auth.users u ON u.id = pu.user_id
+         LEFT JOIN core.profiles p ON p.user_id = u.id
+         LEFT JOIN core.user_onboarding o ON o.user_id = u.id
+         WHERE COALESCE(p.kind, 'user') = 'user'
+       ), events AS (
+         SELECT * FROM analytics.app_events WHERE ${this.testRunPredicate(testRunId)}
+       )
+       SELECT
+         (SELECT COUNT(*)::int FROM real_users) AS signed_up,
+         (SELECT COUNT(*)::int FROM real_users WHERE email_verified = true) AS email_verified,
+         (SELECT COUNT(*)::int FROM real_users WHERE onboarding_status IN ('completed','exempt')) AS onboarded,
+         (SELECT COUNT(*)::int FROM real_users WHERE is_discoverable = true) AS activated,
+         (SELECT COUNT(DISTINCT user_id)::int FROM events WHERE event_name = 'discover_opened') AS opened_discover,
+         (SELECT COUNT(DISTINCT user_id)::int FROM events WHERE event_name IN ('profile_like','profile_pass','discovery_decision_success')) AS made_first_decision,
+         (SELECT COUNT(*)::int FROM real_users ru JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = ru.profile_id WHERE pth.total_likes >= 10) AS reached_10_likes,
+         (SELECT COUNT(*)::int FROM real_users ru JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = ru.profile_id WHERE pth.total_likes >= 20) AS reached_20_likes,
+         (SELECT COUNT(*)::int FROM real_users ru JOIN discovery.profile_preference_thresholds pth ON pth.actor_profile_id = ru.profile_id WHERE pth.total_likes >= 30 OR pth.threshold_reached = true) AS reached_30_likes,
+         (SELECT COUNT(DISTINCT user_id)::int FROM events WHERE event_name = 'goals_tab_opened') AS opened_goals_after_unlock,
+         (SELECT COUNT(DISTINCT user_id)::int FROM events WHERE event_name IN ('goal_task_started','goal_task_completed','goal_task_skipped')) AS interacted_goal_task,
+         (SELECT COUNT(*)::int FROM (SELECT user_id FROM analytics.app_sessions WHERE ${this.testRunPredicate(testRunId)} GROUP BY user_id HAVING COUNT(*) >= 2) s) AS returned_second_session`,
+      params
+    );
+    return result.rows[0] || {};
+  }
+}
+
+function toIsoString(input: string | Date | null | undefined) {
+  if (!input) return "—";
+  const date = input instanceof Date ? input : new Date(input);
+  return Number.isNaN(date.getTime()) ? "—" : date.toISOString();
+}
+
+function formatDurationMs(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return remaining ? `${minutes}m ${remaining}s` : `${minutes}m`;
+}
+
+function formatStudyTimelineEvent(row: any) {
+  const name = String(row.event_name || "");
+  const labels: Record<string, string> = {
+    app_opened: "App opened",
+    app_foregrounded: "App foregrounded",
+    app_backgrounded: "App backgrounded",
+    session_started: "Session started",
+    session_ended: "Session ended",
+    onboarding_started: "Onboarding started",
+    onboarding_completed: "Onboarding completed",
+    discover_opened: "Discover opened",
+    profile_info_opened: "Profile info opened",
+    profile_like: "Liked profile",
+    profile_pass: "Passed profile",
+    goals_tab_opened: "Opened Goals",
+    goals_locked_viewed: "Viewed locked Goals",
+    threshold_unlock_modal_shown: "Threshold unlock modal shown",
+    discovery_queue_exhausted: "Discovery queue exhausted",
+    server_unreachable: "Server unreachable",
+    offline_detected: "Offline detected",
+  };
+  const base = labels[name] || name.replace(/_/g, " ");
+  if (row.duration_ms) return `${base}, ${formatDurationMs(Number(row.duration_ms))}`;
+  if (row.target_profile_kind) return `${base} (${row.target_profile_kind})`;
+  return base;
+}
+
+const ENGAGEMENT_THRESHOLDS = {
+  highlyEngagedSessions: 2,
+  highlyEngagedSeconds: 600,
+  highlyEngagedDecisions: 20,
+  engagedSeconds: 300,
+  engagedDecisions: 10,
+  blockedErrors: 5,
+};
+
+function classifyStudyEngagement(input: {
+  sessions: number;
+  totalActiveSeconds: number;
+  decisions: number;
+  thresholdReached: boolean;
+  discoverOpens: number;
+  reliabilityErrors: number;
+  onboardingStatus: string | null;
+}) {
+  if (
+    input.reliabilityErrors >= ENGAGEMENT_THRESHOLDS.blockedErrors ||
+    (input.onboardingStatus && !["completed", "exempt"].includes(input.onboardingStatus) && input.reliabilityErrors > 0)
+  ) return "blocked_frustrated";
+  if (
+    input.thresholdReached ||
+    (input.sessions >= ENGAGEMENT_THRESHOLDS.highlyEngagedSessions &&
+      input.totalActiveSeconds >= ENGAGEMENT_THRESHOLDS.highlyEngagedSeconds &&
+      input.decisions >= ENGAGEMENT_THRESHOLDS.highlyEngagedDecisions)
+  ) return "highly_engaged";
+  if (
+    input.totalActiveSeconds >= ENGAGEMENT_THRESHOLDS.engagedSeconds &&
+    input.decisions >= ENGAGEMENT_THRESHOLDS.engagedDecisions &&
+    input.discoverOpens > 0
+  ) return "engaged";
+  if (input.sessions > 0 || input.discoverOpens > 0 || input.decisions > 0) return "lightly_engaged";
+  return "not_engaged";
+}
+
+function getEventCount(rows: any[], eventName: string) {
+  return Number(rows.find((row) => row.event_name === eventName)?.count || 0);
+}
+
+function buildStudySummary(users: any[], discovery: any[], goals: any[], friction: any[]) {
+  const likes = getEventCount(discovery, "profile_like");
+  const passes = getEventCount(discovery, "profile_pass");
+  const sessions = users.reduce((sum, user) => sum + Number(user.sessionCount || 0), 0);
+  const totalActiveSeconds = users.reduce((sum, user) => sum + Number(user.totalActiveSeconds || 0), 0);
+  return {
+    participants: users.length,
+    activeUsers: users.filter((user) => new Date(user.lastActive).getTime() > Date.now() - 86_400_000).length,
+    totalSessions: sessions,
+    totalActiveSeconds,
+    averageSessionSeconds: sessions ? Math.round(totalActiveSeconds / sessions) : 0,
+    medianSessionSeconds: 0,
+    totalDiscoveryDecisions: likes + passes,
+    likes,
+    passes,
+    likeRatio: likes + passes ? likes / (likes + passes) : 0,
+    usersReaching30Likes: users.filter((user) => user.thresholdReached).length,
+    usersOpeningGoalsAfterUnlock: getEventCount(goals, "goals_tab_opened"),
+    engagedUsers: users.filter((user) => user.engagementStatus === "engaged" || user.engagementStatus === "highly_engaged").length,
+    notEngagedUsers: users.filter((user) => user.engagementStatus === "not_engaged").length,
+    blockedFrustratedUsers: users.filter((user) => user.engagementStatus === "blocked_frustrated").length || friction.reduce((sum, row) => sum + Number(row.users || 0), 0),
+  };
+}
+
+function buildStudyScorecard(summary: any, funnel: any, friction: any[]) {
+  const participants = Math.max(Number(summary.participants || 0), 1);
+  const onboardingRate = Number(funnel.onboarded || 0) / participants;
+  const discoverRate = Number(funnel.opened_discover || 0) / participants;
+  const decisionRate = Number(funnel.made_first_decision || 0) / participants;
+  const errorCount = friction.reduce((sum, row: any) => sum + Number(row.count || 0), 0);
+  return [
+    { label: "Onboarding completion", status: onboardingRate >= 0.75 ? "Strong" : onboardingRate >= 0.45 ? "Needs attention" : "Problem" },
+    { label: "Discover activation", status: discoverRate >= 0.75 ? "Strong" : discoverRate >= 0.45 ? "Needs attention" : "Problem" },
+    { label: "First decision rate", status: decisionRate >= 0.7 ? "Strong" : decisionRate >= 0.4 ? "Needs attention" : "Problem" },
+    { label: "Average cards viewed", status: Number(summary.totalDiscoveryDecisions || 0) / participants >= 10 ? "Strong" : "Needs attention" },
+    { label: "Like/pass activity", status: Number(summary.likes || 0) + Number(summary.passes || 0) > 0 ? "Strong" : "Problem" },
+    { label: "Threshold progress", status: Number(summary.usersReaching30Likes || 0) > 0 ? "Strong" : "Needs attention" },
+    { label: "Goals unlock/open rate", status: Number(summary.usersOpeningGoalsAfterUnlock || 0) > 0 ? "Strong" : "Needs attention" },
+    { label: "Return sessions", status: Number(funnel.returned_second_session || 0) / participants >= 0.35 ? "Strong" : "Needs attention" },
+    { label: "Technical reliability", status: errorCount <= participants ? "Strong" : errorCount <= participants * 3 ? "Needs attention" : "Problem" },
+  ];
 }

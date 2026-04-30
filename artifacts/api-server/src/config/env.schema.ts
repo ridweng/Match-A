@@ -117,6 +117,14 @@ const envSchema = z
     REDIS_URL: z.string().trim().default(""),
     CACHE_ENABLED: booleanLikeSchema.default(false),
     CACHE_DEFAULT_TTL_SECONDS: integerLikeSchema.default(60),
+    ANALYTICS_ENABLED: booleanLikeSchema.default(false),
+    ANALYTICS_ADMIN_ENABLED: booleanLikeSchema.default(false),
+    ANALYTICS_DEBUG_LOGS: booleanLikeSchema.default(false),
+    ANALYTICS_HEARTBEAT_INTERVAL_SECONDS: integerLikeSchema.default(30),
+    ANALYTICS_SESSION_STALE_SECONDS: integerLikeSchema.default(300),
+    ANALYTICS_EVENT_MAX_METADATA_BYTES: integerLikeSchema.default(4096),
+    ANALYTICS_ADMIN_CACHE_TTL_SECONDS: integerLikeSchema.default(30),
+    ANALYTICS_MAX_BATCH_SIZE: integerLikeSchema.default(50),
     AUTH_FRONTEND_REDIRECT_URI: z
       .string()
       .trim()
@@ -377,6 +385,17 @@ function normalizeEnv(env: NodeJS.ProcessEnv): Record<string, unknown> {
     REDIS_URL: env.REDIS_URL ?? "",
     CACHE_ENABLED: env.CACHE_ENABLED ?? (env.REDIS_URL ? "true" : "false"),
     CACHE_DEFAULT_TTL_SECONDS: env.CACHE_DEFAULT_TTL_SECONDS ?? "60",
+    ANALYTICS_ENABLED: env.ANALYTICS_ENABLED ?? "false",
+    ANALYTICS_ADMIN_ENABLED: env.ANALYTICS_ADMIN_ENABLED ?? env.ANALYTICS_ENABLED ?? "false",
+    ANALYTICS_DEBUG_LOGS: env.ANALYTICS_DEBUG_LOGS ?? "false",
+    ANALYTICS_HEARTBEAT_INTERVAL_SECONDS:
+      env.ANALYTICS_HEARTBEAT_INTERVAL_SECONDS ?? "30",
+    ANALYTICS_SESSION_STALE_SECONDS: env.ANALYTICS_SESSION_STALE_SECONDS ?? "300",
+    ANALYTICS_EVENT_MAX_METADATA_BYTES:
+      env.ANALYTICS_EVENT_MAX_METADATA_BYTES ?? "4096",
+    ANALYTICS_ADMIN_CACHE_TTL_SECONDS:
+      env.ANALYTICS_ADMIN_CACHE_TTL_SECONDS ?? "30",
+    ANALYTICS_MAX_BATCH_SIZE: env.ANALYTICS_MAX_BATCH_SIZE ?? "50",
     AUTH_FRONTEND_REDIRECT_URI:
       env.AUTH_FRONTEND_REDIRECT_URI ?? "matcha:///auth-callback",
     AUTH_SESSION_SECRET:

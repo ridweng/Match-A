@@ -399,6 +399,7 @@ export default function DiscoverScreen() {
     discoveryFeed, discoveryQueueRuntime, discoveryFilters,
     lastServerSyncAt, recordDiscoverySwipe, recordDiscoveryQueueTrace,
     refreshProfileLocation, refreshDiscoveryCandidates, resolvedAccessGate, saveDiscoveryFilters,
+    trackAnalyticsEvent, recordAnalyticsProfileCardTime,
   } = useApp();
 
   const ageBounds = useMemo<AgeBounds>(() => ({ min: 18, max: 100 }), []);
@@ -443,6 +444,9 @@ export default function DiscoverScreen() {
   const expectedRenderQueueRef        = useRef<{ requestId: string | null; resultQueue: Array<string | number> } | null>(null);
   const backScrollRef                 = useRef<ScrollView | null>(null);
   const traceFocused = discoveryVerboseDebugEnabled && pathname.endsWith("/discover");
+  const cardVisibleStartedAtRef = useRef<number | null>(null);
+  const cardInfoOpenedRef = useRef(false);
+  const cardPhotosViewedRef = useRef(0);
 
   useEffect(() => {
     if (!pathname.endsWith("/discover")) {
@@ -799,6 +803,33 @@ export default function DiscoverScreen() {
     return () => clearTimeout(t);
   }, [popularUpdateBanner]);
 
+  useEffect(() => {
+    if (!frontProfile?.publicId) return;
+    cardVisibleStartedAtRef.current = Date.now();
+    cardInfoOpenedRef.current = false;
+    cardPhotosViewedRef.current = 1;
+    trackAnalyticsEvent("profile_card_shown", {
+      screenName: "Discover",
+      targetProfilePublicId: frontProfile.publicId,
+      metadata: {
+        queueVersion: discoveryFeed.queueVersion ?? null,
+        policyVersion: discoveryFeed.policyVersion ?? null,
+      },
+    });
+  }, [discoveryFeed.policyVersion, discoveryFeed.queueVersion, frontProfile?.publicId, trackAnalyticsEvent]);
+
+  useEffect(() => {
+    if (isOnlineDeckExhausted || isOfflineDeckExhausted || isSeenDeckExhausted) {
+      trackAnalyticsEvent("discovery_queue_exhausted", {
+        screenName: "Discover",
+        metadata: {
+          reason: isOfflineDeckExhausted ? "offline" : isOnlineDeckExhausted ? "online_exhausted" : "seen_exhausted",
+          isOnline,
+        },
+      });
+    }
+  }, [isOfflineDeckExhausted, isOnline, isOnlineDeckExhausted, isSeenDeckExhausted, trackAnalyticsEvent]);
+
   React.useEffect(() => { setDraftFilters(activeFilters); }, [activeFilters]);
 
   // ─── KEY: flicker-free position settle ──────────────────────────────────────
@@ -1020,9 +1051,17 @@ export default function DiscoverScreen() {
   const setInfoVisible = useCallback((nextVisible: boolean) => {
     if (shouldSuppressVisualChurn) return;
     setIsInfoVisible(nextVisible);
+    if (frontProfile?.publicId) {
+      cardInfoOpenedRef.current = cardInfoOpenedRef.current || nextVisible;
+      trackAnalyticsEvent(nextVisible ? "profile_info_opened" : "profile_info_closed", {
+        screenName: "Discover",
+        areaName: "Profile details/info modal",
+        targetProfilePublicId: frontProfile.publicId,
+      });
+    }
     if (nextVisible) backScrollRef.current?.scrollTo({ y: 0, animated: false });
     Animated.spring(flipAnim, { toValue: nextVisible ? 1 : 0, friction: 8, tension: 60, useNativeDriver: true }).start();
-  }, [flipAnim, shouldSuppressVisualChurn]);
+  }, [flipAnim, frontProfile?.publicId, shouldSuppressVisualChurn, trackAnalyticsEvent]);
 
   const toggleInfo = () => {
     Haptics.selectionAsync().catch(() => {});
@@ -1151,6 +1190,12 @@ export default function DiscoverScreen() {
       : Math.max(activePhotoIndex - 1, 0);
     if (nextIndex === activePhotoIndex) return;
     Haptics.selectionAsync().catch(() => {});
+    cardPhotosViewedRef.current = Math.max(cardPhotosViewedRef.current, nextIndex + 1);
+    trackAnalyticsEvent("profile_photo_viewed", {
+      screenName: "Discover",
+      targetProfilePublicId: frontProfile.publicId,
+      metadata: { photoIndex: nextIndex, photosViewed: cardPhotosViewedRef.current },
+    });
     const nextUri = frontProfile.images[nextIndex];
     if (!nextUri || isDiscoveryImageWarm(nextUri)) { setActivePhotoIndex(nextIndex); return; }
     const frontProfileId = frontProfile.id;
@@ -1159,7 +1204,7 @@ export default function DiscoverScreen() {
         setActivePhotoIndex(nextIndex);
       }
     });
-  }, [activePhotoIndex, currentImages.length, frontProfile, shouldSuppressVisualChurn]);
+  }, [activePhotoIndex, currentImages.length, frontProfile, shouldSuppressVisualChurn, trackAnalyticsEvent]);
 
   // ─── Filter actions ───────────────────────────────────────────────────────────
   const toggleBaseGender = (value: BaseGender) => {
@@ -1181,6 +1226,7 @@ export default function DiscoverScreen() {
     if (isOffline) return;
     setDraftFilters({ ...activeFilters, selectedGenders: [...activeFilters.selectedGenders] });
     setIsFilterVisible(true);
+    trackAnalyticsEvent("discovery_filter_opened", { screenName: "Discover", areaName: "Filters" });
     Haptics.selectionAsync().catch(() => {});
   };
   const closeFilters = () => { Keyboard.dismiss(); setIsFilterVisible(false); };
@@ -1192,6 +1238,16 @@ export default function DiscoverScreen() {
     void (async () => {
       try {
         await saveDiscoveryFilters({ ...draftFilters, selectedGenders: [...draftFilters.selectedGenders] });
+        trackAnalyticsEvent("discovery_filter_changed", {
+          screenName: "Discover",
+          areaName: "Filters",
+          metadata: {
+            selectedGendersCount: draftFilters.selectedGenders.length,
+            therianMode: draftFilters.therianMode,
+            ageMin: draftFilters.ageMin,
+            ageMax: draftFilters.ageMax,
+          },
+        });
         resetCardState();
         setIsFilterVisible(false);
       } finally { setIsQueueLoading(false); }
@@ -1206,6 +1262,7 @@ export default function DiscoverScreen() {
     void (async () => {
       try {
         await saveDiscoveryFilters({ ...defaultFilters, selectedGenders: [...defaultFilters.selectedGenders] });
+        trackAnalyticsEvent("discovery_filter_cleared", { screenName: "Discover", areaName: "Filters" });
         resetCardState();
         setIsFilterVisible(false);
       } finally { setIsQueueLoading(false); }
@@ -1279,6 +1336,25 @@ export default function DiscoverScreen() {
         if (direction === "right") setLastLikedProfile(profile);
 
         recordDiscoverySwipe(direction, { requestId, targetProfileId: decisionContext.targetProfileId });
+        const visibleStartedAt = cardVisibleStartedAtRef.current ?? Date.now();
+        recordAnalyticsProfileCardTime({
+          targetProfilePublicId: profile.publicId,
+          shownAt: new Date(visibleStartedAt).toISOString(),
+          visibleDurationMs: Date.now() - visibleStartedAt,
+          decision: action,
+          openedInfo: cardInfoOpenedRef.current,
+          photosViewed: cardPhotosViewedRef.current,
+        });
+        trackAnalyticsEvent("profile_card_visible_duration", {
+          screenName: "Discover",
+          targetProfilePublicId: profile.publicId,
+          durationMs: Date.now() - visibleStartedAt,
+          metadata: {
+            decision: action,
+            openedInfo: cardInfoOpenedRef.current,
+            photosViewed: cardPhotosViewedRef.current,
+          },
+        });
 
         // Background API call
         void (async () => {
@@ -1313,6 +1389,7 @@ export default function DiscoverScreen() {
       holdGestureSwipeFeedback, isDeckAnimating, isOffline,
       likeProfile, logQueueTrace, logicalActiveProfileId, logicalQueueIds,
       passProfile, recordDiscoverySwipe, sourceEntries, promoteDeckAfterDecision,
+      recordAnalyticsProfileCardTime, trackAnalyticsEvent,
     ],
   );
 
