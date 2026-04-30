@@ -157,6 +157,7 @@ services:
       APPLE_SERVICE_ID: ${APPLE_SERVICE_ID:-}
     networks:
       - matcha_backend
+      - matcha_public
 
   web:
     build:
