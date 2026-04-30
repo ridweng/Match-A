@@ -527,6 +527,23 @@ export class AdminController {
     `));
   }
 
+  @Get("study.json")
+  async studyJson(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query("testRunId") testRunId?: string,
+    @Query("compareTestRunId") compareTestRunId?: string,
+    @Query("refresh") refresh?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const study = await this.adminService.getStudyDashboard({
+      testRunId: testRunId || null,
+      compareTestRunId: compareTestRunId || null,
+      bypassCache: refresh === "1" || refresh === "true",
+    });
+    this.sendAdminJson(res, study);
+  }
+
   @Get("study/users/:userId")
   async studyUserTimeline(
     @Req() req: Request,
@@ -549,6 +566,23 @@ export class AdminController {
       <div class="actions"><a class="button" href="/api/admin/stats/study${testRunId ? `?testRunId=${escapeHtmlAttribute(testRunId)}` : ""}">Back to Study</a></div>
       <div class="card"><h2>User ${escapeHtml(userId)}</h2><table><thead><tr><th>Time</th><th>Type</th><th>Activity</th><th>Detail</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No timeline events</td></tr>'}</tbody></table></div>
     `));
+  }
+
+  @Get("study/users/:userId.json")
+  async studyUserTimelineJson(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param("userId") userIdRaw: string,
+    @Query("testRunId") testRunId?: string
+  ) {
+    if (!this.authorize(req, res)) return;
+    const userId = Number(userIdRaw);
+    if (!Number.isFinite(userId)) {
+      res.status(400).json({ error: "INVALID_USER_ID" });
+      return;
+    }
+    const detail = await this.adminService.getStudyUserTimeline(userId, testRunId || null);
+    this.sendAdminJson(res, detail);
   }
 
   @Post("study/test-runs")

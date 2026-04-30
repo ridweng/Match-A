@@ -112,6 +112,85 @@ type DatabasePayload = {
   }[];
 };
 
+type StudyPayload = {
+  analyticsEnabled: boolean;
+  analyticsAdminEnabled: boolean;
+  selectedTestRunId: string | null;
+  compareTestRunId: string | null;
+  testRuns: {
+    id: string;
+    name: string;
+    description: string | null;
+    status: string;
+    starts_at: string;
+    ends_at: string | null;
+    include_all_real_users: boolean;
+    include_dummy_users_as_actors: boolean;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+  }[];
+  activeTestRun: {
+    id: string;
+    name: string;
+    status: string;
+    starts_at: string;
+    ends_at: string | null;
+  } | null;
+  summary: {
+    participants: number;
+    activeUsers: number;
+    totalSessions: number;
+    totalActiveSeconds: number;
+    averageSessionSeconds: number;
+    medianSessionSeconds: number;
+    totalDiscoveryDecisions: number;
+    likes: number;
+    passes: number;
+    likeRatio: number;
+    usersReaching30Likes: number;
+    usersOpeningGoalsAfterUnlock: number;
+    engagedUsers: number;
+    notEngagedUsers: number;
+    blockedFrustratedUsers: number;
+  };
+  scorecard: { label: string; status: string }[];
+  funnel: Record<string, string | number>;
+  screenUsage: { screen_name: string; area_name: string; segments: number; total_ms: number; average_ms: number }[];
+  discovery: { event_name: string; count: number; users: number }[];
+  goals: { event_name: string; count: number; users: number }[];
+  friction: { event_name: string; count: number; users: number }[];
+  users: {
+    userId: number;
+    profileId: number | null;
+    publicId: string;
+    label: string;
+    signupDate: string;
+    onboardingStatus: string;
+    activationStatus: string;
+    engagementStatus: string;
+    lastActive: string;
+    sessionCount: number;
+    totalActiveSeconds: number;
+    averageSessionSeconds: number;
+    discoverTimeMs: number;
+    goalsTimeMs: number;
+    likes: number;
+    passes: number;
+    likeRatio: number;
+    cardsViewed: number;
+    profileInfoOpens: number;
+    filtersUsed: number;
+    thresholdReached: boolean;
+    goalsOpenedAfterThreshold: boolean;
+    reliabilityErrors: number;
+  }[];
+  comparison: {
+    current: Record<string, number>;
+    previous: Record<string, number>;
+  } | null;
+};
+
 type GeneratedBatch = {
   batchKey: string;
   generationVersion: number;
@@ -651,6 +730,7 @@ function AdminLayout({
     { label: "Overview", path: "/admin", icon: "bar-chart-2" },
     { label: "Users", path: "/admin/users", icon: "users" },
     { label: "Database", path: "/admin/database", icon: "database" },
+    { label: "Study", path: "/admin/study", icon: "activity" },
   ] as const;
 
   const sidebarContent = (
@@ -1613,6 +1693,149 @@ export function AdminDatabaseScreen() {
         }}
         onConfirm={confirmDelete}
       />
+    </AdminLayout>
+  );
+}
+
+export function AdminStudyScreen() {
+  const params = useLocalSearchParams<{
+    testRunId?: string;
+    compareTestRunId?: string;
+  }>();
+  const [testRunId, setTestRunId] = useState(normalizeRouteParam(params.testRunId));
+  const [compareTestRunId, setCompareTestRunId] = useState(normalizeRouteParam(params.compareTestRunId));
+
+  useEffect(() => {
+    setTestRunId(normalizeRouteParam(params.testRunId));
+    setCompareTestRunId(normalizeRouteParam(params.compareTestRunId));
+  }, [params.testRunId, params.compareTestRunId]);
+
+  const apiPath = `/api/admin/stats/study.json${buildQuery({
+    testRunId: testRunId || null,
+    compareTestRunId: compareTestRunId || null,
+  })}`;
+  const studyState = useAdminApi<StudyPayload>(apiPath, DEFAULT_ADMIN_DASHBOARD_POLL_MS);
+  const data = studyState.data;
+
+  const userRows = (data?.users ?? []).map((user) => [
+    user.label,
+    user.engagementStatus.replace(/_/g, " "),
+    user.onboardingStatus,
+    user.activationStatus,
+    formatDate(user.lastActive),
+    user.sessionCount,
+    `${Math.round(user.totalActiveSeconds / 60)}m`,
+    user.likes,
+    user.passes,
+    user.cardsViewed,
+    user.reliabilityErrors,
+  ]);
+
+  const scorecardRows = (data?.scorecard ?? []).map((row) => [row.label, row.status]);
+  const funnelRows = data ? Object.entries(data.funnel).map(([key, value]) => [key.replace(/_/g, " "), value]) : [];
+  const screenRows = (data?.screenUsage ?? []).map((row) => [
+    row.screen_name,
+    row.area_name || "—",
+    row.segments,
+    `${Math.round(row.total_ms / 60000)}m`,
+    `${Math.round(row.average_ms / 1000)}s`,
+  ]);
+
+  return (
+    <AdminLayout
+      title="Study"
+      subtitle="Test runs, screen time, discovery behavior, goals behavior, and engagement by real users."
+      fetchedAt={studyState.fetchedAt}
+      refreshing={studyState.refreshing}
+      onRefresh={studyState.refresh}
+    >
+      <StateBlock loading={studyState.loading} error={studyState.error} />
+      {data ? (
+        <>
+          <View style={styles.metricGrid}>
+            <MetricCard label="Participants" value={data.summary.participants} />
+            <MetricCard label="Active users" value={data.summary.activeUsers} />
+            <MetricCard label="Sessions" value={data.summary.totalSessions} />
+            <MetricCard label="Total app time" value={`${Math.round(data.summary.totalActiveSeconds / 60)}m`} />
+            <MetricCard label="Avg session" value={`${Math.round(data.summary.averageSessionSeconds / 60)}m`} />
+            <MetricCard label="Decisions" value={data.summary.totalDiscoveryDecisions} />
+          </View>
+
+          <Section title="Test Management">
+            <View style={styles.chipRow}>
+              {data.testRuns.slice(0, 8).map((run) => (
+                <FilterChip
+                  key={run.id}
+                  label={`${run.name} (${run.status})`}
+                  active={testRunId === run.id}
+                  onPress={() => setTestRunId(run.id)}
+                />
+              ))}
+            </View>
+            <KeyValueList
+              items={[
+                { label: "Selected run", value: data.selectedTestRunId || "Auto" },
+                { label: "Compare run", value: data.compareTestRunId || "None" },
+                { label: "Active run", value: data.activeTestRun?.name || "None" },
+                { label: "Analytics enabled", value: data.analyticsEnabled ? "Yes" : "No" },
+              ]}
+            />
+          </Section>
+
+          <View style={styles.twoColumn}>
+            <Section title="Scorecard">
+              <AdminSimpleTable headers={["Signal", "Status"]} rows={scorecardRows} empty="No scorecard data." />
+            </Section>
+            <Section title="Funnel">
+              <AdminSimpleTable headers={["Stage", "Count"]} rows={funnelRows} empty="No funnel data." />
+            </Section>
+          </View>
+
+          <Section title="Time and Screen Usage">
+            <AdminSimpleTable
+              headers={["Screen", "Area", "Segments", "Total", "Average"]}
+              rows={screenRows}
+              empty="No screen time data."
+            />
+          </Section>
+
+          <View style={styles.twoColumn}>
+            <Section title="Discovery Behaviour">
+              <AdminSimpleTable
+                headers={["Event", "Count", "Users"]}
+                rows={(data.discovery ?? []).map((row) => [row.event_name, row.count, row.users])}
+                empty="No discovery data."
+              />
+            </Section>
+            <Section title="Goals Behaviour">
+              <AdminSimpleTable
+                headers={["Event", "Count", "Users"]}
+                rows={(data.goals ?? []).map((row) => [row.event_name, row.count, row.users])}
+                empty="No goals data."
+              />
+            </Section>
+          </View>
+
+          <Section title="Reliability / Friction">
+            <AdminSimpleTable
+              headers={["Event", "Count", "Users"]}
+              rows={(data.friction ?? []).map((row) => [row.event_name, row.count, row.users])}
+              empty="No friction data."
+            />
+          </Section>
+
+          <Section title="User Table">
+            <AdminSimpleTable
+              headers={["User", "Engagement", "Onboarding", "Activation", "Last active", "Sessions", "Time", "Likes", "Passes", "Cards", "Errors"]}
+              rows={userRows.map((row) => row as Array<string | number>)}
+              empty="No users in this study run."
+            />
+            <Text style={styles.tableFootnote}>
+              Open a user in the backend Study page for the readable activity timeline.
+            </Text>
+          </Section>
+        </>
+      ) : null}
     </AdminLayout>
   );
 }
