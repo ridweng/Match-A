@@ -191,6 +191,19 @@ type StudyPayload = {
   } | null;
 };
 
+type StudyTimelineItem = {
+  at: string;
+  kind: string;
+  label: string;
+  detail: string;
+};
+
+type StudyUserTimelinePayload = {
+  userId: number;
+  testRunId: string | null;
+  timeline: StudyTimelineItem[];
+};
+
 type GeneratedBatch = {
   batchKey: string;
   generationVersion: number;
@@ -366,6 +379,29 @@ function normalizeRouteParam(input: string | string[] | undefined, fallback = ""
   return String(input || fallback);
 }
 
+function formatStudyRunStatus(status: string | null | undefined) {
+  return String(status || "draft").replace(/_/g, " ");
+}
+
+function formatStudyDelta(current: number, previous: number) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return "—";
+  if (previous === 0) {
+    return current === 0 ? "0%" : "new";
+  }
+  const delta = ((current - previous) / previous) * 100;
+  const rounded = Math.round(delta);
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
+function toDateTimeInputValue(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+}
+
 function calculateAge(dateOfBirth: string | null | undefined) {
   if (!dateOfBirth) return null;
   const date = new Date(dateOfBirth);
@@ -404,6 +440,10 @@ async function fetchAdminJson<T>(path: string, options?: RequestInit) {
   }
 
   return (await response.json()) as { fetchedAt: string; data: T };
+}
+
+async function mutateAdminJson<T>(path: string, options?: RequestInit) {
+  return fetchAdminJson<T>(path, options);
 }
 
 function useBodyScrollLock(locked: boolean) {
@@ -1697,7 +1737,218 @@ export function AdminDatabaseScreen() {
   );
 }
 
-export function AdminStudyScreen() {
+function StudySectionNav({
+  testRunId,
+  compareTestRunId,
+}: {
+  testRunId: string;
+  compareTestRunId: string;
+}) {
+  const pathname = usePathname();
+  const items = [
+    { label: "Overview", path: "/admin/study" },
+    { label: "Manage", path: "/admin/study/manage" },
+    { label: "Compare", path: "/admin/study/compare" },
+  ] as const;
+
+  return (
+    <View style={styles.chipRow}>
+      {items.map((item) => (
+        <FilterChip
+          key={item.path}
+          label={item.label}
+          active={pathname === item.path}
+          onPress={() =>
+            router.push({
+              pathname: item.path,
+              params: {
+                testRunId: testRunId || undefined,
+                compareTestRunId: compareTestRunId || undefined,
+              },
+            } as never)
+          }
+        />
+      ))}
+    </View>
+  );
+}
+
+function StudyRunPicker({
+  runs,
+  selectedRunId,
+  compareTestRunId,
+  onSelectRun,
+  onSelectCompareRun,
+}: {
+  runs: StudyPayload["testRuns"];
+  selectedRunId: string;
+  compareTestRunId: string;
+  onSelectRun: (id: string) => void;
+  onSelectCompareRun: (id: string) => void;
+}) {
+  return (
+    <View style={styles.twoColumn}>
+      <Section title="Selected Test Run">
+        <View style={styles.chipRow}>
+          <FilterChip label="Auto active/latest" active={!selectedRunId} onPress={() => onSelectRun("")} />
+          {runs.slice(0, 12).map((run) => (
+            <FilterChip
+              key={run.id}
+              label={`${run.name} (${formatStudyRunStatus(run.status)})`}
+              active={selectedRunId === run.id}
+              onPress={() => onSelectRun(run.id)}
+            />
+          ))}
+        </View>
+      </Section>
+      <Section title="Compare Against">
+        <View style={styles.chipRow}>
+          <FilterChip label="No comparison" active={!compareTestRunId} onPress={() => onSelectCompareRun("")} />
+          {runs
+            .filter((run) => run.id !== selectedRunId)
+            .slice(0, 12)
+            .map((run) => (
+              <FilterChip
+                key={run.id}
+                label={`${run.name} (${formatStudyRunStatus(run.status)})`}
+                active={compareTestRunId === run.id}
+                onPress={() => onSelectCompareRun(run.id)}
+              />
+            ))}
+        </View>
+      </Section>
+    </View>
+  );
+}
+
+function StudyUsersTable({
+  users,
+  onOpenTimeline,
+}: {
+  users: StudyPayload["users"];
+  onOpenTimeline: (userId: number) => void;
+}) {
+  if (!users.length) {
+    return <StateBlock empty="No users in this study run." />;
+  }
+
+  return (
+    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
+      <View style={styles.tableWide}>
+        <View style={[styles.tableRow, styles.tableHeaderRow]}>
+          {[
+            "User",
+            "Engagement",
+            "Onboarding",
+            "Activation",
+            "Last active",
+            "Sessions",
+            "Time",
+            "Likes",
+            "Passes",
+            "Cards",
+            "Errors",
+            "Timeline",
+          ].map((header) => (
+            <Text key={header} style={[styles.tableCell, styles.tableHeaderCell]}>
+              {header}
+            </Text>
+          ))}
+        </View>
+        {users.map((user) => (
+          <View key={user.userId} style={styles.tableRow}>
+            <Text style={[styles.tableCell, styles.tableCellPrimary]}>
+              {user.label}
+              {"\n"}
+              {user.publicId || user.userId}
+            </Text>
+            <Text style={styles.tableCell}>{user.engagementStatus.replace(/_/g, " ")}</Text>
+            <Text style={styles.tableCell}>{user.onboardingStatus}</Text>
+            <Text style={styles.tableCell}>{user.activationStatus}</Text>
+            <Text style={styles.tableCell}>{formatDate(user.lastActive)}</Text>
+            <Text style={styles.tableCell}>{String(user.sessionCount)}</Text>
+            <Text style={styles.tableCell}>{`${Math.round(user.totalActiveSeconds / 60)}m`}</Text>
+            <Text style={styles.tableCell}>{String(user.likes)}</Text>
+            <Text style={styles.tableCell}>{String(user.passes)}</Text>
+            <Text style={styles.tableCell}>{String(user.cardsViewed)}</Text>
+            <Text style={styles.tableCell}>{String(user.reliabilityErrors)}</Text>
+            <View style={styles.tableCell}>
+              <Pressable style={styles.inlineActionButton} onPress={() => onOpenTimeline(user.userId)}>
+                <Text style={styles.inlineActionButtonText}>Open</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+function StudyTimelineDrawer({
+  userId,
+  testRunId,
+  onClose,
+}: {
+  userId: number | null;
+  testRunId: string;
+  onClose: () => void;
+}) {
+  const apiPath = userId
+    ? `/api/admin/stats/study/users/${userId}.json${buildQuery({ testRunId: testRunId || null })}`
+    : null;
+  const timelineState = useAdminApi<StudyUserTimelinePayload>(apiPath, 0);
+  const visible = Boolean(userId);
+  useBodyScrollLock(visible);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <Pressable style={styles.modalDismissLayer} onPress={onClose} />
+        <View style={styles.drawerPanel}>
+          <View style={styles.drawerHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>User timeline</Text>
+              <Text style={styles.metricDetail}>
+                User {userId || "—"} {testRunId ? `· run ${testRunId}` : "· auto-selected run"}
+              </Text>
+            </View>
+            <Pressable style={styles.iconButton} onPress={timelineState.refresh}>
+              <Feather name="refresh-cw" size={18} color={adminColors.ink} />
+            </Pressable>
+            <Pressable style={styles.iconButton} onPress={onClose}>
+              <Feather name="x" size={20} color={adminColors.ink} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.drawerContent} showsVerticalScrollIndicator>
+            <StateBlock
+              loading={timelineState.loading}
+              error={timelineState.error}
+              empty={!timelineState.loading && !timelineState.data?.timeline.length ? "No timeline data for this user." : undefined}
+            />
+            {timelineState.data?.timeline?.length ? (
+              <View style={styles.timelineList}>
+                {timelineState.data.timeline.map((item, index) => (
+                  <View key={`${item.at}-${index}`} style={styles.timelineRow}>
+                    <Text style={styles.timelineAt}>{formatTimestamp(item.at)}</Text>
+                    <View style={styles.timelineContent}>
+                      <Text style={styles.timelineLabel}>{item.label}</Text>
+                      <Text style={styles.timelineDetail}>
+                        {item.kind.replace(/_/g, " ")}
+                        {item.detail ? ` · ${item.detail}` : ""}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function useStudyDashboardRouteState() {
   const params = useLocalSearchParams<{
     testRunId?: string;
     compareTestRunId?: string;
@@ -1715,24 +1966,26 @@ export function AdminStudyScreen() {
     compareTestRunId: compareTestRunId || null,
   })}`;
   const studyState = useAdminApi<StudyPayload>(apiPath, DEFAULT_ADMIN_DASHBOARD_POLL_MS);
-  const data = studyState.data;
 
-  const userRows = (data?.users ?? []).map((user) => [
-    user.label,
-    user.engagementStatus.replace(/_/g, " "),
-    user.onboardingStatus,
-    user.activationStatus,
-    formatDate(user.lastActive),
-    user.sessionCount,
-    `${Math.round(user.totalActiveSeconds / 60)}m`,
-    user.likes,
-    user.passes,
-    user.cardsViewed,
-    user.reliabilityErrors,
-  ]);
+  return {
+    testRunId,
+    compareTestRunId,
+    setTestRunId,
+    setCompareTestRunId,
+    studyState,
+  };
+}
+
+export function AdminStudyScreen() {
+  const { testRunId, compareTestRunId, setTestRunId, setCompareTestRunId, studyState } =
+    useStudyDashboardRouteState();
+  const data = studyState.data;
+  const [timelineUserId, setTimelineUserId] = useState<number | null>(null);
 
   const scorecardRows = (data?.scorecard ?? []).map((row) => [row.label, row.status]);
-  const funnelRows = data ? Object.entries(data.funnel).map(([key, value]) => [key.replace(/_/g, " "), value]) : [];
+  const funnelRows = data
+    ? Object.entries(data.funnel).map(([key, value]) => [key.replace(/_/g, " "), value])
+    : [];
   const screenRows = (data?.screenUsage ?? []).map((row) => [
     row.screen_name,
     row.area_name || "—",
@@ -1744,50 +1997,66 @@ export function AdminStudyScreen() {
   return (
     <AdminLayout
       title="Study"
-      subtitle="Test runs, screen time, discovery behavior, goals behavior, and engagement by real users."
+      subtitle="Real test runs, product behavior, timelines, and engagement for study participants."
       fetchedAt={studyState.fetchedAt}
       refreshing={studyState.refreshing}
       onRefresh={studyState.refresh}
     >
+      <StudySectionNav testRunId={testRunId} compareTestRunId={compareTestRunId} />
       <StateBlock loading={studyState.loading} error={studyState.error} />
       {data ? (
         <>
+          <StudyRunPicker
+            runs={data.testRuns}
+            selectedRunId={testRunId}
+            compareTestRunId={compareTestRunId}
+            onSelectRun={setTestRunId}
+            onSelectCompareRun={setCompareTestRunId}
+          />
           <View style={styles.metricGrid}>
             <MetricCard label="Participants" value={data.summary.participants} />
             <MetricCard label="Active users" value={data.summary.activeUsers} />
             <MetricCard label="Sessions" value={data.summary.totalSessions} />
-            <MetricCard label="Total app time" value={`${Math.round(data.summary.totalActiveSeconds / 60)}m`} />
-            <MetricCard label="Avg session" value={`${Math.round(data.summary.averageSessionSeconds / 60)}m`} />
+            <MetricCard
+              label="Total app time"
+              value={`${Math.round(data.summary.totalActiveSeconds / 60)}m`}
+            />
+            <MetricCard
+              label="Avg session"
+              value={`${Math.round(data.summary.averageSessionSeconds / 60)}m`}
+            />
             <MetricCard label="Decisions" value={data.summary.totalDiscoveryDecisions} />
           </View>
 
-          <Section title="Test Management">
-            <View style={styles.chipRow}>
-              {data.testRuns.slice(0, 8).map((run) => (
-                <FilterChip
-                  key={run.id}
-                  label={`${run.name} (${run.status})`}
-                  active={testRunId === run.id}
-                  onPress={() => setTestRunId(run.id)}
-                />
-              ))}
-            </View>
+          <Section title="Current Study Context">
             <KeyValueList
               items={[
-                { label: "Selected run", value: data.selectedTestRunId || "Auto" },
-                { label: "Compare run", value: data.compareTestRunId || "None" },
+                { label: "Selected run", value: data.selectedTestRunId || "Auto active/latest" },
                 { label: "Active run", value: data.activeTestRun?.name || "None" },
+                { label: "Compare run", value: data.compareTestRunId || "None" },
                 { label: "Analytics enabled", value: data.analyticsEnabled ? "Yes" : "No" },
+                {
+                  label: "Admin analytics view",
+                  value: data.analyticsAdminEnabled ? "Enabled" : "Disabled",
+                },
               ]}
             />
           </Section>
 
           <View style={styles.twoColumn}>
-            <Section title="Scorecard">
-              <AdminSimpleTable headers={["Signal", "Status"]} rows={scorecardRows} empty="No scorecard data." />
+            <Section title="Product Success Scorecard">
+              <AdminSimpleTable
+                headers={["Signal", "Status"]}
+                rows={scorecardRows}
+                empty="No scorecard data."
+              />
             </Section>
             <Section title="Funnel">
-              <AdminSimpleTable headers={["Stage", "Count"]} rows={funnelRows} empty="No funnel data." />
+              <AdminSimpleTable
+                headers={["Stage", "Count"]}
+                rows={funnelRows}
+                empty="No funnel data."
+              />
             </Section>
           </View>
 
@@ -1824,16 +2093,454 @@ export function AdminStudyScreen() {
             />
           </Section>
 
-          <Section title="User Table">
-            <AdminSimpleTable
-              headers={["User", "Engagement", "Onboarding", "Activation", "Last active", "Sessions", "Time", "Likes", "Passes", "Cards", "Errors"]}
-              rows={userRows.map((row) => row as Array<string | number>)}
-              empty="No users in this study run."
-            />
-            <Text style={styles.tableFootnote}>
-              Open a user in the backend Study page for the readable activity timeline.
-            </Text>
+          <Section title="Users and Timelines">
+            <StudyUsersTable users={data.users} onOpenTimeline={setTimelineUserId} />
           </Section>
+          <StudyTimelineDrawer
+            userId={timelineUserId}
+            testRunId={data.selectedTestRunId || ""}
+            onClose={() => setTimelineUserId(null)}
+          />
+        </>
+      ) : null}
+    </AdminLayout>
+  );
+}
+
+export function AdminStudyManageScreen() {
+  const { testRunId, compareTestRunId, setTestRunId, setCompareTestRunId, studyState } =
+    useStudyDashboardRouteState();
+  const data = studyState.data;
+  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(
+    null
+  );
+  const [saving, setSaving] = useState(false);
+  const selectedRun =
+    data?.testRuns.find((run) => run.id === (data.selectedTestRunId || testRunId)) ||
+    data?.testRuns[0] ||
+    null;
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    description: "",
+    startsAt: "",
+    endsAt: "",
+    notes: "",
+    includeAllRealUsers: true,
+    includeDummyUsersAsActors: false,
+  });
+  const [editForm, setEditForm] = useState({
+    name: "",
+    description: "",
+    startsAt: "",
+    endsAt: "",
+    notes: "",
+    includeAllRealUsers: true,
+    includeDummyUsersAsActors: false,
+  });
+
+  useEffect(() => {
+    if (!selectedRun) return;
+    setEditForm({
+      name: selectedRun.name || "",
+      description: selectedRun.description || "",
+      startsAt: toDateTimeInputValue(selectedRun.starts_at),
+      endsAt: toDateTimeInputValue(selectedRun.ends_at),
+      notes: selectedRun.notes || "",
+      includeAllRealUsers: Boolean(selectedRun.include_all_real_users),
+      includeDummyUsersAsActors: Boolean(selectedRun.include_dummy_users_as_actors),
+    });
+  }, [selectedRun?.id]);
+
+  const runMutation = async (path: string, body: Record<string, unknown>, successMessage: string) => {
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const payload = await mutateAdminJson<{ id?: string }>(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (payload.data?.id) {
+        setTestRunId(payload.data.id);
+      }
+      setFeedback({ tone: "success", message: successMessage });
+      await studyState.refresh();
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Study action failed.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <AdminLayout
+      title="Study Management"
+      subtitle="Create, start, pause, complete, and edit saved test runs without leaving the admin panel."
+      fetchedAt={studyState.fetchedAt}
+      refreshing={studyState.refreshing || saving}
+      onRefresh={studyState.refresh}
+    >
+      <StudySectionNav testRunId={testRunId} compareTestRunId={compareTestRunId} />
+      <StateBlock loading={studyState.loading} error={studyState.error} />
+      {feedback ? <Banner tone={feedback.tone} message={feedback.message} /> : null}
+      {data ? (
+        <>
+          <StudyRunPicker
+            runs={data.testRuns}
+            selectedRunId={testRunId}
+            compareTestRunId={compareTestRunId}
+            onSelectRun={setTestRunId}
+            onSelectCompareRun={setCompareTestRunId}
+          />
+          <View style={styles.twoColumn}>
+            <Section title="Create Test Run">
+              <TextInput
+                value={createForm.name}
+                onChangeText={(name) => setCreateForm((current) => ({ ...current, name }))}
+                placeholder="Run name"
+                placeholderTextColor={adminColors.muted}
+                style={styles.searchInput}
+              />
+              <TextInput
+                value={createForm.description}
+                onChangeText={(description) => setCreateForm((current) => ({ ...current, description }))}
+                placeholder="Short description"
+                placeholderTextColor={adminColors.muted}
+                style={styles.searchInput}
+              />
+              <TextInput
+                value={createForm.startsAt}
+                onChangeText={(startsAt) => setCreateForm((current) => ({ ...current, startsAt }))}
+                placeholder="Starts at (YYYY-MM-DDTHH:mm)"
+                placeholderTextColor={adminColors.muted}
+                style={styles.searchInput}
+              />
+              <TextInput
+                value={createForm.endsAt}
+                onChangeText={(endsAt) => setCreateForm((current) => ({ ...current, endsAt }))}
+                placeholder="Ends at (optional)"
+                placeholderTextColor={adminColors.muted}
+                style={styles.searchInput}
+              />
+              <TextInput
+                value={createForm.notes}
+                onChangeText={(notes) => setCreateForm((current) => ({ ...current, notes }))}
+                placeholder="Study notes"
+                placeholderTextColor={adminColors.muted}
+                style={[styles.searchInput, styles.textArea]}
+                multiline
+              />
+              <View style={styles.chipRow}>
+                <FilterChip
+                  label={`Include all real users: ${createForm.includeAllRealUsers ? "Yes" : "No"}`}
+                  active={createForm.includeAllRealUsers}
+                  onPress={() =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      includeAllRealUsers: !current.includeAllRealUsers,
+                    }))
+                  }
+                />
+                <FilterChip
+                  label={`Allow dummy actors: ${createForm.includeDummyUsersAsActors ? "Yes" : "No"}`}
+                  active={createForm.includeDummyUsersAsActors}
+                  onPress={() =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      includeDummyUsersAsActors: !current.includeDummyUsersAsActors,
+                    }))
+                  }
+                />
+              </View>
+              <Pressable
+                style={[
+                  styles.primaryButton,
+                  (!createForm.name.trim() || !createForm.startsAt.trim() || saving) && styles.buttonDisabled,
+                ]}
+                disabled={!createForm.name.trim() || !createForm.startsAt.trim() || saving}
+                onPress={() =>
+                  void runMutation(
+                    "/api/admin/stats/study/test-runs",
+                    createForm,
+                    `Created study run ${createForm.name.trim()}.`
+                  )
+                }
+              >
+                <Text style={styles.primaryButtonText}>{saving ? "Saving..." : "Create run"}</Text>
+              </Pressable>
+            </Section>
+
+            <Section title="Selected Run">
+              {selectedRun ? (
+                <>
+                  <KeyValueList
+                    items={[
+                      { label: "Name", value: selectedRun.name },
+                      { label: "Status", value: formatStudyRunStatus(selectedRun.status) },
+                      { label: "Starts", value: formatTimestamp(selectedRun.starts_at) },
+                      { label: "Ends", value: formatTimestamp(selectedRun.ends_at) },
+                      {
+                        label: "Real users",
+                        value: selectedRun.include_all_real_users ? "All included" : "Manual selection",
+                      },
+                      {
+                        label: "Dummy actors",
+                        value: selectedRun.include_dummy_users_as_actors ? "Included" : "Excluded",
+                      },
+                    ]}
+                  />
+                  <View style={styles.actionRow}>
+                    <Pressable
+                      style={[styles.primaryButton, saving && styles.buttonDisabled]}
+                      disabled={saving}
+                      onPress={() =>
+                        void runMutation(
+                          `/api/admin/stats/study/test-runs/${selectedRun.id}/activate`,
+                          {},
+                          `Started ${selectedRun.name}.`
+                        )
+                      }
+                    >
+                      <Text style={styles.primaryButtonText}>Start</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.secondaryButton, saving && styles.buttonDisabled]}
+                      disabled={saving}
+                      onPress={() =>
+                        void runMutation(
+                          `/api/admin/stats/study/test-runs/${selectedRun.id}/pause`,
+                          {},
+                          `Paused ${selectedRun.name}.`
+                        )
+                      }
+                    >
+                      <Text style={styles.secondaryButtonText}>Pause</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.dangerButton, saving && styles.buttonDisabled]}
+                      disabled={saving}
+                      onPress={() =>
+                        void runMutation(
+                          `/api/admin/stats/study/test-runs/${selectedRun.id}/complete`,
+                          {},
+                          `Completed ${selectedRun.name}.`
+                        )
+                      }
+                    >
+                      <Text style={styles.dangerButtonText}>Complete</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <StateBlock empty="No saved study runs yet." />
+              )}
+            </Section>
+          </View>
+
+          <Section title="Edit Selected Run">
+            {selectedRun ? (
+              <>
+                <View style={styles.twoColumn}>
+                  <View style={styles.formColumn}>
+                    <TextInput
+                      value={editForm.name}
+                      onChangeText={(name) => setEditForm((current) => ({ ...current, name }))}
+                      placeholder="Run name"
+                      placeholderTextColor={adminColors.muted}
+                      style={styles.searchInput}
+                    />
+                    <TextInput
+                      value={editForm.description}
+                      onChangeText={(description) => setEditForm((current) => ({ ...current, description }))}
+                      placeholder="Short description"
+                      placeholderTextColor={adminColors.muted}
+                      style={styles.searchInput}
+                    />
+                    <TextInput
+                      value={editForm.startsAt}
+                      onChangeText={(startsAt) => setEditForm((current) => ({ ...current, startsAt }))}
+                      placeholder="Starts at (YYYY-MM-DDTHH:mm)"
+                      placeholderTextColor={adminColors.muted}
+                      style={styles.searchInput}
+                    />
+                  </View>
+                  <View style={styles.formColumn}>
+                    <TextInput
+                      value={editForm.endsAt}
+                      onChangeText={(endsAt) => setEditForm((current) => ({ ...current, endsAt }))}
+                      placeholder="Ends at (optional)"
+                      placeholderTextColor={adminColors.muted}
+                      style={styles.searchInput}
+                    />
+                    <TextInput
+                      value={editForm.notes}
+                      onChangeText={(notes) => setEditForm((current) => ({ ...current, notes }))}
+                      placeholder="Study notes"
+                      placeholderTextColor={adminColors.muted}
+                      style={[styles.searchInput, styles.textArea]}
+                      multiline
+                    />
+                  </View>
+                </View>
+                <View style={styles.chipRow}>
+                  <FilterChip
+                    label={`Include all real users: ${editForm.includeAllRealUsers ? "Yes" : "No"}`}
+                    active={editForm.includeAllRealUsers}
+                    onPress={() =>
+                      setEditForm((current) => ({
+                        ...current,
+                        includeAllRealUsers: !current.includeAllRealUsers,
+                      }))
+                    }
+                  />
+                  <FilterChip
+                    label={`Allow dummy actors: ${editForm.includeDummyUsersAsActors ? "Yes" : "No"}`}
+                    active={editForm.includeDummyUsersAsActors}
+                    onPress={() =>
+                      setEditForm((current) => ({
+                        ...current,
+                        includeDummyUsersAsActors: !current.includeDummyUsersAsActors,
+                      }))
+                    }
+                  />
+                </View>
+                <Pressable
+                  style={[styles.primaryButton, saving && styles.buttonDisabled]}
+                  disabled={saving}
+                  onPress={() =>
+                    void runMutation(
+                      `/api/admin/stats/study/test-runs/${selectedRun.id}/update`,
+                      editForm,
+                      `Updated ${selectedRun.name}.`
+                    )
+                  }
+                >
+                  <Text style={styles.primaryButtonText}>{saving ? "Saving..." : "Save changes"}</Text>
+                </Pressable>
+              </>
+            ) : (
+              <StateBlock empty="Select a run to edit it." />
+            )}
+          </Section>
+
+          <Section title="Saved Runs">
+            <AdminSimpleTable
+              headers={["Run", "Status", "Starts", "Ends", "Real users", "Dummy actors"]}
+              rows={data.testRuns.map((run) => [
+                run.name,
+                formatStudyRunStatus(run.status),
+                formatTimestamp(run.starts_at),
+                formatTimestamp(run.ends_at),
+                run.include_all_real_users ? "All" : "Manual",
+                run.include_dummy_users_as_actors ? "Allowed" : "Excluded",
+              ])}
+              empty="No saved test runs."
+            />
+          </Section>
+        </>
+      ) : null}
+    </AdminLayout>
+  );
+}
+
+export function AdminStudyCompareScreen() {
+  const { testRunId, compareTestRunId, setTestRunId, setCompareTestRunId, studyState } =
+    useStudyDashboardRouteState();
+  const data = studyState.data;
+  const comparisonRows = data?.comparison
+    ? [
+        ["Participants", data.comparison.current.participants, data.comparison.previous.participants],
+        ["Average session (s)", data.comparison.current.averageSessionSeconds, data.comparison.previous.averageSessionSeconds],
+        ["Discovery decisions", data.comparison.current.totalDiscoveryDecisions, data.comparison.previous.totalDiscoveryDecisions],
+        ["Likes", data.comparison.current.likes, data.comparison.previous.likes],
+        ["Passes", data.comparison.current.passes, data.comparison.previous.passes],
+        ["Reached 30 likes", data.comparison.current.usersReaching30Likes, data.comparison.previous.usersReaching30Likes],
+        ["Engaged users", data.comparison.current.engagedUsers, data.comparison.previous.engagedUsers],
+        ["Blocked users", data.comparison.current.blockedFrustratedUsers, data.comparison.previous.blockedFrustratedUsers],
+      ]
+    : [];
+
+  return (
+    <AdminLayout
+      title="Study Comparison"
+      subtitle="Compare a saved test run against another run to see whether behavior and quality are improving."
+      fetchedAt={studyState.fetchedAt}
+      refreshing={studyState.refreshing}
+      onRefresh={studyState.refresh}
+    >
+      <StudySectionNav testRunId={testRunId} compareTestRunId={compareTestRunId} />
+      <StateBlock loading={studyState.loading} error={studyState.error} />
+      {data ? (
+        <>
+          <StudyRunPicker
+            runs={data.testRuns}
+            selectedRunId={testRunId}
+            compareTestRunId={compareTestRunId}
+            onSelectRun={setTestRunId}
+            onSelectCompareRun={setCompareTestRunId}
+          />
+          <View style={styles.metricGrid}>
+            <MetricCard
+              label="Selected run"
+              value={
+                data.testRuns.find((run) => run.id === data.selectedTestRunId)?.name ||
+                "Auto active/latest"
+              }
+              detail={data.selectedTestRunId || "No explicit selection"}
+            />
+            <MetricCard
+              label="Compared run"
+              value={
+                data.testRuns.find((run) => run.id === data.compareTestRunId)?.name || "None selected"
+              }
+              detail={data.compareTestRunId || "Choose a saved run"}
+            />
+          </View>
+          <Section title="Run Comparison">
+            {data.comparison ? (
+              <AdminSimpleTable
+                headers={["Metric", "Selected", "Compared", "Delta"]}
+                rows={comparisonRows.map(([label, current, previous]) => [
+                  String(label),
+                  Number(current),
+                  Number(previous),
+                  formatStudyDelta(Number(current), Number(previous)),
+                ])}
+                empty="No comparison data."
+              />
+            ) : (
+              <StateBlock empty="Select a second run to compare saved studies." />
+            )}
+          </Section>
+          <View style={styles.twoColumn}>
+            <Section title="Saved Runs">
+              <AdminSimpleTable
+                headers={["Run", "Status", "Starts", "Ends"]}
+                rows={data.testRuns.map((run) => [
+                  run.name,
+                  formatStudyRunStatus(run.status),
+                  formatTimestamp(run.starts_at),
+                  formatTimestamp(run.ends_at),
+                ])}
+                empty="No saved runs."
+              />
+            </Section>
+            <Section title="Current Snapshot">
+              <KeyValueList
+                items={[
+                  { label: "Participants", value: data.summary.participants },
+                  { label: "Active users", value: data.summary.activeUsers },
+                  { label: "Decisions", value: data.summary.totalDiscoveryDecisions },
+                  { label: "Likes", value: data.summary.likes },
+                  { label: "Passes", value: data.summary.passes },
+                  { label: "Engaged users", value: data.summary.engagedUsers },
+                  { label: "Blocked users", value: data.summary.blockedFrustratedUsers },
+                ]}
+              />
+            </Section>
+          </View>
         </>
       ) : null}
     </AdminLayout>
@@ -2199,6 +2906,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     overflow: "hidden",
   },
+  tableWide: {
+    minWidth: 1200,
+    borderWidth: 1,
+    borderColor: adminColors.border,
+    borderRadius: 18,
+    overflow: "hidden",
+  },
   tableRow: {
     flexDirection: "row",
     backgroundColor: "#ffffff",
@@ -2234,6 +2948,18 @@ const styles = StyleSheet.create({
   },
   tableFootnote: {
     color: adminColors.muted,
+    fontSize: 12,
+  },
+  inlineActionButton: {
+    alignSelf: "flex-start",
+    backgroundColor: Colors.primaryDark,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
+  inlineActionButtonText: {
+    color: Colors.ivory,
+    fontWeight: "800",
     fontSize: 12,
   },
   batchHero: {
@@ -2355,6 +3081,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
+  },
+  formColumn: {
+    flex: 1,
+    minWidth: 260,
+    gap: 12,
+  },
+  primaryButton: {
+    backgroundColor: Colors.primaryDark,
+    borderWidth: 1,
+    borderColor: Colors.primaryDark,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+  },
+  primaryButtonText: {
+    color: Colors.ivory,
+    fontWeight: "800",
   },
   secondaryButton: {
     backgroundColor: "#ffffff",
@@ -2527,6 +3270,39 @@ const styles = StyleSheet.create({
   galleryMeta: {
     color: adminColors.muted,
     fontSize: 12,
+  },
+  textArea: {
+    minHeight: 110,
+    textAlignVertical: "top",
+  },
+  timelineList: {
+    gap: 12,
+  },
+  timelineRow: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: adminColors.border,
+    borderRadius: 18,
+    padding: 14,
+    gap: 6,
+  },
+  timelineAt: {
+    color: Colors.primaryDark,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  timelineContent: {
+    gap: 4,
+  },
+  timelineLabel: {
+    color: adminColors.ink,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  timelineDetail: {
+    color: adminColors.muted,
+    fontSize: 13,
+    lineHeight: 18,
   },
   sidebarDesktop: {
     width: 156,

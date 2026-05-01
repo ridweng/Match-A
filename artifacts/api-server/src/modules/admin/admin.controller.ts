@@ -155,6 +155,20 @@ export class AdminController {
     });
   }
 
+  private requestWantsJson(req: Request) {
+    const accept = String(req.headers.accept || "");
+    const contentType = String(req.headers["content-type"] || "");
+    return accept.includes("application/json") || contentType.includes("application/json");
+  }
+
+  private completeAdminAction(req: Request, res: Response, redirectPath: string, payload: unknown) {
+    if (this.requestWantsJson(req)) {
+      this.sendAdminJson(res, payload);
+      return;
+    }
+    res.redirect(redirectPath);
+  }
+
   private renderPage(title: string, body: string, options?: { autoRefreshMs?: number }) {
     return `<!doctype html>
 <html lang="en">
@@ -597,28 +611,48 @@ export class AdminController {
       includeAllRealUsers: body?.includeAllRealUsers === "on" || body?.includeAllRealUsers === true,
       notes: String(body?.notes || "").trim() || null,
     });
-    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(run.id)}`);
+    this.completeAdminAction(
+      req,
+      res,
+      `/api/admin/stats/study?testRunId=${encodeURIComponent(run.id)}`,
+      run
+    );
   }
 
   @Post("study/test-runs/:id/activate")
   async activateStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
     if (!this.authorize(req, res)) return;
-    await this.adminService.setStudyTestRunStatus(id, "active");
-    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+    const run = await this.adminService.setStudyTestRunStatus(id, "active");
+    this.completeAdminAction(
+      req,
+      res,
+      `/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`,
+      run ?? { id, status: "active" }
+    );
   }
 
   @Post("study/test-runs/:id/pause")
   async pauseStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
     if (!this.authorize(req, res)) return;
-    await this.adminService.setStudyTestRunStatus(id, "paused");
-    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+    const run = await this.adminService.setStudyTestRunStatus(id, "paused");
+    this.completeAdminAction(
+      req,
+      res,
+      `/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`,
+      run ?? { id, status: "paused" }
+    );
   }
 
   @Post("study/test-runs/:id/complete")
   async completeStudyTestRun(@Req() req: Request, @Res() res: Response, @Param("id") id: string) {
     if (!this.authorize(req, res)) return;
-    await this.adminService.setStudyTestRunStatus(id, "completed");
-    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+    const run = await this.adminService.setStudyTestRunStatus(id, "completed");
+    this.completeAdminAction(
+      req,
+      res,
+      `/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`,
+      run ?? { id, status: "completed" }
+    );
   }
 
   @Post("study/test-runs/:id/update")
@@ -629,7 +663,7 @@ export class AdminController {
     @Body() body: any
   ) {
     if (!this.authorize(req, res)) return;
-    await this.adminService.updateStudyTestRun(id, {
+    const run = await this.adminService.updateStudyTestRun(id, {
       name: body?.name ? String(body.name).trim() : undefined,
       description: body?.description ? String(body.description).trim() : null,
       startsAt: body?.startsAt ? new Date(body.startsAt).toISOString() : undefined,
@@ -644,7 +678,12 @@ export class AdminController {
           : body.includeDummyUsersAsActors === "on" || body.includeDummyUsersAsActors === true,
       notes: body?.notes ? String(body.notes).trim() : null,
     });
-    res.redirect(`/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`);
+    this.completeAdminAction(
+      req,
+      res,
+      `/api/admin/stats/study?testRunId=${encodeURIComponent(id)}`,
+      run ?? { id }
+    );
   }
 
   @Get("overview")
